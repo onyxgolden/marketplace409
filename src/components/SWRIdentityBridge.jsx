@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { setCacheIdentity } from "@/hooks/swrCache.js";
+import { markSWRHydrated } from "@/hooks/swrHydration.js";
 
 /**
  * Application-wide SWR cache identity boundary. Mounted once in the root layout,
@@ -30,6 +31,16 @@ export default function SWRIdentityBridge({ initialUserId = null }) {
   useEffect(() => {
     setCacheIdentity(initialUserId ?? null);
   }, [initialUserId]);
+
+  // Hydration boundary (React #418): mark the shared SWR cache readable only
+  // after the root has committed. The first client render must match the
+  // server's loading state, so no persisted entry becomes visible during
+  // hydration. Idempotent, so Strict Mode's double-effect invocation is
+  // harmless; once marked, client-side navigation keeps serving warm cache
+  // synchronously.
+  useEffect(() => {
+    markSWRHydrated();
+  }, []);
 
   useEffect(() => {
     // INITIAL_SESSION fires immediately on subscribe, covering sessions the

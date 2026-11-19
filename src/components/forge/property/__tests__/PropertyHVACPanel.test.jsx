@@ -1,12 +1,11 @@
+// @vitest-environment jsdom
 import {
   describe,
   expect,
   it,
 } from "vitest";
 
-import {
-  renderToStaticMarkup,
-} from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 
 import PropertyHVACPanel, {
   buildHVACSystemPayload,
@@ -37,7 +36,7 @@ describe(
         );
 
         const markup =
-          renderToStaticMarkup(
+          renderClientMarkup(
             <PropertyHVACPanel />,
           );
 

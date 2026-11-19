@@ -3,8 +3,19 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import HealthDashboard, { normalizeLabReferenceBound } from "./HealthDashboard";
+import { markSWRHydrated, resetSWRHydration } from "@/hooks/swrHydration";
+
+// The dashboard reads its snapshot through the shared SWR hook, which stays
+// in its loading state until the root marks hydration (React #418 boundary).
+// These tests mount the dashboard without the root layout, so mark hydration
+// here to simulate the post-hydration app (the boundary itself is covered by
+// swrHydration.test.jsx).
+beforeEach(() => {
+  resetSWRHydration();
+  markSWRHydrated();
+});
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 

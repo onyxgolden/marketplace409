@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache, fetchWithDedupe, seedCacheEntry } from "../../../hooks/swrCache";
 import RentalApplicationShell, { applyTerminologyToNavigation, buildRentalSurface, HIDEABLE_SIDEBAR_SECTIONS, RENTAL_FUNCTIONS, RENTAL_NAVIGATION, resolveRentalSectionParam } from "./RentalApplicationShell.jsx";
 import { resolveRentalRecordContextParam } from "./rentalRecordParam.js";
@@ -168,7 +168,7 @@ describe("RentalApplicationShell ten-section Rentec-style registry", () => {
   it("gives Owners its own section home as the R9 mount point", () => {
     const owners = RENTAL_NAVIGATION.find((group) => group.label === "Owners");
     expect(owners.items.map(({ id }) => id)).toEqual(["owners"]);
-    const markup = renderToStaticMarkup(buildRentalSurface("owners"));
+    const markup = renderClientMarkup(buildRentalSurface("owners"));
     expect(markup).toContain("data-rental-owners-home");
     expect(markup).toContain("data-owner-statements-mount");
     expect(markup).toContain("Owner statements");
@@ -229,17 +229,17 @@ describe("resolveRentalSectionParam", () => {
 
 describe("RentalPageClient section deep-linking", () => {
   it("honors ?section=properties by landing on the Properties section's first destination", () => {
-    const markup = renderToStaticMarkup(<RentalPageClient initialSection="properties" />);
+    const markup = renderClientMarkup(<RentalPageClient initialSection="properties" />);
     expect(markup).toContain('data-active-function="setup"');
   });
 
   it("falls back to the dashboard overview for a retired id", () => {
-    const markup = renderToStaticMarkup(<RentalPageClient initialSection="guide" />);
+    const markup = renderClientMarkup(<RentalPageClient initialSection="guide" />);
     expect(markup).toContain('data-active-function="overview"');
   });
 
   it("defaults to the dashboard overview with no section", () => {
-    const markup = renderToStaticMarkup(<RentalPageClient />);
+    const markup = renderClientMarkup(<RentalPageClient />);
     expect(markup).toContain('data-active-function="overview"');
   });
 });
@@ -328,7 +328,7 @@ describe("RentalPageClient record-context URL sync", () => {
 describe("RentalApplicationShell retired-id fallback", () => {
   it("resolves a stored retired id to overview instead of crashing", () => {
     for (const retired of ["guide", "private-financing", "reservable-inventory"]) {
-      const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId={retired} onFunctionChange={() => {}} />);
+      const markup = renderClientMarkup(<RentalApplicationShell activeFunctionId={retired} onFunctionChange={() => {}} />);
       expect(markup).toContain('data-active-function="overview"');
     }
   });
@@ -336,31 +336,32 @@ describe("RentalApplicationShell retired-id fallback", () => {
 
 describe("RentalApplicationShell", () => {
   it("renders an exception-first summary in grouped navigation", () => {
-    const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
+    const markup = renderClientMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
     expect(markup).toContain("Rental operations");
     expect(markup).toContain("Loading rental summary");
     expect(markup).toContain('aria-label="Rental Manager functions"');
     expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual(["Summary", "Properties", "Tenants", "Leasing", "Banking", "Owners", "Reports", "Tax", "Learn", "Settings"]);
   });
   it("renders the first-tenant readiness surface as its own reachable function", () => {
-    const markup = renderToStaticMarkup(buildRentalSurface("readiness"));
+    const markup = renderClientMarkup(buildRentalSurface("readiness"));
     expect(markup).toContain("Prepare a tenant for move-in");
   });
   it("renders the lease-renewal surface as its own reachable function", () => {
-    const markup = renderToStaticMarkup(buildRentalSurface("renewal"));
+    const markup = renderClientMarkup(buildRentalSurface("renewal"));
     expect(markup).toContain("Renew an expiring lease");
   });
   it("renders today's priorities as the retired guide surface, now absorbed into the dashboard", () => {
-    // renderToStaticMarkup captures only the pre-effect state: the retired guide id renders
+    // Client render with no seeded data: the retired guide id renders
     // RentalTodaysPrioritiesPanel, whose loading copy is distinct from the other surfaces.
-    const markup = renderToStaticMarkup(buildRentalSurface("guide"));
-    expect(markup).toContain("today&#x27;s priorities");
+    // (innerHTML does not escape apostrophes the way renderToStaticMarkup did.)
+    const markup = renderClientMarkup(buildRentalSurface("guide"));
+    expect(markup).toContain("today's priorities");
   });
-  it("renders a preview-only Rentec migration surface",()=>{const markup=renderToStaticMarkup(buildRentalSurface("rentec-migration"));expect(markup).toContain("Import from Rentec Direct");expect(markup).toContain("cannot write Rentec or FORGE records");});
-  it("renders a metadata-only Rentec file inventory",()=>{const markup=renderToStaticMarkup(buildRentalSurface("rentec-files"));expect(markup).toContain("Rentec files and renter photos");expect(markup).toContain("Inspect Rentec files");expect(markup).toContain("file names and contents are not returned");});
-  it("preserves selected-record context while navigating between rental surfaces",()=>{const markup=renderToStaticMarkup(<RentalApplicationShell activeFunctionId="charges" activeRecordContext={{recordType:"tenant",recordId:"tenant_1",recordLabel:"Test Tenant"}} onFunctionChange={()=>{}}/>);expect(markup).toContain('data-record-context="tenant_1"');expect(markup).toContain("Working with tenant: Test Tenant");expect(markup).toContain("Back to tenants")});
+  it("renders a preview-only Rentec migration surface",()=>{const markup=renderClientMarkup(buildRentalSurface("rentec-migration"));expect(markup).toContain("Import from Rentec Direct");expect(markup).toContain("cannot write Rentec or FORGE records");});
+  it("renders a metadata-only Rentec file inventory",()=>{const markup=renderClientMarkup(buildRentalSurface("rentec-files"));expect(markup).toContain("Rentec files and renter photos");expect(markup).toContain("Inspect Rentec files");expect(markup).toContain("file names and contents are not returned");});
+  it("preserves selected-record context while navigating between rental surfaces",()=>{const markup=renderClientMarkup(<RentalApplicationShell activeFunctionId="charges" activeRecordContext={{recordType:"tenant",recordId:"tenant_1",recordLabel:"Test Tenant"}} onFunctionChange={()=>{}}/>);expect(markup).toContain('data-record-context="tenant_1"');expect(markup).toContain("Working with tenant: Test Tenant");expect(markup).toContain("Back to tenants")});
   it("requires persisted unit and tenant selections instead of manual ids", () => {
-    const markup = renderToStaticMarkup(buildRentalSurface("leases"));
+    const markup = renderClientMarkup(buildRentalSurface("leases"));
     expect(markup).toContain("Select a saved unit");
     expect(markup).toContain("Select a saved tenant");
     expect(markup).not.toContain("Tenant ID");
@@ -372,47 +373,47 @@ describe("RentalApplicationShell", () => {
     expect(element.props.recordContext).toEqual(recordContext);
   });
   it("keeps lease activation and first-charge controls in secondary billing setup", () => {
-    const markup = renderToStaticMarkup(buildRentalSurface("charges"));
+    const markup = renderClientMarkup(buildRentalSurface("charges"));
     expect(markup).toContain("Rent &amp; payments");
     expect(markup).toContain("Billing setup");
     expect(markup).not.toContain("Activate lease and schedule");
   });
   it("renders the maintenance request operations surface", () => {
-    const markup = renderToStaticMarkup(buildRentalSurface("maintenance"));
+    const markup = renderClientMarkup(buildRentalSurface("maintenance"));
     expect(markup).toContain("Requests and work orders");
     expect(markup).toContain("No maintenance requests have been submitted");
   });
   it("renders the secure rental document library", () => {
-    const markup = renderToStaticMarkup(buildRentalSurface("documents"));
+    const markup = renderClientMarkup(buildRentalSurface("documents"));
     expect(markup).toContain("Lease documents and notices");
     expect(markup).toContain("Upload document");
     expect(markup).not.toContain("Publish this document to the tenant portal");
   });
-  it("renders the auditable notification outbox with reminder setup hidden",()=>{const markup=renderToStaticMarkup(buildRentalSurface("communications"));expect(markup).toContain("Notification outbox");expect(markup).toContain("Email delivery is not active");expect(markup).toContain("Queue reminder");expect(markup).not.toContain("Maximum attempts");});
+  it("renders the auditable notification outbox with reminder setup hidden",()=>{const markup=renderClientMarkup(buildRentalSurface("communications"));expect(markup).toContain("Notification outbox");expect(markup).toContain("Email delivery is not active");expect(markup).toContain("Queue reminder");expect(markup).not.toContain("Maximum attempts");});
   it("renders the combined owner inbox without filtering to rental-only messaging",()=>{
     // renderToStaticMarkup captures only the pre-effect state; the MessagesPanel loading state
     // proves the messages id routes to the inbox panel rather than a rental-only surface.
-    const markup=renderToStaticMarkup(buildRentalSurface("messages"));expect(markup).toContain("Loading messages");
+    const markup=renderClientMarkup(buildRentalSurface("messages"));expect(markup).toContain("Loading messages");
   });
-  it("renders payment reconciliation boundaries",()=>{const markup=renderToStaticMarkup(buildRentalSurface("reconciliation"));expect(markup).toContain("Payment reconciliation");expect(markup).toContain("gross rental income posting is implemented");});
-  it("renders the Rentec payment import surface as preview-only",()=>{const markup=renderToStaticMarkup(buildRentalSurface("rentec-payment-import"));expect(markup).toContain("Import Rentec payments");expect(markup).toContain("Preview only");});
-  it("renders the Rentec financial history import surface as preview-only",()=>{const markup=renderToStaticMarkup(buildRentalSurface("rentec-financial-history-import"));expect(markup).toContain("Import Rentec financial history");expect(markup).toContain("Preview only");});
-  it("renders rent roll and tenant ledger reporting",()=>{const markup=renderToStaticMarkup(buildRentalSurface("reports"));expect(markup).toContain("Rent roll and tenant ledger");expect(markup).toContain("Loading report");});
-  it("renders a separate security-deposit liability ledger",()=>{const markup=renderToStaticMarkup(buildRentalSurface("deposits"));expect(markup).toContain("Security deposits");expect(markup).toContain("never treated as rent or NOI");});
-  it("renders the checks and deposits banking tools",()=>{const markup=renderToStaticMarkup(buildRentalSurface("checks-deposits"));expect(markup).toContain("Print recorded check payments");expect(markup).toContain("Print checks");expect(markup).toContain("Bank deposits");});
-  it("renders controlled move-in and move-out inspections",()=>{const markup=renderToStaticMarkup(buildRentalSurface("inspections"));expect(markup).toContain("Move-in, move-out, and periodic inspections");expect(markup).toContain("never creates a deduction");});
-  it("renders auditable lease changes and owner-controlled late fees",()=>{const markup=renderToStaticMarkup(buildRentalSurface("lease-lifecycle"));expect(markup).toContain("Renewals, amendments, and prorating");expect(markup).toContain("Owner-controlled late fees");});
-  it("renders editable lease preparation without claiming a licensed form",()=>{const markup=renderToStaticMarkup(buildRentalSurface("lease-preparation"));expect(markup).toContain("Editable terms and version history");expect(markup).toContain("not the Texas REALTORS® form");expect(markup).toContain("Save immutable draft version");});
-  it("shows owner autopay authorization without claiming consent activates a debit",()=>{const markup=renderToStaticMarkup(buildRentalSurface("autopay"));expect(markup).toContain("Tenant authorizations");expect(markup).toContain("Consent alone never activates a debit");});
-  it("separates pet fees from assistance-animal review",()=>{const markup=renderToStaticMarkup(buildRentalSurface("animals"));expect(markup).toContain("Pet approvals and assistance review");expect(markup).toContain("can never receive a pet fee");});
-  it("renders support cases without automatic money movement",()=>{const markup=renderToStaticMarkup(buildRentalSurface("support"));expect(markup).toContain("Support and incident cases");expect(markup).toContain("without automatically moving money");});
+  it("renders payment reconciliation boundaries",()=>{const markup=renderClientMarkup(buildRentalSurface("reconciliation"));expect(markup).toContain("Payment reconciliation");expect(markup).toContain("gross rental income posting is implemented");});
+  it("renders the Rentec payment import surface as preview-only",()=>{const markup=renderClientMarkup(buildRentalSurface("rentec-payment-import"));expect(markup).toContain("Import Rentec payments");expect(markup).toContain("Preview only");});
+  it("renders the Rentec financial history import surface as preview-only",()=>{const markup=renderClientMarkup(buildRentalSurface("rentec-financial-history-import"));expect(markup).toContain("Import Rentec financial history");expect(markup).toContain("Preview only");});
+  it("renders rent roll and tenant ledger reporting",()=>{const markup=renderClientMarkup(buildRentalSurface("reports"));expect(markup).toContain("Rent roll and tenant ledger");expect(markup).toContain("Loading report");});
+  it("renders a separate security-deposit liability ledger",()=>{const markup=renderClientMarkup(buildRentalSurface("deposits"));expect(markup).toContain("Security deposits");expect(markup).toContain("never treated as rent or NOI");});
+  it("renders the checks and deposits banking tools",()=>{const markup=renderClientMarkup(buildRentalSurface("checks-deposits"));expect(markup).toContain("Print recorded check payments");expect(markup).toContain("Print checks");expect(markup).toContain("Bank deposits");});
+  it("renders controlled move-in and move-out inspections",()=>{const markup=renderClientMarkup(buildRentalSurface("inspections"));expect(markup).toContain("Move-in, move-out, and periodic inspections");expect(markup).toContain("never creates a deduction");});
+  it("renders auditable lease changes and owner-controlled late fees",()=>{const markup=renderClientMarkup(buildRentalSurface("lease-lifecycle"));expect(markup).toContain("Renewals, amendments, and prorating");expect(markup).toContain("Owner-controlled late fees");});
+  it("renders editable lease preparation without claiming a licensed form",()=>{const markup=renderClientMarkup(buildRentalSurface("lease-preparation"));expect(markup).toContain("Editable terms and version history");expect(markup).toContain("not the Texas REALTORS® form");expect(markup).toContain("Save immutable draft version");});
+  it("shows owner autopay authorization without claiming consent activates a debit",()=>{const markup=renderClientMarkup(buildRentalSurface("autopay"));expect(markup).toContain("Tenant authorizations");expect(markup).toContain("Consent alone never activates a debit");});
+  it("separates pet fees from assistance-animal review",()=>{const markup=renderClientMarkup(buildRentalSurface("animals"));expect(markup).toContain("Pet approvals and assistance review");expect(markup).toContain("can never receive a pet fee");});
+  it("renders support cases without automatic money movement",()=>{const markup=renderClientMarkup(buildRentalSurface("support"));expect(markup).toContain("Support and incident cases");expect(markup).toContain("without automatically moving money");});
   it("renders the property financial setup surface scoped to the selected property's exact property_id", () => {
     // renderToStaticMarkup captures only the pre-effect state, so this is the loading state --
     // the panel's own tests cover the post-fetch "Financial setup — {propertyId}" render.
     const recordContext = { recordType: "unit", recordId: "unit_1", propertyId: "930 Highland Drive" };
-    const markup = renderToStaticMarkup(buildRentalSurface("financial-setup", { recordContext }));
+    const markup = renderClientMarkup(buildRentalSurface("financial-setup", { recordContext }));
     expect(markup).toContain("Loading financial setup");
-    expect(renderToStaticMarkup(buildRentalSurface("financial-setup"))).toContain("Select a property before opening financial setup");
+    expect(renderClientMarkup(buildRentalSurface("financial-setup"))).toContain("Select a property before opening financial setup");
   });
   it("keeps financial-setup a recognized function id, not just a surface -- resolveActiveFunction falls back to overview for anything outside RENTAL_FUNCTIONS", () => {
     // Regression: adding the surface to buildRentalSurface alone was not enough. The Property
@@ -422,12 +423,12 @@ describe("RentalApplicationShell", () => {
     // id for anything not in RENTAL_FUNCTIONS. Confirmed live: clicking "Financial setup" rendered
     // the Overview dashboard instead, because the id wasn't registered in RENTAL_NAVIGATION.
     expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toContain("financial-setup");
-    const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="financial-setup" activeRecordContext={{ recordType: "unit", recordId: "unit_1", propertyId: "930 Highland Drive" }} onFunctionChange={() => {}} />);
+    const markup = renderClientMarkup(<RentalApplicationShell activeFunctionId="financial-setup" activeRecordContext={{ recordType: "unit", recordId: "unit_1", propertyId: "930 Highland Drive" }} onFunctionChange={() => {}} />);
     expect(markup).toContain('data-active-function="financial-setup"');
     expect(markup).toContain("Loading financial setup");
   });
   it("renders the Terminology settings surface under Settings", () => {
-    const markup = renderToStaticMarkup(buildRentalSurface("terminology"));
+    const markup = renderClientMarkup(buildRentalSurface("terminology"));
     expect(markup).toContain("data-rental-terminology-panel");
     expect(markup).toContain("Live preview");
     expect(markup).toContain("Save terminology");
@@ -435,7 +436,7 @@ describe("RentalApplicationShell", () => {
 
   it("keeps terminology a recognized function id so Settings → Terminology navigates instead of falling back to overview", () => {
     expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toContain("terminology");
-    const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="terminology" onFunctionChange={() => {}} />);
+    const markup = renderClientMarkup(<RentalApplicationShell activeFunctionId="terminology" onFunctionChange={() => {}} />);
     expect(markup).toContain('data-active-function="terminology"');
   });
 });
@@ -527,7 +528,7 @@ describe("R25 terminology — shell nav reflects custom terms", () => {
 
 describe("RentalApplicationShell help control", () => {
   it("renders a contextual Help control without opening the guide initially", () => {
-    const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="maintenance" onFunctionChange={() => {}} />);
+    const markup = renderClientMarkup(<RentalApplicationShell activeFunctionId="maintenance" onFunctionChange={() => {}} />);
     expect(markup).toContain('title="Rental Manager workflows and button guide"');
     expect(markup).not.toContain("data-rental-help");
   });

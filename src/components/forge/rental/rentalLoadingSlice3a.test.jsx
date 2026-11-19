@@ -1,8 +1,13 @@
+// @vitest-environment jsdom
+// (Updated for the shared SWR hydration boundary: the server/first paint is always the
+// loading skeleton, even with a warm cache -- React #418; cached data appears instantly
+// after hydration, with no loading flash.)
 // Slice 3a warm-switch contract: the converted private-financing / setup panels serve cached
-// data on first paint with no loading flash, and keep last-good data when a refresh fails.
+// data after hydration with no loading flash, and keep last-good data when a refresh fails.
 // The module-level SWR cache is cleared between tests so no fixture leaks across cases.
 import { beforeEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import PrivateFinancingAccountsPanel from "./PrivateFinancingAccountsPanel.jsx";
 import PrivateFinancingAccountDetail from "./PrivateFinancingAccountDetail.jsx";
@@ -86,34 +91,34 @@ beforeEach(() => { clearSWRCache(); });
 describe("slice 3a warm-switch behavior", () => {
   it("renders the cached accounts list instantly with no loading flash", async () => {
     await fetchWithDedupe("private-financing:accounts", () => Promise.resolve(accountsPayload));
-    const html = renderToStaticMarkup(<PrivateFinancingAccountsPanel />);
+    const html = renderClientMarkup(<PrivateFinancingAccountsPanel />);
     expect(html).toContain("Tyler Welch");
     expect(html).not.toContain("Loading private financing accounts");
   });
 
   it("shows the accounts skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<PrivateFinancingAccountsPanel />);
+    const html = renderClientMarkup(<PrivateFinancingAccountsPanel />);
     expect(html).toContain("Loading private financing accounts…");
   });
 
   it("keeps the last good accounts visible when a refresh fails", async () => {
     await fetchWithDedupe("private-financing:accounts", () => Promise.resolve(accountsPayload));
     await fetchWithDedupe("private-financing:accounts", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(<PrivateFinancingAccountsPanel />);
+    const html = renderClientMarkup(<PrivateFinancingAccountsPanel />);
     expect(html).toContain("Tyler Welch");
     expect(html).not.toContain("Loading private financing accounts");
   });
 
   it("shows the honest schema-unavailable explanation, not a generic error", async () => {
     await fetchWithDedupe("private-financing:accounts", () => Promise.resolve({ status: "schema-unavailable", accounts: [] }));
-    const html = renderToStaticMarkup(<PrivateFinancingAccountsPanel />);
+    const html = renderClientMarkup(<PrivateFinancingAccountsPanel />);
     expect(html).toContain("has not been activated for this environment yet");
     expect(html).not.toContain("Loading private financing accounts");
   });
 
   it("renders the cached account detail instantly with no loading flash", async () => {
     await fetchWithDedupe("private-financing:account:acc_1", () => Promise.resolve(detailPayload));
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <PrivateFinancingAccountDetail accountId="acc_1" onBack={() => {}} />,
     );
     expect(html).toContain("Tyler Welch");
@@ -121,7 +126,7 @@ describe("slice 3a warm-switch behavior", () => {
   });
 
   it("shows the detail skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <PrivateFinancingAccountDetail accountId="cold-acc" onBack={() => {}} />,
     );
     expect(html).toContain("Loading account details…");
@@ -130,7 +135,7 @@ describe("slice 3a warm-switch behavior", () => {
   it("keeps the last good detail visible when a refresh fails", async () => {
     await fetchWithDedupe("private-financing:account:acc_1", () => Promise.resolve(detailPayload));
     await fetchWithDedupe("private-financing:account:acc_1", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <PrivateFinancingAccountDetail accountId="acc_1" onBack={() => {}} />,
     );
     expect(html).toContain("Tyler Welch");
@@ -139,7 +144,7 @@ describe("slice 3a warm-switch behavior", () => {
 
   it("renders the honest not-found state when the account is gone", async () => {
     await fetchWithDedupe("private-financing:account:missing", () => Promise.resolve({ status: "not-found" }));
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <PrivateFinancingAccountDetail accountId="missing" onBack={() => {}} />,
     );
     expect(html).toContain("This account was not found, or is not accessible to this workspace.");
@@ -147,7 +152,7 @@ describe("slice 3a warm-switch behavior", () => {
 
   it("renders the cached ledger events instantly with no loading flash", async () => {
     await fetchWithDedupe("private-financing:events:acc_1", () => Promise.resolve(eventsPayload));
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <PrivateFinancingLedgerHistory accountId="acc_1" product="seller_financing" refreshSignal={0} />,
     );
     expect(html).toContain("Payment posted");
@@ -155,7 +160,7 @@ describe("slice 3a warm-switch behavior", () => {
   });
 
   it("shows the ledger skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <PrivateFinancingLedgerHistory accountId="cold-acc" product="seller_financing" refreshSignal={0} />,
     );
     expect(html).toContain("Loading ledger history…");
@@ -164,7 +169,7 @@ describe("slice 3a warm-switch behavior", () => {
   it("keeps the last good ledger events visible when a refresh fails", async () => {
     await fetchWithDedupe("private-financing:events:acc_1", () => Promise.resolve(eventsPayload));
     await fetchWithDedupe("private-financing:events:acc_1", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <PrivateFinancingLedgerHistory accountId="acc_1" product="seller_financing" refreshSignal={0} />,
     );
     expect(html).toContain("Payment posted");
@@ -173,14 +178,14 @@ describe("slice 3a warm-switch behavior", () => {
 
   it("renders the cached borrower portal instantly with no loading flash", async () => {
     await fetchWithDedupe("private-financing:borrower-portal:", () => Promise.resolve(portalPayload));
-    const html = renderToStaticMarkup(<PrivateFinancingBorrowerPortal />);
+    const html = renderClientMarkup(<PrivateFinancingBorrowerPortal />);
     expect(html).toContain("Your private financing");
     expect(html).toContain("tyler@example.com");
     expect(html).not.toContain("Loading your financing account");
   });
 
   it("shows the portal skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<PrivateFinancingBorrowerPortal />);
+    const html = renderClientMarkup(<PrivateFinancingBorrowerPortal />);
     expect(html).toContain("Loading your financing account…");
   });
 
@@ -190,14 +195,14 @@ describe("slice 3a warm-switch behavior", () => {
       error: "No invitation matches this signed-in email.",
       signInUrl: null, signedInEmail: "tyler@example.com", invitedEmail: null, claimErrorCode: null,
     }));
-    const html = renderToStaticMarkup(<PrivateFinancingBorrowerPortal />);
+    const html = renderClientMarkup(<PrivateFinancingBorrowerPortal />);
     expect(html).toContain("No invitation matches this signed-in email.");
     expect(html).toContain("tyler@example.com");
   });
 
   it("renders the cached financial setup form instantly with no loading flash", async () => {
     await fetchWithDedupe("rental:property-financial-setup:prop_1", () => Promise.resolve(setupPayload));
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <PropertyFinancialSetupPanel recordContext={{ propertyId: "prop_1" }} />,
     );
     expect(html).toContain("Financial setup");
@@ -205,7 +210,7 @@ describe("slice 3a warm-switch behavior", () => {
   });
 
   it("shows the setup skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <PropertyFinancialSetupPanel recordContext={{ propertyId: "cold-prop" }} />,
     );
     expect(html).toContain("Loading financial setup…");
@@ -213,28 +218,34 @@ describe("slice 3a warm-switch behavior", () => {
 
   it("renders the cached animal requests instantly with no loading flash", async () => {
     await fetchWithDedupe("rental:animals", () => Promise.resolve(animalsPayload));
-    const html = renderToStaticMarkup(<RentalAnimalsPanel />);
+    const html = renderClientMarkup(<RentalAnimalsPanel />);
     expect(html).toContain("Rex");
     expect(html).not.toContain("Loading animal requests");
   });
 
   it("shows the animals skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<RentalAnimalsPanel />);
+    const html = renderClientMarkup(<RentalAnimalsPanel />);
     expect(html).toContain("Loading animal requests…");
   });
 
   it("keeps the last good animal list visible when a refresh fails", async () => {
     await fetchWithDedupe("rental:animals", () => Promise.resolve(animalsPayload));
     await fetchWithDedupe("rental:animals", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(<RentalAnimalsPanel />);
+    const html = renderClientMarkup(<RentalAnimalsPanel />);
     expect(html).toContain("Rex");
     expect(html).not.toContain("Loading animal requests");
   });
 
   it("shows the honest empty state when there are no animal requests", async () => {
     await fetchWithDedupe("rental:animals", () => Promise.resolve([]));
-    const html = renderToStaticMarkup(<RentalAnimalsPanel />);
+    const html = renderClientMarkup(<RentalAnimalsPanel />);
     expect(html).toContain("No animal requests.");
     expect(html).not.toContain("Loading animal requests");
+  });
+  it("server/first paint shows the loading skeleton even with a warm cache (no #418)", async () => {
+    await fetchWithDedupe("private-financing:accounts", () => Promise.resolve(accountsPayload));
+    const html = renderToStaticMarkup(<PrivateFinancingAccountsPanel />);
+    expect(html).toContain("Loading private financing accounts");
+    expect(html).not.toContain("Tyler Welch");
   });
 });

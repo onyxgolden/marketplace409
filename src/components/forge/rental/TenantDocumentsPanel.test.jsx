@@ -1,4 +1,5 @@
-import { renderToStaticMarkup } from "react-dom/server";
+// @vitest-environment jsdom
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { afterEach, describe, expect, it } from "vitest";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import TenantDocumentsPanel from "./TenantDocumentsPanel.jsx";
@@ -9,6 +10,6 @@ it("renders an empty secure document surface before loading",async()=>{
   // shared loading skeleton on a true cold start, and the empty state once
   // the (empty) library has loaded.
   await fetchWithDedupe("rental:tenant-documents", () => Promise.resolve({ documents: [], preparations: [] }));
-  const markup=renderToStaticMarkup(<TenantDocumentsPanel/>);expect(markup).toContain("Lease files and notices");expect(markup).toContain("No documents have been published");
+  const markup=renderClientMarkup(<TenantDocumentsPanel/>);expect(markup).toContain("Lease files and notices");expect(markup).toContain("No documents have been published");
   expect(markup).toContain("not an electronic signature");
-});it("states that tenant review is distinct from signing",()=>{const markup=renderToStaticMarkup(<TenantDocumentsPanel/>);expect(markup).toContain("not an electronic signature");});});
+});it("states that tenant review is distinct from signing",()=>{const markup=renderClientMarkup(<TenantDocumentsPanel/>);expect(markup).toContain("not an electronic signature");});});

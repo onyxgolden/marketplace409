@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { clearSWRCache } from "../../../hooks/swrCache";
 import RentalDepositsPanel, { depositIdentity, leasePickerLabel } from "./RentalDepositsPanel";
@@ -61,7 +61,7 @@ function mountPanel(ui) {
 
 describe("RentalDepositsPanel deposit labels", () => {
   it("shows the tenant name and property on the deposit row", () => {
-    const markup = renderToStaticMarkup(<RentalDepositsPanel initialData={baseData} />);
+    const markup = renderClientMarkup(<RentalDepositsPanel initialData={baseData} />);
     expect(markup).toContain("$1,500.00");
     expect(markup).toContain("Steven Crabtree — 4225 Barnhill · required · TX");
   });
@@ -69,7 +69,7 @@ describe("RentalDepositsPanel deposit labels", () => {
   it("shows the tenant name and property on the selected deposit detail", () => {
     // Single-deposit fixture: the identity string occurs once in the row
     // subtitle and once in the detail header — two occurrences proves both.
-    const markup = renderToStaticMarkup(<RentalDepositsPanel initialData={baseData} />);
+    const markup = renderClientMarkup(<RentalDepositsPanel initialData={baseData} />);
     expect(markup).toContain("$1,500.00 required");
     expect((markup.match(/Steven Crabtree — 4225 Barnhill/g) || []).length).toBe(2);
   });
@@ -92,7 +92,7 @@ describe("RentalDepositsPanel deposit labels", () => {
   });
 
   it("falls back to the raw lease id when no join resolves, never a blank label", () => {
-    const markup = renderToStaticMarkup(<RentalDepositsPanel initialData={orphanData} />);
+    const markup = renderClientMarkup(<RentalDepositsPanel initialData={orphanData} />);
     expect(markup).toContain("lease_orphan · required · jurisdiction not recorded");
     expect(leasePickerLabel("lease_orphan", orphanData)).toBe("lease_orphan");
     expect(depositIdentity(orphanData.deposits[0], orphanData).label).toBe("lease_orphan");

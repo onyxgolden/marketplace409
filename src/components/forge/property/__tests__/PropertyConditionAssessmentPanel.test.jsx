@@ -12,9 +12,7 @@ import {
   vi,
 } from "vitest";
 
-import {
-  renderToStaticMarkup,
-} from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 
 import PropertyConditionAssessmentPanel, {
   buildConditionObservation,
@@ -49,7 +47,7 @@ describe(
         );
 
         const markup =
-          renderToStaticMarkup(
+          renderClientMarkup(
             <PropertyConditionAssessmentPanel />,
           );
 

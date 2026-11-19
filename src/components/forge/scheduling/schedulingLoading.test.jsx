@@ -1,8 +1,13 @@
+// @vitest-environment jsdom
+// (Updated for the shared SWR hydration boundary: the server/first paint is always the
+// loading skeleton, even with a warm cache -- React #418; cached data appears instantly
+// after hydration, with no loading flash.)
 // Slice warm-switch contract for the scheduling module: the converted panels
-// serve cached data on first paint with no loading flash, and keep last-good
+// serve cached data after hydration with no loading flash, and keep last-good
 // data on screen while a refresh fails.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -78,33 +83,33 @@ beforeEach(() => { clearSWRCache(); });
 describe("scheduling warm-switch behavior", () => {
   it("renders the cached project list instantly with no loading flash", async () => {
     await fetchWithDedupe("scheduling:projects", () => Promise.resolve(projectsPayload));
-    const html = renderToStaticMarkup(<ProjectsScreen />);
+    const html = renderClientMarkup(<ProjectsScreen />);
     expect(html).toContain("Beaumont Duplex");
     expect(html).not.toContain("Loading projects");
   });
 
   it("shows the project skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<ProjectsScreen />);
+    const html = renderClientMarkup(<ProjectsScreen />);
     expect(html).toContain("Loading projects…");
     expect(html).not.toContain("Beaumont Duplex");
   });
 
   it("renders the cached drift report instantly with no loading flash", async () => {
     await fetchWithDedupe("scheduling:drift:p1:2", () => Promise.resolve(driftPayload));
-    const html = renderToStaticMarkup(<DriftAlertsPanel projectId="p1" />);
+    const html = renderClientMarkup(<DriftAlertsPanel projectId="p1" />);
     expect(html).toContain("A1020");
     expect(html).toContain("Framing");
     expect(html).not.toContain("Computing drift");
   });
 
   it("shows the drift skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<DriftAlertsPanel projectId="p1" />);
+    const html = renderClientMarkup(<DriftAlertsPanel projectId="p1" />);
     expect(html).toContain("Computing drift…");
   });
 
   it("renders the cached baselines instantly with no loading flash", async () => {
     await fetchWithDedupe("scheduling:baselines:p1", () => Promise.resolve(baselinesPayload));
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <SchedulingBaselinesPanel projectId="p1" isOwner blocks={BLOCKS} onClose={() => {}} />,
     );
     expect(html).toContain("Approved plan");
@@ -112,7 +117,7 @@ describe("scheduling warm-switch behavior", () => {
   });
 
   it("shows the baselines skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <SchedulingBaselinesPanel projectId="p1" isOwner blocks={BLOCKS} onClose={() => {}} />,
     );
     expect(html).toContain("Loading baselines…");
@@ -120,7 +125,7 @@ describe("scheduling warm-switch behavior", () => {
 
   it("renders the cached cost codes instantly with no loading flash", async () => {
     await fetchWithDedupe("scheduling:cost-accounts", () => Promise.resolve(costAccountsPayload));
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <SchedulingCostAccountsPanel isOwner onClose={() => {}} />,
     );
     expect(html).toContain("PO-4521");
@@ -129,7 +134,7 @@ describe("scheduling warm-switch behavior", () => {
 
   it("renders the cached cost rollup instantly with no loading flash", async () => {
     await fetchWithDedupe("scheduling:cost-rollup:p1:all", () => Promise.resolve(rollupPayload));
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <SchedulingCostsPanel projectId="p1" blocks={BLOCKS} onClose={() => {}} />,
     );
     expect(html).toContain("$2,500.00");
@@ -138,7 +143,7 @@ describe("scheduling warm-switch behavior", () => {
   });
 
   it("shows the cost skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <SchedulingCostsPanel projectId="p1" blocks={BLOCKS} onClose={() => {}} />,
     );
     expect(html).toContain("Loading cost data…");
@@ -147,7 +152,7 @@ describe("scheduling warm-switch behavior", () => {
   it("keeps the last good cost rollup visible when a refresh fails", async () => {
     await fetchWithDedupe("scheduling:cost-rollup:p1:all", () => Promise.resolve(rollupPayload));
     await fetchWithDedupe("scheduling:cost-rollup:p1:all", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <SchedulingCostsPanel projectId="p1" blocks={BLOCKS} onClose={() => {}} />,
     );
     expect(html).toContain("$2,500.00");
@@ -157,7 +162,7 @@ describe("scheduling warm-switch behavior", () => {
 
   it("shows the cost error state when the first load fails", async () => {
     await fetchWithDedupe("scheduling:cost-rollup:p1:all", () => Promise.reject(new Error("boom"))).catch(() => {});
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <SchedulingCostsPanel projectId="p1" blocks={BLOCKS} onClose={() => {}} />,
     );
     expect(html).toContain("Unable to load cost data for this project");
@@ -166,7 +171,7 @@ describe("scheduling warm-switch behavior", () => {
 
   it("renders the cached EVM/DCMA report instantly with no loading flash", async () => {
     await fetchWithDedupe(`scheduling:evm-dcma:p1:auto:${today}`, () => Promise.resolve(evmPayload));
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <SchedulingEvmDcmaPanel projectId="p1" onClose={() => {}} />,
     );
     expect(html).toContain("$1,000.00");
@@ -176,7 +181,7 @@ describe("scheduling warm-switch behavior", () => {
 
   it("renders the cached leveling preview instantly with no loading flash", async () => {
     await fetchWithDedupe("scheduling:leveling:p1:false", () => Promise.resolve(levelingPayload));
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <SchedulingLevelingPanel projectId="p1" blocks={BLOCKS} onClose={() => {}} />,
     );
     expect(html).toContain("A1010 Framing");
@@ -185,7 +190,7 @@ describe("scheduling warm-switch behavior", () => {
 
   it("renders the cached resources instantly with no loading flash", async () => {
     await fetchWithDedupe("scheduling:resources", () => Promise.resolve(resourcesPayload));
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <SchedulingResourcesPanel isOwner onClose={() => {}} />,
     );
     expect(html).toContain("Framing Crew");
@@ -193,9 +198,15 @@ describe("scheduling warm-switch behavior", () => {
   });
 
   it("shows the resources skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <SchedulingResourcesPanel isOwner onClose={() => {}} />,
     );
     expect(html).toContain("Loading resources…");
+  });
+  it("server/first paint shows the loading skeleton even with a warm cache (no #418)", async () => {
+    await fetchWithDedupe("scheduling:projects", () => Promise.resolve(projectsPayload));
+    const html = renderToStaticMarkup(<ProjectsScreen />);
+    expect(html).toContain("Loading projects");
+    expect(html).not.toContain("Beaumont Duplex");
   });
 });

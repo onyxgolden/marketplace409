@@ -4,7 +4,7 @@
 // types are property/tenant/unit), so each row links to the Rent & payments
 // surface, which lists the payment by the id shown in the row.
 import { beforeEach, describe, expect, it } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import RentalReconciliationPanel from "./RentalReconciliationPanel.jsx";
 
@@ -21,7 +21,7 @@ describe("RentalReconciliationPanel follow-up G18", () => {
       ],
       settlements: [],
     }));
-    const html = renderToStaticMarkup(<RentalReconciliationPanel />);
+    const html = renderClientMarkup(<RentalReconciliationPanel />);
     for (const id of ["pay_failed", "pay_disputed", "pay_waiting", "pay_offline"]) {
       expect(html).toContain(id);
       expect(html).toContain(`aria-label="View payment ${id} in Rent &amp; payments"`);
@@ -36,7 +36,7 @@ describe("RentalReconciliationPanel follow-up G18", () => {
       payments: [{ id: "pay_1", provider: "stripe", status: "failed", amount_cents: 185000 }],
       settlements: [],
     }));
-    const html = renderToStaticMarkup(<RentalReconciliationPanel />);
+    const html = renderClientMarkup(<RentalReconciliationPanel />);
     expect(html).not.toContain("CONFIRM");
     expect(html).not.toContain("<button");
   });

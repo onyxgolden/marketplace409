@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import RentalLeasePanel from "./RentalLeasePanel.jsx";
 import RentalSetupPanel from "./RentalSetupPanel.jsx";
@@ -12,7 +13,7 @@ describe("rental existing-record safety", () => {
     // instead of the loading skeleton on a cold static render.
     const initialSetup = { units: [{ id: "unit_1", label: "Main residence" }], tenants: [], leases: [{ id: "lease_1", unit_id: "unit_1", status: "active", monthly_rent_cents: 200000, start_date: "2026-08-12", end_date: null }] };
     await fetchWithDedupe("rental:lease-setup", () => Promise.resolve(initialSetup));
-    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={initialSetup} />);
+    const markup = renderClientMarkup(<RentalLeasePanel initialSetup={initialSetup} />);
     expect(markup).toContain("Selected lease");
     expect(markup).toContain("$2,000.00 monthly");
     expect(markup).toContain("Add a lease for an existing tenant");
@@ -26,16 +27,16 @@ describe("rental existing-record safety", () => {
     // render (the old adoption ran in an effect, which static renders skip;
     // the exception-first dashboard slice moved it to render time).
     const initialSetup = { units: [{ id: "unit_1", label: "Main residence" }], tenants: [{ id: "tenant_1", display_name: "John Jones" }], leases: [{ id: "lease_1", unit_id: "unit_1", status: "active", monthly_rent_cents: 200000, start_date: "2026-08-12" }] };
-    const markup = renderToStaticMarkup(<RentalLeasePanel initialShowCreate initialSetup={initialSetup} loadOnMount={false} />);
+    const markup = renderClientMarkup(<RentalLeasePanel initialShowCreate initialSetup={initialSetup} loadOnMount={false} />);
     expect(markup).toContain("Other leases already exist");
     expect(markup).toContain("Cancel setup");
     expect(markup).toContain("Save draft lease and schedule");
   });
 
   it("keeps unit and tenant creation behind explicit add actions", () => {
-    const unitMarkup = renderToStaticMarkup(<RentalSetupPanel initialUnits={[{ id: "unit_1", label: "Main residence", property_id: "4800-kent-ave" }]} />);
-    const tenantIndexMarkup = renderToStaticMarkup(<RentalTenantPanel initialTenants={[{ id: "tenant_1", display_name: "John Jones", email: "tenant@example.com" }]} />);
-    const tenantRecordMarkup = renderToStaticMarkup(<RentalTenantPanel initialTenants={[{ id: "tenant_1", display_name: "John Jones", email: "tenant@example.com" }]} recordContext={{ recordType: "tenant", recordId: "tenant_1" }} />);
+    const unitMarkup = renderClientMarkup(<RentalSetupPanel initialUnits={[{ id: "unit_1", label: "Main residence", property_id: "4800-kent-ave" }]} />);
+    const tenantIndexMarkup = renderClientMarkup(<RentalTenantPanel initialTenants={[{ id: "tenant_1", display_name: "John Jones", email: "tenant@example.com" }]} />);
+    const tenantRecordMarkup = renderClientMarkup(<RentalTenantPanel initialTenants={[{ id: "tenant_1", display_name: "John Jones", email: "tenant@example.com" }]} recordContext={{ recordType: "tenant", recordId: "tenant_1" }} />);
     expect(unitMarkup).toContain("Add a new property / unit");
     expect(unitMarkup).toContain("Selected unit");
     expect(unitMarkup).toContain("Property actions");

@@ -1,9 +1,14 @@
+// @vitest-environment jsdom
+// (Updated for the shared SWR hydration boundary: the server/first paint is always the
+// loading skeleton, even with a warm cache -- React #418; cached data appears instantly
+// after hydration, with no loading flash.)
 // Slice B no-blank-screens contract: the converted rental panels serve cached
-// data on first paint with no loading flash, keep last-good data when a
+// data after hydration with no loading flash, keep last-good data when a
 // refresh fails, and only show the shared Forge loading/error/empty states
 // when there is genuinely nothing to display yet.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import RentalAutopayPanel from "./RentalAutopayPanel.jsx";
 import RentalReconciliationPanel from "./RentalReconciliationPanel.jsx";
@@ -105,107 +110,107 @@ beforeEach(() => { clearSWRCache(); });
 describe("slice B warm-switch behavior", () => {
   it("renders cached autopay enrollments instantly with no loading flash", async () => {
     await fetchWithDedupe("rental:autopay", () => Promise.resolve({ autopayEnrollments: autopayPayload }));
-    const html = renderToStaticMarkup(<RentalAutopayPanel />);
+    const html = renderClientMarkup(<RentalAutopayPanel />);
     expect(html).toContain("lease_1");
     expect(html).not.toContain("Loading autopay");
   });
 
   it("shows the autopay skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<RentalAutopayPanel />);
+    const html = renderClientMarkup(<RentalAutopayPanel />);
     expect(html).toContain("Loading autopay authorizations…");
   });
 
   it("keeps the last good autopay data visible when a refresh fails", async () => {
     await fetchWithDedupe("rental:autopay", () => Promise.resolve({ autopayEnrollments: autopayPayload }));
     await fetchWithDedupe("rental:autopay", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(<RentalAutopayPanel />);
+    const html = renderClientMarkup(<RentalAutopayPanel />);
     expect(html).toContain("lease_1");
     expect(html).not.toContain("Loading autopay");
   });
 
   it("renders the cached reconciliation table instantly with no loading flash", async () => {
     await fetchWithDedupe("rental:reconciliation", () => Promise.resolve(reconciliationPayload));
-    const html = renderToStaticMarkup(<RentalReconciliationPanel />);
+    const html = renderClientMarkup(<RentalReconciliationPanel />);
     expect(html).toContain("pay_1");
     expect(html).toContain("$1,500.00");
     expect(html).not.toContain("Loading reconciliation");
   });
 
   it("shows the reconciliation skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<RentalReconciliationPanel />);
+    const html = renderClientMarkup(<RentalReconciliationPanel />);
     expect(html).toContain("Loading reconciliation…");
   });
 
   it("renders cached support cases instantly with no loading flash", async () => {
     await fetchWithDedupe("rental:support", () => Promise.resolve(supportPayload));
-    const html = renderToStaticMarkup(<RentalSupportPanel />);
+    const html = renderClientMarkup(<RentalSupportPanel />);
     expect(html).toContain("Failed autopay retry");
     expect(html).not.toContain("Loading support cases");
   });
 
   it("shows the shared empty state when there are no support cases", async () => {
     await fetchWithDedupe("rental:support", () => Promise.resolve([]));
-    const html = renderToStaticMarkup(<RentalSupportPanel />);
+    const html = renderClientMarkup(<RentalSupportPanel />);
     expect(html).toContain("No open support cases");
   });
 
   it("shows the support skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<RentalSupportPanel />);
+    const html = renderClientMarkup(<RentalSupportPanel />);
     expect(html).toContain("Loading support cases…");
   });
 
   it("renders cached rent collection instantly with no loading flash", async () => {
     await fetchWithDedupe("rental:payments", () => Promise.resolve(paymentsPayload));
     await fetchWithDedupe("rental:stripe-account", () => Promise.resolve(stripeAccountPayload));
-    const html = renderToStaticMarkup(<RentalPaymentsPanel />);
+    const html = renderClientMarkup(<RentalPaymentsPanel />);
     expect(html).toContain("2026-09");
     expect(html).toContain("Rent &amp; payments");
     expect(html).not.toContain("Loading rent collection");
   });
 
   it("shows the rent collection skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<RentalPaymentsPanel />);
+    const html = renderClientMarkup(<RentalPaymentsPanel />);
     expect(html).toContain("Loading rent collection…");
   });
 
   it("renders the cached rent roll instantly with no loading flash", async () => {
     await fetchWithDedupe(RENT_ROLL_KEY, () => Promise.resolve(reportPayload));
-    const html = renderToStaticMarkup(<RentalReportsPanel />);
+    const html = renderClientMarkup(<RentalReportsPanel />);
     expect(html).toContain("Monthly scheduled");
     expect(html).toContain("$1,500.00");
     expect(html).not.toContain("Loading report");
   });
 
   it("shows the report skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<RentalReportsPanel />);
+    const html = renderClientMarkup(<RentalReportsPanel />);
     expect(html).toContain("Loading report…");
   });
 
   it("renders cached rental units instantly with no loading flash", async () => {
     await fetchWithDedupe("rental:setup", () => Promise.resolve(setupPayload));
     // initialUnits seeds the SSR-safe selection; the cached SWR payload drives the list.
-    const html = renderToStaticMarkup(<RentalSetupPanel initialUnits={setupPayload.units} />);
+    const html = renderClientMarkup(<RentalSetupPanel initialUnits={setupPayload.units} />);
     expect(html).toContain("308 Paula");
     expect(html).not.toContain("Loading rental units");
   });
 
   it("renders cached lease preparations instantly with no loading flash", async () => {
     await fetchWithDedupe("rental:lease-preparation", () => Promise.resolve(leasePreparationPayload));
-    const html = renderToStaticMarkup(<RentalLeasePreparationPanel />);
+    const html = renderClientMarkup(<RentalLeasePreparationPanel />);
     expect(html).toContain("lease_1");
     expect(html).not.toContain("Loading lease preparations");
   });
 
   it("renders cached maintenance requests instantly with no loading flash", async () => {
     await fetchWithDedupe("rental:maintenance", () => Promise.resolve(maintenancePayload));
-    const html = renderToStaticMarkup(<RentalMaintenancePanel />);
+    const html = renderClientMarkup(<RentalMaintenancePanel />);
     expect(html).toContain("Leaky faucet");
     expect(html).not.toContain("Loading maintenance");
   });
 
   it("renders cached leases instantly with no loading flash", async () => {
     await fetchWithDedupe("rental:lease-setup", () => Promise.resolve(leaseSetupPayload));
-    const html = renderToStaticMarkup(<RentalLeasePanel />);
+    const html = renderClientMarkup(<RentalLeasePanel />);
     expect(html).toContain("Leases and rent schedules");
     expect(html).not.toContain("Loading leases");
   });
@@ -226,7 +231,7 @@ describe("slice B action-only panels need no conversion", () => {
   it("RentalPhotoUpload renders the placeholder and add button without fetching", () => {
     const fetchMock = stubFetch();
     try {
-      const html = renderToStaticMarkup(
+      const html = renderClientMarkup(
         <RentalPhotoUpload entityType="unit" entityId="unit_1" photoUrl={null} onUploaded={() => {}} />
       );
       expect(html).toContain("No photo");
@@ -241,7 +246,7 @@ describe("slice B action-only panels need no conversion", () => {
   it("RentecFileInventoryPanel renders the inspect CTA without fetching", () => {
     const fetchMock = stubFetch();
     try {
-      const html = renderToStaticMarkup(<RentecFileInventoryPanel />);
+      const html = renderClientMarkup(<RentecFileInventoryPanel />);
       expect(html).toContain("Rentec files and renter photos");
       expect(html).toContain("Inspect Rentec files");
       expect(html).not.toContain("Loading");
@@ -254,7 +259,7 @@ describe("slice B action-only panels need no conversion", () => {
   it("RentecFinancialHistoryImportPanel renders the preview CTA without fetching", () => {
     const fetchMock = stubFetch();
     try {
-      const html = renderToStaticMarkup(<RentecFinancialHistoryImportPanel />);
+      const html = renderClientMarkup(<RentecFinancialHistoryImportPanel />);
       expect(html).toContain("Import Rentec financial history");
       expect(html).toContain("Run preview");
       expect(html).not.toContain("Loading");
@@ -262,5 +267,11 @@ describe("slice B action-only panels need no conversion", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+  it("server/first paint shows the loading skeleton even with a warm cache (no #418)", async () => {
+    await fetchWithDedupe("rental:autopay", () => Promise.resolve({ autopayEnrollments: autopayPayload }));
+    const html = renderToStaticMarkup(<RentalAutopayPanel />);
+    expect(html).toContain("Loading autopay");
+    expect(html).not.toContain("lease_1");
   });
 });

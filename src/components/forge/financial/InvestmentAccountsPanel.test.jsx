@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 
 vi.stubGlobal("fetch", vi.fn());
@@ -20,7 +21,7 @@ describe("InvestmentAccountsPanel", () => {
 
   it("presents the investment registry without treating account values as income", async () => {
     await fetchWithDedupe("financial:investment-accounts", () => Promise.resolve(investmentPayload));
-    const markup = renderToStaticMarkup(<InvestmentAccountsPanel />);
+    const markup = renderClientMarkup(<InvestmentAccountsPanel />);
     expect(markup).toContain("FORGE Investments");
     expect(markup).toContain("Brokerage, retirement");
     expect(markup).toContain("Add account");
@@ -30,7 +31,7 @@ describe("InvestmentAccountsPanel", () => {
 
   it("provides a lifecycle surface for valuations and retirement", async () => {
     await fetchWithDedupe("financial:investment-accounts", () => Promise.resolve(investmentPayload));
-    const markup = renderToStaticMarkup(<InvestmentAccountsPanel />);
+    const markup = renderClientMarkup(<InvestmentAccountsPanel />);
     expect(markup).toContain("Add account");
     expect(markup).toContain("Total investable assets");
     expect(markup).toContain("Business");
@@ -40,12 +41,12 @@ describe("InvestmentAccountsPanel", () => {
 
   it("renders an honest empty registry instead of fabricated zero totals", async () => {
     await fetchWithDedupe("financial:investment-accounts", () => Promise.resolve({ accounts: [] }));
-    const markup = renderToStaticMarkup(<InvestmentAccountsPanel />);
+    const markup = renderClientMarkup(<InvestmentAccountsPanel />);
     expect(markup).toContain("Your investment registry is ready");
   });
 
   it("shows the loading skeleton only when nothing is cached", () => {
-    const markup = renderToStaticMarkup(<InvestmentAccountsPanel />);
+    const markup = renderClientMarkup(<InvestmentAccountsPanel />);
     expect(markup).toContain("Loading investment accounts…");
     expect(markup).not.toContain("FORGE Investments");
   });

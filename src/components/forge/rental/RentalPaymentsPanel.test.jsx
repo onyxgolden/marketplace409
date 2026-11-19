@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearSWRCache } from "../../../hooks/swrCache";
 import RentalPaymentsPanel, { chargeCollectionLabel, defaultChargeMonth, isChargeVoidable, resolveChargeIdentity, resolveScheduleContext } from "./RentalPaymentsPanel";
@@ -52,14 +52,14 @@ describe("RentalPaymentsPanel deposit state (received vs deposited)", () => {
   });
 
   it("shows an Awaiting deposit badge and Mark as deposited action on a received payment", () => {
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={withPayment} initialAccount={null} />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={withPayment} initialAccount={null} />);
     expect(markup).toContain("Awaiting deposit");
     expect(markup).toContain("Mark as deposited");
     expect(markup).toContain("cash · succeeded · Awaiting deposit");
   });
 
   it("shows a Deposited badge and the reversible Mark as awaiting deposit action on a deposited payment", () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderClientMarkup(
       <RentalPaymentsPanel initialData={{ ...baseData, payments: [{ ...receivedPayment, deposit_state: "deposited" }] }} initialAccount={null} />,
     );
     expect(markup).toContain("Deposited");
@@ -68,12 +68,12 @@ describe("RentalPaymentsPanel deposit state (received vs deposited)", () => {
 
   it("defaults a pre-migration payment without deposit state to Awaiting deposit", () => {
     const { deposit_state: _omitted, ...legacyPayment } = receivedPayment;
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={{ ...baseData, payments: [legacyPayment] }} initialAccount={null} />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={{ ...baseData, payments: [legacyPayment] }} initialAccount={null} />);
     expect(markup).toContain("Awaiting deposit");
   });
 
   it("offers Deposit status capture in the Record offline payment form, defaulting to Received", () => {
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={withPayment} initialAccount={null} initialShowOffline />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={withPayment} initialAccount={null} initialShowOffline />);
     expect(markup).toContain("Deposit status");
     expect(markup).toContain("Received — awaiting deposit");
     expect(markup).toContain("Already deposited");
@@ -105,7 +105,7 @@ describe("RentalPaymentsPanel deposit state (received vs deposited)", () => {
   });
 
   it("hides the deposit transition for payments that moved no money", () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderClientMarkup(
       <RentalPaymentsPanel initialData={{ ...baseData, payments: [{ ...receivedPayment, status: "failed" }] }} initialAccount={null} />,
     );
     expect(markup).not.toContain("Mark as deposited");
@@ -181,7 +181,7 @@ describe("defaultChargeMonth", () => {
 
 describe("RentalPaymentsPanel charge-generation identity", () => {
   it("shows tenant, unit, and property for every charge-generation row, distinguishing identical-rent leases", () => {
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={baseData} initialAccount={null} initialShowSetup />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={baseData} initialAccount={null} initialShowSetup />);
     expect(markup).toContain("Anthony Babino");
     expect(markup).toContain("Main residence");
     expect(markup).toContain("property-1");
@@ -191,13 +191,13 @@ describe("RentalPaymentsPanel charge-generation identity", () => {
   });
 
   it("keeps the Generate charge action tied to the correct schedule", () => {
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={baseData} initialAccount={null} initialShowSetup />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={baseData} initialAccount={null} initialShowSetup />);
     expect(markup.split("Generate charge").length - 1).toBe(2);
   });
 
   it("shows an explicit Unknown warning in the row instead of silently omitting identity", () => {
     const orphanData = { ...baseData, leaseMemberships: [], units: [], leases: [] };
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={orphanData} initialAccount={null} initialShowSetup />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={orphanData} initialAccount={null} initialShowSetup />);
     expect(markup).toContain("Unknown tenant");
     expect(markup).toContain("Unknown unit");
     expect(markup).toContain("Unknown property");
@@ -331,13 +331,13 @@ describe("RentalPaymentsPanel Void charge action", () => {
   });
 
   it("shows a Void charge action for an unpaid open charge", () => {
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={withCharge} initialAccount={null} />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={withCharge} initialAccount={null} />);
     expect(markup).toContain("Void charge");
   });
 
   it("does not show a Void charge action for an already-paid charge", () => {
     const paidData = { ...baseData, openCharges: [{ ...voidableCharge, status: "paid", paid_amount_cents: 130000 }] };
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={paidData} initialAccount={null} />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={paidData} initialAccount={null} />);
     expect(markup).not.toContain("Void charge");
   });
 
@@ -441,7 +441,7 @@ describe("RentalPaymentsPanel charge identity safety (regression)", () => {
   };
 
   it("proves a $1,300 charge on the real lease cannot be visually mistaken for the sandbox lease", () => {
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={identityData} initialAccount={null} />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={identityData} initialAccount={null} />);
     // The charge must clearly identify the real tenant/lease it actually belongs to.
     expect(markup).toContain("Existing Tenant");
     expect(markup).toContain(REAL_LEASE_ID);
@@ -492,7 +492,7 @@ describe("RentalPaymentsPanel charge collection-authority visibility", () => {
   };
 
   it("labels an externally-managed charge as such in the record list, and still shows its amount in full", () => {
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={externallyManagedData} initialAccount={null} />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={externallyManagedData} initialAccount={null} />);
     expect(markup).toContain("Externally managed — reconciliation required");
     expect(markup).toContain("$14,270.00");
   });
@@ -501,7 +501,7 @@ describe("RentalPaymentsPanel charge collection-authority visibility", () => {
     const forgeData = { ...externallyManagedData, schedules: [{ ...externallyManagedData.schedules[0], id: "schedule_forge",
       collection_mode: "forge", forge_cutover_date: "2020-01-01" }],
       openCharges: [{ ...externallyManagedData.openCharges[0], schedule_id: "schedule_forge" }] };
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={forgeData} initialAccount={null} />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={forgeData} initialAccount={null} />);
     expect(markup).toContain("FORGE collectible");
     expect(markup).not.toContain("Externally managed — reconciliation required");
   });
@@ -512,14 +512,14 @@ describe("RentalPaymentsPanel billing pause banner", () => {
   afterEach(() => { vi.unstubAllGlobals(); clearSWRCache(); });
 
   it("shows PAUSED by default and offers a Resume FORGE billing control", () => {
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: false }} initialAccount={null} />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: false }} initialAccount={null} />);
     expect(markup).toContain("Rental online billing: PAUSED");
     expect(markup).toContain("Resume FORGE billing");
     expect(markup).not.toContain("Rental online billing: ACTIVE");
   });
 
   it("shows ACTIVE and a Pause FORGE billing control when billing is enabled", () => {
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: true }} initialAccount={null} />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={{ ...baseData, billingEnabled: true }} initialAccount={null} />);
     expect(markup).toContain("Rental online billing: ACTIVE");
     expect(markup).toContain("Pause FORGE billing");
     expect(markup).not.toContain("Rental online billing: PAUSED");
@@ -681,13 +681,13 @@ describe("RentalPaymentsPanel Edit payment", () => {
     // writer wins), so each static render needs a cleared cache to see its
     // own fixture — otherwise every render shows the first payment.
     const withEditable = { ...baseData, payments: [editablePayment] };
-    expect(renderToStaticMarkup(<RentalPaymentsPanel initialData={withEditable} initialAccount={null} />)).toContain("Edit payment");
+    expect(renderClientMarkup(<RentalPaymentsPanel initialData={withEditable} initialAccount={null} />)).toContain("Edit payment");
     clearSWRCache();
     const withStripe = { ...baseData, payments: [{ ...editablePayment, provider: "stripe", payment_method: "card" }] };
-    expect(renderToStaticMarkup(<RentalPaymentsPanel initialData={withStripe} initialAccount={null} />)).not.toContain("Edit payment");
+    expect(renderClientMarkup(<RentalPaymentsPanel initialData={withStripe} initialAccount={null} />)).not.toContain("Edit payment");
     clearSWRCache();
     const withRefund = { ...baseData, payments: [{ ...editablePayment, refunded_amount_cents: 160000 }] };
-    expect(renderToStaticMarkup(<RentalPaymentsPanel initialData={withRefund} initialAccount={null} />)).not.toContain("Edit payment");
+    expect(renderClientMarkup(<RentalPaymentsPanel initialData={withRefund} initialAccount={null} />)).not.toContain("Edit payment");
   });
 
   it("opens the correction dialog from the selected payment detail", async () => {

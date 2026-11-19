@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { describe, expect, it, beforeEach } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import RentalTenantPanel, { activeBalanceCentsForTenant, availableCoTenants, propertyLabelForTenant, tenantHouseholdForSelection, tenantInviteLabel, tenantProfilePayload } from "./RentalTenantPanel";
 import { clearSWRCache, seedCacheEntry } from "@/hooks/swrCache";
 
@@ -74,7 +75,7 @@ describe("RentalTenantPanel birth-date removal", () => {
       id: "tenant_1", display_name: "Ashley George", email: "ashley@example.com", phone: "555-1000",
       date_of_birth: "1990-01-01", status: "active",
     };
-    const markup = renderToStaticMarkup(<RentalTenantPanel initialTenants={[legacyTenant]} />);
+    const markup = renderClientMarkup(<RentalTenantPanel initialTenants={[legacyTenant]} />);
     expect(markup).not.toContain("Date of birth");
     expect(markup).not.toContain("dateOfBirth");
     expect(markup).not.toContain("1990-01-01");
@@ -83,7 +84,7 @@ describe("RentalTenantPanel birth-date removal", () => {
   it("does not include a dateOfBirth field in the tenant-creation form submission shape", () => {
     // The create form only ever sends displayName/email/phone (see RentalTenantPanel.jsx's save()) --
     // this pins that shape so a birth-date field can't be silently reintroduced there either.
-    const markup = renderToStaticMarkup(<RentalTenantPanel initialTenants={[]} />);
+    const markup = renderClientMarkup(<RentalTenantPanel initialTenants={[]} />);
     expect(markup).not.toContain("Date of birth");
     expect(markup).not.toContain('name="dateOfBirth"');
   });
@@ -91,7 +92,7 @@ describe("RentalTenantPanel birth-date removal", () => {
 
 describe("RentalTenantPanel contextual creation", () => {
   it("opens the add-tenant card when linked from an unleased property", () => {
-    const markup = renderToStaticMarkup(<RentalTenantPanel initialTenants={[{ id: "tenant_1", display_name: "Existing", email: "existing@example.com" }]} recordContext={{ openCreateTenant: true }} />);
+    const markup = renderClientMarkup(<RentalTenantPanel initialTenants={[{ id: "tenant_1", display_name: "Existing", email: "existing@example.com" }]} recordContext={{ openCreateTenant: true }} />);
     expect(markup).toContain("Tenant name");
     expect(markup).toContain("Save tenant");
   });
@@ -133,7 +134,7 @@ describe("RentalTenantPanel co-tenant controls", () => {
     seedCacheEntry("rental:tenants", { tenants, leases: [lease], leaseMemberships: memberships, units, openCharges: [] });
   }
   function recordMarkup(recordId) {
-    return renderToStaticMarkup(<RentalTenantPanel recordContext={{ recordType: "tenant", recordId }} />);
+    return renderClientMarkup(<RentalTenantPanel recordContext={{ recordType: "tenant", recordId }} />);
   }
 
   it("lists only tenants not on the lease in the Add co-tenant dropdown", () => {
@@ -189,7 +190,7 @@ describe("RentalTenantPanel tenant name editing", () => {
     seedCacheEntry("rental:tenants", { tenants: [primary], leases: [lease],
       leaseMemberships: [{ lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" }],
       units: [{ id: "u1", label: "4225 Barnhill" }], openCharges: [] });
-    return renderToStaticMarkup(<RentalTenantPanel recordContext={{ recordType: "tenant", recordId: "t1" }} />);
+    return renderClientMarkup(<RentalTenantPanel recordContext={{ recordType: "tenant", recordId: "t1" }} />);
   }
 
   it("renders a Tenant name field prefilled with the current display name", () => {

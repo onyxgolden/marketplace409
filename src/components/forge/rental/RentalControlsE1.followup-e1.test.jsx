@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearSWRCache } from "../../../hooks/swrCache";
 import RentalLeasePanel from "./RentalLeasePanel";
@@ -30,13 +30,13 @@ function mount(node) {
 
 describe("controls-sweep follow-up E1 explanation pass", () => {
   it("L-11: empty-units/tenants banner links to Properties and Tenants", () => {
-    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={{ units: [], tenants: [], leases: [], schedules: [], leaseMemberships: [] }} loadOnMount={false} />);
+    const markup = renderClientMarkup(<RentalLeasePanel initialSetup={{ units: [], tenants: [], leases: [], schedules: [], leaseMemberships: [] }} loadOnMount={false} />);
     expect(markup).toContain("section=properties");
     expect(markup).toContain("section=tenants");
   });
 
   it("L-11: none-selected unit explains the disabled save", () => {
-    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={{ units: [{ id: "unit_1", label: "Unit A", property_id: "p1" }, { id: "unit_2", label: "Unit B", property_id: "p2" }], tenants: [{ id: "tenant_1", display_name: "Tenant One", email: "t@example.test" }], leases: [], schedules: [], leaseMemberships: [] }} loadOnMount={false} />);
+    const markup = renderClientMarkup(<RentalLeasePanel initialSetup={{ units: [{ id: "unit_1", label: "Unit A", property_id: "p1" }, { id: "unit_2", label: "Unit B", property_id: "p2" }], tenants: [{ id: "tenant_1", display_name: "Tenant One", email: "t@example.test" }], leases: [], schedules: [], leaseMemberships: [] }} loadOnMount={false} />);
     expect(markup).toContain("Select a rental unit above to enable saving.");
   });
 
@@ -109,7 +109,7 @@ describe("controls-sweep follow-up E1 explanation pass", () => {
   });
 
   it("M-25: a charge with a paid balance explains voiding and points at Refund/credit", () => {
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={{
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={{
       openCharges: [{ id: "charge_1", lease_id: "lease_1", period: "2026-10", status: "partially_paid", amount_cents: 130000, paid_amount_cents: 50000, due_date: "2026-10-01", charge_type: "rent" }],
       payments: [], settlements: [],
       leases: [{ id: "lease_1", unit_id: "unit_1", property_id: "property-1", status: "active" }],
@@ -123,7 +123,7 @@ describe("controls-sweep follow-up E1 explanation pass", () => {
   });
 
   it("M-27: a non-money-moved payment explains the missing deposit toggle", () => {
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={{
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={{
       openCharges: [],
       payments: [{ id: "pay_1", lease_id: "lease_1", amount_cents: 130000, refunded_amount_cents: 0, status: "pending", payment_method: "cash", provider: "offline", received_at: "2026-08-02T12:00:00Z", created_at: "2026-08-02T12:00:00Z", deposit_state: "received", settlement: null }],
       settlements: [],
@@ -138,7 +138,7 @@ describe("controls-sweep follow-up E1 explanation pass", () => {
   });
 
   it("M-26: an open credit with no open charges says it will auto-apply", () => {
-    const markup = renderToStaticMarkup(<TenantCreditSection credits={[{ id: "credit_1", status: "open", remaining_cents: 5000 }]} creditApplications={[]} openCharges={[]} />);
+    const markup = renderClientMarkup(<TenantCreditSection credits={[{ id: "credit_1", status: "open", remaining_cents: 5000 }]} creditApplications={[]} openCharges={[]} />);
     expect(markup).toContain("Nothing to apply to yet — this credit will auto-apply to the next charge.");
   });
 

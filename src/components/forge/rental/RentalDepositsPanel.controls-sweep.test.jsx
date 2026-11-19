@@ -3,7 +3,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache } from "../../../hooks/swrCache";
 import RentalDepositsPanel, { depositBalance } from "./RentalDepositsPanel";
 
@@ -25,7 +25,7 @@ describe("RentalDepositsPanel controls sweep — G6 deposit corrections", () => 
   });
 
   it("shows Edit and Void requirement plus per-transaction Void, and marks voided rows", () => {
-    const markup = renderToStaticMarkup(<RentalDepositsPanel initialData={baseData} />);
+    const markup = renderClientMarkup(<RentalDepositsPanel initialData={baseData} />);
     expect(markup).toContain("Edit requirement");
     expect(markup).toContain("Void requirement");
     expect(markup).toContain("Void transaction");
@@ -34,7 +34,7 @@ describe("RentalDepositsPanel controls sweep — G6 deposit corrections", () => 
   });
 
   it("shows no Edit on a void requirement, only the preservation text", () => {
-    const markup = renderToStaticMarkup(<RentalDepositsPanel initialData={{ ...baseData, deposits: [{ ...baseData.deposits[0], status: "void" }] }} />);
+    const markup = renderClientMarkup(<RentalDepositsPanel initialData={{ ...baseData, deposits: [{ ...baseData.deposits[0], status: "void" }] }} />);
     expect(markup).toContain("cannot be edited");
     expect(markup).not.toContain("Edit requirement");
     expect(markup).not.toContain("Void requirement");

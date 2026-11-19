@@ -1,12 +1,11 @@
+// @vitest-environment jsdom
 import {
   describe,
   expect,
   it,
 } from "vitest";
 
-import {
-  renderToStaticMarkup,
-} from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 
 import PropertyValuationPanel, {
   buildValuationProperties,
@@ -93,7 +92,7 @@ describe(
         await seedValuationCache();
 
         const markup =
-          renderToStaticMarkup(
+          renderClientMarkup(
             <PropertyValuationPanel />,
           );
 
@@ -139,7 +138,7 @@ describe(
         await seedValuationCache();
 
         const markup =
-          renderToStaticMarkup(
+          renderClientMarkup(
             <PropertyValuationPanel />,
           );
 

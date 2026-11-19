@@ -3,7 +3,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import RentalSetupPanel, { activeBalanceCentsForUnit, countUnitsForStatusBar, filterUnitsForStatusBar, tenantLabelForUnit } from "./RentalSetupPanel";
 
@@ -91,7 +91,7 @@ describe("countUnitsForStatusBar", () => {
 
 describe("RentalSetupPanel status bar", () => {
   it("renders one chip per status with the matching unit count", () => {
-    const markup = renderToStaticMarkup(<RentalSetupPanel initialUnits={[
+    const markup = renderClientMarkup(<RentalSetupPanel initialUnits={[
       { id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "preparing" },
       { id: "unit_2", label: "308 Paula", property_id: "308-paula", status: "available" },
       { id: "unit_3", label: "4225 Barnhill", property_id: "4225-barnhill", status: "occupied" },
@@ -111,12 +111,12 @@ describe("RentalSetupPanel new-unit creation", () => {
     // Seed the SWR cache so the converted panel renders its create form instead
     // of the loading skeleton on a cold static render.
     await fetchWithDedupe("rental:setup", () => Promise.resolve({ units: [], leases: [], leaseMemberships: [], tenants: [], openCharges: [] }));
-    const markup = renderToStaticMarkup(<RentalSetupPanel />);
+    const markup = renderClientMarkup(<RentalSetupPanel />);
     expect(markup).toContain("Review and create property / unit");
     expect(markup).not.toContain("Save Kent Avenue unit");
   });
   it("uses one-line property, address, tenant, status, and balance columns like the tenant index", () => {
-    const markup = renderToStaticMarkup(<RentalSetupPanel initialUnits={[{ id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "occupied" }]} />);
+    const markup = renderClientMarkup(<RentalSetupPanel initialUnits={[{ id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "occupied" }]} />);
     expect(markup).toContain('data-list-size="wide"');
     expect(markup).toContain(">Property<");
     expect(markup).toContain(">Address<");
@@ -127,7 +127,7 @@ describe("RentalSetupPanel new-unit creation", () => {
     expect(markup).not.toContain("Property address");
   });
   it("offers Add tenant instead of labeling an unleased property vacant", () => {
-    const markup = renderToStaticMarkup(<RentalSetupPanel initialUnits={[{ id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "available" }]} />);
+    const markup = renderClientMarkup(<RentalSetupPanel initialUnits={[{ id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "available" }]} />);
     expect(markup).toContain("Add tenant");
     expect(markup).not.toContain(">Vacant<");
   });
@@ -137,13 +137,13 @@ describe("RentalSetupPanel eyebrow and create form", () => {
   afterEach(() => { clearSWRCache(); });
   it("derives the panel eyebrow from the selected unit's property label", async () => {
     await fetchWithDedupe("rental:setup", () => Promise.resolve({ units: [{ id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "occupied" }], leases: [], leaseMemberships: [], tenants: [], openCharges: [] }));
-    const markup = renderToStaticMarkup(<RentalSetupPanel />);
+    const markup = renderClientMarkup(<RentalSetupPanel />);
     expect(markup).toContain("930 Highland Drive setup");
     expect(markup).not.toContain("Kent Avenue setup");
   });
   it("ships the create form with blank fields instead of another property's sample data", async () => {
     await fetchWithDedupe("rental:setup", () => Promise.resolve({ units: [], leases: [], leaseMemberships: [], tenants: [], openCharges: [] }));
-    const markup = renderToStaticMarkup(<RentalSetupPanel />);
+    const markup = renderClientMarkup(<RentalSetupPanel />);
     expect(markup).toContain("Create a new property / unit");
     expect(markup).not.toContain('value="4800-kent-ave"');
     expect(markup).not.toContain('value="Main residence"');
@@ -151,7 +151,7 @@ describe("RentalSetupPanel eyebrow and create form", () => {
   });
   it("renders structured address fields on the create form", async () => {
     await fetchWithDedupe("rental:setup", () => Promise.resolve({ units: [], leases: [], leaseMemberships: [], tenants: [], openCharges: [] }));
-    const markup = renderToStaticMarkup(<RentalSetupPanel />);
+    const markup = renderClientMarkup(<RentalSetupPanel />);
     expect(markup).toContain("Property address");
     expect(markup).toContain('name="addressStreet"');
     expect(markup).toContain('name="addressUnit"');
@@ -165,7 +165,7 @@ describe("RentalSetupPanel eyebrow and create form", () => {
     const withAddress = { id: "unit_1", label: "308 Paula", property_id: "308-paula", status: "occupied",
       address_street: "308 Paula St", address_unit: "", address_city: "Groves", address_state: "TX", address_zip: "77605" };
     const legacy = { id: "unit_2", label: "930 Highland Drive", property_id: "930-highland-drive", status: "available" };
-    const markup = renderToStaticMarkup(<RentalSetupPanel initialUnits={[withAddress, legacy]} />);
+    const markup = renderClientMarkup(<RentalSetupPanel initialUnits={[withAddress, legacy]} />);
     expect(markup).toContain("308 Paula St, Groves, TX 77605");
     expect(markup).toContain("930 Highland Drive");
     expect(markup).toContain(">Address</dt>");

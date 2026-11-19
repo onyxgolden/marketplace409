@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { useStaleWhileRevalidate } from "./useStaleWhileRevalidate";
 import { clearSWRCache, setCacheIdentity } from "./swrCache";
+import { markSWRHydrated, resetSWRHydration } from "./swrHydration";
 
 function Probe({ cacheKey, fetcher }) {
   const { data, isLoading } = useStaleWhileRevalidate(cacheKey, fetcher, { ttlMs: 60000 });
@@ -19,6 +20,11 @@ function mountProbe(cacheKey, fetcher) {
 
 beforeEach(() => {
   clearSWRCache();
+  // These tests exercise the identity-change lifecycle in the running app,
+  // which is post-hydration: mark the hydration boundary ready so the probes
+  // serve their cache (the boundary itself is covered by swrHydration.test.jsx).
+  resetSWRHydration();
+  markSWRHydrated();
 });
 
 describe("useStaleWhileRevalidate identity-change lifecycle (PR #417 re-review)", () => {
