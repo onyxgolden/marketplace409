@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import PropertyOperatingCostsPanel, {
   applyOperatingDocumentProposal,
   buildCoverageVerificationPayload,
@@ -31,7 +31,7 @@ describe("PropertyOperatingCostsPanel", () => {
     );
 
     const markup =
-      renderToStaticMarkup(
+      renderClientMarkup(
         <PropertyOperatingCostsPanel />,
       );
 

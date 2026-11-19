@@ -1,8 +1,13 @@
-// Financial slice warm-switch contract: the converted financial panels serve cached
-// data on first paint with no loading flash, keep last-good data when a refresh fails,
-// and only show the ForgeStates skeleton when nothing is cached.
+// @vitest-environment jsdom
+// Financial slice warm-switch contract (updated for the shared SWR hydration
+// boundary): the server/first paint is always the loading skeleton, even with a
+// warm cache -- persisted data must never render before hydration (React #418).
+// After hydration, the converted financial panels serve cached data instantly
+// with no loading flash, keep last-good data when a refresh fails, and only
+// show the ForgeStates skeleton when nothing is cached.
 import { beforeEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import FinancialAccountBalancesPanel from "./FinancialAccountBalancesPanel.jsx";
 import FinancialAssetsPanel from "./FinancialAssetsPanel.jsx";
@@ -102,107 +107,114 @@ beforeEach(() => { clearSWRCache(); });
 describe("financial slice warm-switch behavior", () => {
   it("renders the cached account tree instantly with no loading flash", async () => {
     await fetchWithDedupe("financial:account-balances", () => Promise.resolve(balancesPayload));
-    const html = renderToStaticMarkup(<FinancialAccountBalancesPanel />);
+    const html = renderClientMarkup(<FinancialAccountBalancesPanel />);
     expect(html).toContain("Net Worth");
     expect(html).toContain("$2,500.00");
     expect(html).not.toContain("Loading accounts");
   });
 
   it("shows the account skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<FinancialAccountBalancesPanel />);
+    const html = renderClientMarkup(<FinancialAccountBalancesPanel />);
     expect(html).toContain("Loading accounts…");
   });
 
   it("keeps the last good balances visible when a refresh fails", async () => {
     await fetchWithDedupe("financial:account-balances", () => Promise.resolve(balancesPayload));
     await fetchWithDedupe("financial:account-balances", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(<FinancialAccountBalancesPanel />);
+    const html = renderClientMarkup(<FinancialAccountBalancesPanel />);
     expect(html).toContain("Net Worth");
     expect(html).not.toContain("Loading accounts");
   });
 
   it("renders the cached asset registry instantly with no loading flash", async () => {
     await fetchWithDedupe("financial:assets", () => Promise.resolve(assetsPayload));
-    const html = renderToStaticMarkup(<FinancialAssetsPanel />);
+    const html = renderClientMarkup(<FinancialAssetsPanel />);
     expect(html).toContain("F-150");
     expect(html).toContain("$25,000.00");
     expect(html).not.toContain("Loading assets");
   });
 
   it("shows the asset skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<FinancialAssetsPanel />);
+    const html = renderClientMarkup(<FinancialAssetsPanel />);
     expect(html).toContain("Loading assets…");
   });
 
   it("renders the cached investment registry instantly with no loading flash", async () => {
     await fetchWithDedupe("financial:investment-accounts", () => Promise.resolve(investmentPayload));
-    const html = renderToStaticMarkup(<InvestmentAccountsPanel />);
+    const html = renderClientMarkup(<InvestmentAccountsPanel />);
     expect(html).toContain("Brokerage Main");
     expect(html).toContain("$50,000.00");
     expect(html).not.toContain("Loading investment accounts");
   });
 
   it("shows the investment skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<InvestmentAccountsPanel />);
+    const html = renderClientMarkup(<InvestmentAccountsPanel />);
     expect(html).toContain("Loading investment accounts…");
   });
 
   it("renders the cached anomaly alerts instantly with no loading flash", async () => {
     await fetchWithDedupe("financial:anomalies", () => Promise.resolve(anomaliesPayload));
-    const html = renderToStaticMarkup(<AnomalyAlertsPanel />);
+    const html = renderClientMarkup(<AnomalyAlertsPanel />);
     expect(html).toContain("Spending spike: Supplies");
     expect(html).not.toContain("Scanning the books");
   });
 
   it("shows the anomaly skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<AnomalyAlertsPanel />);
+    const html = renderClientMarkup(<AnomalyAlertsPanel />);
     expect(html).toContain("Scanning the books…");
   });
 
   it("keeps the last good anomaly scan visible when a refresh fails", async () => {
     await fetchWithDedupe("financial:anomalies", () => Promise.resolve(anomaliesPayload));
     await fetchWithDedupe("financial:anomalies", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(<AnomalyAlertsPanel />);
+    const html = renderClientMarkup(<AnomalyAlertsPanel />);
     expect(html).toContain("Spending spike: Supplies");
     expect(html).not.toContain("Scanning the books");
   });
 
   it("renders the cached cash forecast instantly with no loading flash", async () => {
     await fetchWithDedupe("financial:forecast:90", () => Promise.resolve(forecastPayload));
-    const html = renderToStaticMarkup(<CashForecastPanel />);
+    const html = renderClientMarkup(<CashForecastPanel />);
     expect(html).toContain("Operating Checking");
     expect(html).not.toContain("Projecting balances");
   });
 
   it("shows the forecast skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<CashForecastPanel />);
+    const html = renderClientMarkup(<CashForecastPanel />);
     expect(html).toContain("Projecting balances…");
   });
 
   it("renders the cached debt-payoff comparison instantly with no loading flash", async () => {
     await fetchWithDedupe("financial:debt-payoff:500:0", () => Promise.resolve(debtPayload));
-    const html = renderToStaticMarkup(<DebtPayoffPanel />);
+    const html = renderClientMarkup(<DebtPayoffPanel />);
     expect(html).toContain("Home Equity");
     expect(html).toContain("$1,200.50");
     expect(html).not.toContain("Building the payoff comparison");
   });
 
   it("shows the debt-payoff skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<DebtPayoffPanel />);
+    const html = renderClientMarkup(<DebtPayoffPanel />);
     expect(html).toContain("Building the payoff comparison…");
   });
 
   it("renders the cached month comparison instantly with no loading flash", async () => {
     const key = `financial:comparison:${lastThreeCalendarMonths().join(",")}`;
     await fetchWithDedupe(key, () => Promise.resolve(comparisonPayload));
-    const html = renderToStaticMarkup(<MonthComparisonPanel />);
+    const html = renderClientMarkup(<MonthComparisonPanel />);
     expect(html).toContain("Rent income");
     expect(html).toContain("Sep 2026");
     expect(html).not.toContain("Loading the comparison");
   });
 
   it("shows the month-comparison skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<MonthComparisonPanel />);
+    const html = renderClientMarkup(<MonthComparisonPanel />);
     expect(html).toContain("Loading the comparison…");
+  });
+
+  it("server/first paint shows the loading skeleton even with a warm cache (no #418)", async () => {
+    await fetchWithDedupe("financial:account-balances", () => Promise.resolve(balancesPayload));
+    const html = renderToStaticMarkup(<FinancialAccountBalancesPanel />);
+    expect(html).toContain("Loading accounts");
+    expect(html).not.toContain("Net Worth");
   });
 });

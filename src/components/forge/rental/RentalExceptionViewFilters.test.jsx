@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import { resetRentalSummaryClient } from "./rentalSummaryClient";
@@ -101,7 +101,7 @@ describe("filtered queue views", () => {
       tenants: [{ id: "t1", display_name: "Tenant One" }],
       openCharges: [],
     }));
-    const markup = renderToStaticMarkup(<RentalSetupPanel initialViewFilter="vacant" initialUnits={[{ id: "u1" }, { id: "u2" }]} />);
+    const markup = renderClientMarkup(<RentalSetupPanel initialViewFilter="vacant" initialUnits={[{ id: "u1" }, { id: "u2" }]} />);
     expect(markup).toContain("Vacant units only");
     expect(markup).toContain("Vacant Unit");
     expect(markup).not.toContain("Occupied Unit");
@@ -120,7 +120,7 @@ describe("filtered queue views", () => {
       schedules: [],
       leaseMemberships: [],
     }));
-    const markup = renderToStaticMarkup(<RentalLeasePanel initialViewFilter="expiring" initialShowCreate={false} />);
+    const markup = renderClientMarkup(<RentalLeasePanel initialViewFilter="expiring" initialShowCreate={false} />);
     expect(markup).toContain("Leases expiring within 90 days");
     expect(markup).toContain("1 record");
   });
@@ -137,7 +137,7 @@ describe("filtered queue views", () => {
       schedules: [],
       billingEnabled: false,
     }));
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialViewFilter="overdue" initialAccount={null} />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialViewFilter="overdue" initialAccount={null} />);
     expect(markup).toContain("Overdue rent charges");
     expect(markup).toContain("1 record");
     expect(markup).toContain("2026-08");
@@ -155,7 +155,7 @@ describe("filtered queue views", () => {
       workOrders: [],
       workEvents: [],
     }));
-    const markup = renderToStaticMarkup(<RentalMaintenancePanel initialViewFilter="open" />);
+    const markup = renderClientMarkup(<RentalMaintenancePanel initialViewFilter="open" />);
     expect(markup).toContain("Open maintenance requests");
     expect(markup).toContain("2 records");
     expect(markup).toContain("Leaky faucet");
@@ -167,7 +167,7 @@ describe("filtered queue views", () => {
     await fetchWithDedupe("rental:maintenance", () => Promise.resolve({
       maintenanceRequests: [], contractors: [], workOrders: [], workEvents: [],
     }));
-    const markup = renderToStaticMarkup(<RentalMaintenancePanel />);
+    const markup = renderClientMarkup(<RentalMaintenancePanel />);
     expect(markup).not.toContain("data-view-filter-banner");
   });
 });
@@ -180,7 +180,7 @@ describe("buildRentalSurface view-filter plumbing", () => {
     await fetchWithDedupe("rental:maintenance", () => Promise.resolve({
       maintenanceRequests: [], contractors: [], workOrders: [], workEvents: [],
     }));
-    const markup = renderToStaticMarkup(buildRentalSurface("maintenance", { viewFilter: "open" }));
+    const markup = renderClientMarkup(buildRentalSurface("maintenance", { viewFilter: "open" }));
     expect(markup).toContain("Open maintenance requests");
   });
 
@@ -188,7 +188,7 @@ describe("buildRentalSurface view-filter plumbing", () => {
     await fetchWithDedupe("rental:maintenance", () => Promise.resolve({
       maintenanceRequests: [], contractors: [], workOrders: [], workEvents: [],
     }));
-    const markup = renderToStaticMarkup(buildRentalSurface("maintenance", {}));
+    const markup = renderClientMarkup(buildRentalSurface("maintenance", {}));
     expect(markup).not.toContain("data-view-filter-banner");
   });
 });

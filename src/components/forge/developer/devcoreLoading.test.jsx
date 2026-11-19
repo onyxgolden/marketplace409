@@ -1,8 +1,13 @@
+// @vitest-environment jsdom
+// (Updated for the shared SWR hydration boundary: the server/first paint is always the
+// loading skeleton, even with a warm cache -- React #418; cached data appears instantly
+// after hydration, with no loading flash.)
 // Slice warm-switch contract (developer + core): the converted panels serve
-// cached data on first paint with no loading flash, and keep last-good data
+// cached data after hydration with no loading flash, and keep last-good data
 // when a refresh fails.
 import { beforeEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import EngineeringBrainPanel from "./EngineeringBrainPanel.jsx";
 import UiImprovementManagerPanel from "./UiImprovementManagerPanel.jsx";
@@ -124,40 +129,40 @@ beforeEach(() => { clearSWRCache(); });
 describe("developer slice warm-switch behavior", () => {
   it("renders cached engineering-brain results instantly with no loading flash", async () => {
     await fetchWithDedupe(brainKey, () => Promise.resolve(brainPayload));
-    const html = renderToStaticMarkup(<EngineeringBrainPanel />);
+    const html = renderClientMarkup(<EngineeringBrainPanel />);
     expect(html).toContain("src/lib/budgeting/plan.js");
     expect(html).not.toContain("Searching the engineering brain");
   });
 
   it("shows the engineering-brain skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<EngineeringBrainPanel />);
+    const html = renderClientMarkup(<EngineeringBrainPanel />);
     expect(html).toContain("Searching the engineering brain…");
   });
 
   it("keeps the last good brain results visible when a refresh fails", async () => {
     await fetchWithDedupe(brainKey, () => Promise.resolve(brainPayload));
     await fetchWithDedupe(brainKey, () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(<EngineeringBrainPanel />);
+    const html = renderClientMarkup(<EngineeringBrainPanel />);
     expect(html).toContain("src/lib/budgeting/plan.js");
     expect(html).not.toContain("Searching the engineering brain");
   });
 
   it("renders cached UI-improvement proposals instantly with no loading flash", async () => {
     await fetchWithDedupe("ui-improvement:proposals", () => Promise.resolve(proposalsPayload));
-    const html = renderToStaticMarkup(<UiImprovementManagerPanel />);
+    const html = renderClientMarkup(<UiImprovementManagerPanel />);
     expect(html).toContain("Horizontal overflow");
     expect(html).not.toContain("Loading proposals");
   });
 
   it("shows the proposals skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<UiImprovementManagerPanel />);
+    const html = renderClientMarkup(<UiImprovementManagerPanel />);
     expect(html).toContain("Loading proposals…");
   });
 
   it("keeps the last good proposals visible when a refresh fails", async () => {
     await fetchWithDedupe("ui-improvement:proposals", () => Promise.resolve(proposalsPayload));
     await fetchWithDedupe("ui-improvement:proposals", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(<UiImprovementManagerPanel />);
+    const html = renderClientMarkup(<UiImprovementManagerPanel />);
     expect(html).toContain("Horizontal overflow");
     expect(html).not.toContain("Loading proposals");
   });
@@ -166,34 +171,34 @@ describe("developer slice warm-switch behavior", () => {
 describe("call shield + workspace warm-switch behavior", () => {
   it("renders cached call-shield cases and imports instantly with no loading flash", async () => {
     await fetchWithDedupe("call-shield:home", () => Promise.resolve(callShieldPayload));
-    const html = renderToStaticMarkup(<CallShieldHome />);
+    const html = renderClientMarkup(<CallShieldHome />);
     expect(html).toContain("Cruise Agency");
     expect(html).toContain("555-0100");
     expect(html).not.toContain("Loading Call Shield");
   });
 
   it("shows the call-shield skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<CallShieldHome />);
+    const html = renderClientMarkup(<CallShieldHome />);
     expect(html).toContain("Loading Call Shield…");
   });
 
   it("keeps the last good call-shield lists visible when a refresh fails", async () => {
     await fetchWithDedupe("call-shield:home", () => Promise.resolve(callShieldPayload));
     await fetchWithDedupe("call-shield:home", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(<CallShieldHome />);
+    const html = renderClientMarkup(<CallShieldHome />);
     expect(html).toContain("Cruise Agency");
     expect(html).not.toContain("Loading Call Shield");
   });
 
   it("renders cached workspace members instantly with no loading flash", async () => {
     await fetchWithDedupe("workspace:members", () => Promise.resolve(membersPayload));
-    const html = renderToStaticMarkup(<WorkspaceMembersPanel />);
+    const html = renderClientMarkup(<WorkspaceMembersPanel />);
     expect(html).toContain("brandy@example.com");
     expect(html).not.toContain("Loading membership status");
   });
 
   it("shows the members skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<WorkspaceMembersPanel />);
+    const html = renderClientMarkup(<WorkspaceMembersPanel />);
     expect(html).toContain("Loading membership status…");
   });
 });
@@ -201,41 +206,47 @@ describe("call shield + workspace warm-switch behavior", () => {
 describe("health + budget warm-switch behavior", () => {
   it("renders cached health records instantly with no loading flash", async () => {
     await fetchWithDedupe("health:dashboard:ws_test", () => Promise.resolve(healthPayload));
-    const html = renderToStaticMarkup(<HealthDashboard initialMembership={{ workspace_id: "ws_test" }} />);
+    const html = renderClientMarkup(<HealthDashboard initialMembership={{ workspace_id: "ws_test" }} />);
     expect(html).toContain("jason@example.com");
     expect(html).not.toContain("Loading private health records");
   });
 
   it("shows the health skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<HealthDashboard initialMembership={{ workspace_id: "ws_cold" }} />);
+    const html = renderClientMarkup(<HealthDashboard initialMembership={{ workspace_id: "ws_cold" }} />);
     expect(html).toContain("Loading private health records…");
   });
 
   it("keeps the last good health records visible when a refresh fails", async () => {
     await fetchWithDedupe("health:dashboard:ws_test", () => Promise.resolve(healthPayload));
     await fetchWithDedupe("health:dashboard:ws_test", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(<HealthDashboard initialMembership={{ workspace_id: "ws_test" }} />);
+    const html = renderClientMarkup(<HealthDashboard initialMembership={{ workspace_id: "ws_test" }} />);
     expect(html).toContain("jason@example.com");
     expect(html).not.toContain("Loading private health records");
   });
 
   it("renders the cached budget instantly with no loading flash", async () => {
     await fetchWithDedupe(`budget:${budgetMonth()}:personal`, () => Promise.resolve(budgetPayload));
-    const html = renderToStaticMarkup(<BudgetPanel />);
+    const html = renderClientMarkup(<BudgetPanel />);
     expect(html).toContain("Groceries");
     expect(html).not.toContain("Loading your budget");
   });
 
   it("shows the budget skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<BudgetPanel />);
+    const html = renderClientMarkup(<BudgetPanel />);
     expect(html).toContain("Loading your budget…");
   });
 
   it("keeps the last good budget visible when a refresh fails", async () => {
     await fetchWithDedupe(`budget:${budgetMonth()}:personal`, () => Promise.resolve(budgetPayload));
     await fetchWithDedupe(`budget:${budgetMonth()}:personal`, () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(<BudgetPanel />);
+    const html = renderClientMarkup(<BudgetPanel />);
     expect(html).toContain("Groceries");
     expect(html).not.toContain("Loading your budget");
+  });
+  it("server/first paint shows the loading skeleton even with a warm cache (no #418)", async () => {
+    await fetchWithDedupe(brainKey, () => Promise.resolve(brainPayload));
+    const html = renderToStaticMarkup(<EngineeringBrainPanel />);
+    expect(html).toContain("Searching the engineering brain");
+    expect(html).not.toContain("src/lib/budgeting/plan.js");
   });
 });

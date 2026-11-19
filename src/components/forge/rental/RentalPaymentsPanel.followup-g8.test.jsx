@@ -3,7 +3,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache } from "../../../hooks/swrCache";
 import RentalPaymentsPanel from "./RentalPaymentsPanel";
 
@@ -19,7 +19,7 @@ const base = {
 const schedule = (overrides = {}) => ({ id: "schedule_1", lease_id: "lease_1", amount_cents: 130000, due_day: 1, status: "active", payment_frequency: "monthly", ...overrides });
 
 function renderSetup(data) {
-  return renderToStaticMarkup(<RentalPaymentsPanel initialData={data} initialAccount={null} initialShowSetup />);
+  return renderClientMarkup(<RentalPaymentsPanel initialData={data} initialAccount={null} initialShowSetup />);
 }
 
 describe("RentalPaymentsPanel follow-up — G8 payment-frequency override", () => {

@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import HealthDashboard, { normalizeHealthSnapshot } from "./HealthDashboard";
 import { clearSWRCache, seedCacheEntry } from "@/hooks/swrCache";
+import { markSWRHydrated, resetSWRHydration } from "@/hooks/swrHydration";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -193,6 +194,11 @@ describe("HealthDashboard with a stale persisted snapshot (P1-A)", () => {
 
   beforeEach(() => {
     clearSWRCache();
+    // These tests mount the dashboard without the root layout, so mark
+    // hydration here to simulate the post-hydration app (the boundary itself
+    // is covered by swrHydration.test.jsx).
+    resetSWRHydration();
+    markSWRHydrated();
   });
 
   afterEach(() => {

@@ -1,9 +1,14 @@
+// @vitest-environment jsdom
+// (Updated for the shared SWR hydration boundary: the server/first paint is always the
+// loading skeleton, even with a warm cache -- React #418; cached data appears instantly
+// after hydration, with no loading flash.)
 // Property slice warm-switch contract: the converted property panels serve
-// cached data on first paint with no loading flash, keep last-good data when
+// cached data after hydration with no loading flash, keep last-good data when
 // a refresh fails, and use the shared Forge loading/error/empty states for
 // the cold, failed, and empty cases.
 import { beforeEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import PropertyValuationPanel from "./PropertyValuationPanel.jsx";
 import PropertyOperatingCostsPanel from "./PropertyOperatingCostsPanel.jsx";
@@ -42,7 +47,7 @@ beforeEach(() => { clearSWRCache(); });
 describe("property slice warm-switch behavior", () => {
   it("renders cached valuations instantly with no loading flash", async () => {
     await seedValuationCache();
-    const html = renderToStaticMarkup(<PropertyValuationPanel />);
+    const html = renderClientMarkup(<PropertyValuationPanel />);
     // The landing's "Recorded property values" count renders from cache.
     expect(html).toContain(">1</div>");
     expect(html).not.toContain("Loading property valuations");
@@ -56,7 +61,7 @@ describe("property slice warm-switch behavior", () => {
       "property:valuations",
       () => new Promise(() => {}),
     );
-    const html = renderToStaticMarkup(<PropertyValuationPanel />);
+    const html = renderClientMarkup(<PropertyValuationPanel />);
     expect(html).toContain(">1</div>");
     expect(html).toContain("Updating…");
     expect(html).not.toContain("Loading property valuations");
@@ -68,19 +73,19 @@ describe("property slice warm-switch behavior", () => {
       "property:valuations",
       () => Promise.reject(new Error("refresh failed")),
     ).catch(() => {});
-    const html = renderToStaticMarkup(<PropertyValuationPanel />);
+    const html = renderClientMarkup(<PropertyValuationPanel />);
     expect(html).toContain(">1</div>");
     expect(html).not.toContain("Loading property valuations");
   });
 
   it("shows the valuation loading state only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<PropertyValuationPanel />);
+    const html = renderClientMarkup(<PropertyValuationPanel />);
     expect(html).toContain("Loading property valuations…");
   });
 
   it("shows the empty valuation count honestly when the cached list is empty", async () => {
     await seedValuationCache([]);
-    const html = renderToStaticMarkup(<PropertyValuationPanel />);
+    const html = renderClientMarkup(<PropertyValuationPanel />);
     // The landing's "Recorded property values" count renders 0 from cache --
     // no spinner, no blank panel. The ForgeEmptyState covers the history
     // workflow.
@@ -89,7 +94,7 @@ describe("property slice warm-switch behavior", () => {
   });
 
   it("shows the operating-costs loading state only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<PropertyOperatingCostsPanel />);
+    const html = renderClientMarkup(<PropertyOperatingCostsPanel />);
     expect(html).toContain("Loading operating costs…");
   });
 
@@ -98,7 +103,7 @@ describe("property slice warm-switch behavior", () => {
       "property:operating-obligations",
       () => Promise.reject(new Error("network down")),
     ).catch(() => {});
-    const html = renderToStaticMarkup(<PropertyOperatingCostsPanel />);
+    const html = renderClientMarkup(<PropertyOperatingCostsPanel />);
     expect(html).toContain("Operating costs could not be loaded.");
     expect(html).not.toContain("Loading operating costs");
   });
@@ -115,7 +120,7 @@ describe("property slice warm-switch behavior", () => {
         reconciledFinancialEventId: "event_1",
       }]),
     );
-    const html = renderToStaticMarkup(<PropertyOperatingCostsPanel />);
+    const html = renderClientMarkup(<PropertyOperatingCostsPanel />);
     expect(html).toContain("data-property-operating-costs-panel");
     expect(html).not.toContain("Loading operating costs");
   });
@@ -132,7 +137,7 @@ describe("property slice warm-switch behavior", () => {
         createdAt: "2026-08-09T00:00:00.000Z",
       }]),
     );
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <PropertyEvidenceHistoryPanel propertyId="prop_1" />,
     );
     expect(html).toContain("Invoice 603.pdf");
@@ -140,7 +145,7 @@ describe("property slice warm-switch behavior", () => {
   });
 
   it("shows the evidence loading state only when nothing is cached", () => {
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <PropertyEvidenceHistoryPanel propertyId="prop_1" />,
     );
     expect(html).toContain("Loading private evidence…");
@@ -162,10 +167,16 @@ describe("property slice warm-switch behavior", () => {
       "property-evidence:prop_1",
       () => Promise.reject(new Error("refresh failed")),
     ).catch(() => {});
-    const html = renderToStaticMarkup(
+    const html = renderClientMarkup(
       <PropertyEvidenceHistoryPanel propertyId="prop_1" />,
     );
     expect(html).toContain("Invoice 603.pdf");
     expect(html).not.toContain("Loading private evidence");
+  });
+  it("server/first paint shows the loading skeleton even with a warm cache (no #418)", async () => {
+    await seedValuationCache();
+    const html = renderToStaticMarkup(<PropertyValuationPanel />);
+    expect(html).toContain("Loading property valuations");
+    expect(html).not.toContain(">1</div>");
   });
 });

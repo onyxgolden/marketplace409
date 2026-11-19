@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import{afterEach,describe,expect,it}from"vitest";import{renderToStaticMarkup}from"react-dom/server";import{clearSWRCache,fetchWithDedupe}from"../../../hooks/swrCache";import RentalLeaseLifecyclePanel,{calculateProrationCents,resolveLeaseIdentity,leaseOptionLabel}from"./RentalLeaseLifecyclePanel.jsx";afterEach(()=>{clearSWRCache()});describe("RentalLeaseLifecyclePanel",()=>{it("requires owner-controlled changes and fees",async()=>{await fetchWithDedupe("rental:lease-lifecycle",()=>Promise.resolve({leases:[],leaseChanges:[],lateFeeRules:[],lateFeeAssessments:[],tenants:[],units:[],properties:[]}));const html=renderToStaticMarkup(<RentalLeaseLifecyclePanel/>);expect(html).toContain("Renewals, amendments, and prorating");expect(html).toContain("only an explicit owner action");expect(html).toContain("qualified Texas counsel");});it("calculates and rounds daily proration deterministically",()=>{expect(calculateProrationCents(200000,10,31)).toBe(64516);expect(calculateProrationCents(200000,32,31)).toBeNull();});it("offers an end-lease form for active leases",async()=>{await fetchWithDedupe("rental:lease-lifecycle",()=>Promise.resolve({leases:[{id:"lease_active",unit_id:"unit_1",property_id:"property-1",status:"active",monthly_rent_cents:130000}],leaseChanges:[],lateFeeRules:[],lateFeeAssessments:[],tenants:[],units:[{id:"unit_1",label:"1218 Wagner",property_id:"property-1"}],properties:[],leaseMemberships:[],schedules:[]}));const html=renderToStaticMarkup(<RentalLeaseLifecyclePanel/>);expect(html).toContain("End an active lease");expect(html).toContain("End this lease");});});
+import{afterEach,describe,expect,it}from"vitest";import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";import{clearSWRCache,fetchWithDedupe}from"../../../hooks/swrCache";import RentalLeaseLifecyclePanel,{calculateProrationCents,resolveLeaseIdentity,leaseOptionLabel}from"./RentalLeaseLifecyclePanel.jsx";afterEach(()=>{clearSWRCache()});describe("RentalLeaseLifecyclePanel",()=>{it("requires owner-controlled changes and fees",async()=>{await fetchWithDedupe("rental:lease-lifecycle",()=>Promise.resolve({leases:[],leaseChanges:[],lateFeeRules:[],lateFeeAssessments:[],tenants:[],units:[],properties:[]}));const html=renderClientMarkup(<RentalLeaseLifecyclePanel/>);expect(html).toContain("Renewals, amendments, and prorating");expect(html).toContain("only an explicit owner action");expect(html).toContain("qualified Texas counsel");});it("calculates and rounds daily proration deterministically",()=>{expect(calculateProrationCents(200000,10,31)).toBe(64516);expect(calculateProrationCents(200000,32,31)).toBeNull();});it("offers an end-lease form for active leases",async()=>{await fetchWithDedupe("rental:lease-lifecycle",()=>Promise.resolve({leases:[{id:"lease_active",unit_id:"unit_1",property_id:"property-1",status:"active",monthly_rent_cents:130000}],leaseChanges:[],lateFeeRules:[],lateFeeAssessments:[],tenants:[],units:[{id:"unit_1",label:"1218 Wagner",property_id:"property-1"}],properties:[],leaseMemberships:[],schedules:[]}));const html=renderClientMarkup(<RentalLeaseLifecyclePanel/>);expect(html).toContain("End an active lease");expect(html).toContain("End this lease");});});
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -101,7 +101,7 @@ describe("leaseOptionLabel", () => {
 
 describe("RentalLeaseLifecyclePanel Lease Changes selector", () => {
   it("shows human-readable identity for every lease option while keeping the raw lease id as the option value", () => {
-    const markup = renderToStaticMarkup(<RentalLeaseLifecyclePanel initialData={data} />);
+    const markup = renderClientMarkup(<RentalLeaseLifecyclePanel initialData={data} />);
     expect(markup).toContain(`value="${SANDBOX_LEASE_ID}"`);
     expect(markup).toContain(`value="${OTHER_LEASE_ID}"`);
     expect(markup).toContain("Brandy Morgan");
@@ -112,7 +112,7 @@ describe("RentalLeaseLifecyclePanel Lease Changes selector", () => {
   it("does not silently omit identity for a lease with no resolvable tenant, unit, or property", () => {
     const orphanLease = { id: "rental_lease_orphan_1", unit_id: "unit_missing", property_id: null, status: "active", monthly_rent_cents: 50000 };
     const orphanData = { ...data, leases: [orphanLease], leaseMemberships: [] };
-    const markup = renderToStaticMarkup(<RentalLeaseLifecyclePanel initialData={orphanData} />);
+    const markup = renderClientMarkup(<RentalLeaseLifecyclePanel initialData={orphanData} />);
     expect(markup).toContain("Unknown tenant");
     expect(markup).toContain("Unknown unit");
     expect(markup).toContain("Unknown property");
@@ -205,7 +205,7 @@ describe("RentalLeaseLifecyclePanel Lease Changes field labeling", () => {
   });
 
   it("explains that an amendment modifies the existing lease rather than starting a new one", () => {
-    const markup = renderToStaticMarkup(<RentalLeaseLifecyclePanel initialData={leaseData} />);
+    const markup = renderClientMarkup(<RentalLeaseLifecyclePanel initialData={leaseData} />);
     expect(markup.toLowerCase()).toContain("does not start a new lease");
   });
 });
@@ -292,7 +292,7 @@ describe("RentalLeaseLifecyclePanel controls sweep — G1", () => {
       units: [{ id: "unit_1", label: "1218 Wagner", property_id: "property-1" }, { id: "unit_2", label: "Rear unit", property_id: "property-2" }],
       properties: [], leaseMemberships: [], schedules: [],
     }));
-    const html = renderToStaticMarkup(<RentalLeaseLifecyclePanel />);
+    const html = renderClientMarkup(<RentalLeaseLifecyclePanel />);
     expect(html).toContain("Cancelled leases are not listed — they cannot be changed.");
     expect(html).not.toContain('value="lease_cancelled"');
     expect(html).toContain('value="lease_active"');

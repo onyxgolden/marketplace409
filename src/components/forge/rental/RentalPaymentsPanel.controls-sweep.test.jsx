@@ -3,7 +3,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache } from "../../../hooks/swrCache";
 import RentalPaymentsPanel, { isChargeVoidable } from "./RentalPaymentsPanel";
 
@@ -25,7 +25,7 @@ function withPayment(payment) {
 }
 
 function render(payment) {
-  return renderToStaticMarkup(<RentalPaymentsPanel initialData={withPayment(payment)} initialAccount={null} />);
+  return renderClientMarkup(<RentalPaymentsPanel initialData={withPayment(payment)} initialAccount={null} />);
 }
 
 describe("RentalPaymentsPanel controls sweep — B2 void and refund", () => {
@@ -162,7 +162,7 @@ describe("RentalPaymentsPanel controls sweep — G7 billing-setup schedule contr
   const schedule = (status) => ({ id: "schedule_1", lease_id: "lease_1", amount_cents: 130000, due_day: 1, status, payment_frequency: "monthly" });
 
   function renderSetup(status) {
-    return renderToStaticMarkup(<RentalPaymentsPanel initialData={{ ...g7Base, schedules: [schedule(status)] }} initialAccount={null} initialShowSetup />);
+    return renderClientMarkup(<RentalPaymentsPanel initialData={{ ...g7Base, schedules: [schedule(status)] }} initialAccount={null} initialShowSetup />);
   }
 
   it("offers Pause and Edit on an active schedule", () => {

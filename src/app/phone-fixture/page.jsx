@@ -37,6 +37,12 @@
  *                 components take their data as props). The phone-width
  *                 check exercises "Review before saving" too, a pure
  *                 client-side state transition with no network call.
+ *   health-dashboard — the real HealthDashboard with a pre-#833 persisted
+ *                 snapshot (no `documents` collection) seeded into the
+ *                 in-memory SWR cache. Browser-level proof the P1-A
+ *                 TypeError fix holds: the exact shape that crashed
+ *                 production must render with no throw and no error
+ *                 boundary.
  *
  * The case comes from window.location.search after mount (no
  * useSearchParams, so no Suspense boundary is needed). The page sets
@@ -53,7 +59,8 @@ import WorkPackagePageHeader from "@/app/forge/work/page-header";
 import WorkspaceShell from "@/components/workspace-shell";
 import ForgeApplicationRail from "@/components/forge/ForgeApplicationRail";
 import RentalOverviewPanel from "@/components/forge/rental/RentalOverviewPanel";
-import { HealthLabManualEntryForm, HealthSourceDocumentCard } from "@/components/forge/health/HealthDashboard";
+import HealthDashboard, { HealthLabManualEntryForm, HealthSourceDocumentCard } from "@/components/forge/health/HealthDashboard";
+import { seedCacheEntry } from "@/hooks/swrCache";
 
 function daysFromNow(days) {
   return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
@@ -255,6 +262,42 @@ function HealthCase() {
   );
 }
 
+// Health-dashboard case — the real HealthDashboard with a pre-#833 persisted
+// snapshot (every collection except `documents`, which PR #833 added). The
+// snapshot is seeded into the in-memory SWR cache synchronously during
+// render, so the dashboard renders it on first paint; a missing
+// `documents` collection must NOT throw (normalizeHealthSnapshot fills it
+// with []). This is the browser-level proof for the P1-A TypeError fix:
+// the exact shape that crashed production with
+// `Cannot read properties of undefined (reading 'filter')`.
+// No Supabase call happens on render (the seeded entry is fresh, so the
+// hook does not refetch); auth.getUser only drives the default profile.
+const HEALTH_DASHBOARD_PRE833_SNAPSHOT = {
+  profiles: [{ id: "profile-1", display_name: "jasonmorgan99@gmail.com", profile_type: "self" }],
+  conditions: [{ id: "cond-1", profile_id: "profile-1", name: "High cholesterol", status: "active" }],
+  careTeam: [],
+  labs: [
+    { id: "lab-1", profile_id: "profile-1", marker_name: "LDL cholesterol", collected_on: "2026-08-10", value_numeric: 200, unit: "mg/dL", flag: "high", reference_low: null, reference_high: 100 },
+  ],
+  regimen: [],
+  measurements: [],
+  workouts: [],
+  timeline: [],
+  programs: [],
+  programDays: [],
+  // NOTE: no `documents` key — the pre-#833 shape.
+};
+function HealthDashboardCase() {
+  // Seed synchronously during render (SSR-safe: memory-only, no localStorage)
+  // so the dashboard's first render — server and client alike — reads it.
+  seedCacheEntry("health:dashboard:ws-1", HEALTH_DASHBOARD_PRE833_SNAPSHOT);
+  return (
+    <main data-testid="health-dashboard-fixture">
+      <HealthDashboard initialMembership={{ workspace_id: "ws-1" }} />
+    </main>
+  );
+}
+
 const CASES = {
   designer: DesignerCase,
   fccu: FccuCase,
@@ -264,18 +307,24 @@ const CASES = {
   "forge-header": ForgeHeaderCase,
   "rental-23": Rental23Case,
   health: HealthCase,
+  "health-dashboard": HealthDashboardCase,
 };
 
 export default function PhoneFixturePage() {
-  // The case comes from window.location.search — read it in the state
-  // initializer, not in an effect (setState-in-effect is a lint error
-  // and a cascading render). On the server window is absent, so the
-  // first render is the not-ready main and the client hydrates with
-  // the real case.
-  const [fixtureCase] = useState(() => {
-    if (typeof window === "undefined") return null;
-    return new URLSearchParams(window.location.search).get("case") || "designer";
-  });
+  // The case comes from window.location.search — read it in an effect after
+  // mount, NOT in the state initializer. Reading it during render makes the
+  // server render the "not ready" main while the client renders the real
+  // case — a hydration mismatch (React #418) on every fixture load, which
+  // forces a client re-render of the whole subtree and masks any real
+  // hydration issue inside the case under test. Rendering the same
+  // "not ready" main on server and client first render, then setting the
+  // case after mount, keeps the shell hydration-clean so the case's own
+  // hydration is genuinely exercised.
+  const [fixtureCase, setFixtureCase] = useState(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- deliberate mount-only read of client-only data (window.location.search); the first render intentionally matches the server.
+    setFixtureCase(new URLSearchParams(window.location.search).get("case") || "designer");
+  }, []);
   if (process.env.NODE_ENV === "production") notFound();
   if (!fixtureCase) return <main data-fixture-ready="false" />;
   const Case = CASES[fixtureCase];

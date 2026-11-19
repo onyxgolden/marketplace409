@@ -3,7 +3,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache } from "../../../hooks/swrCache";
 import PostIncomeForm from "./PostIncomeForm";
 import RentalBatchRentChecklist from "./RentalBatchRentChecklist";
@@ -49,7 +49,7 @@ describe("follow-up G9 — personal-check payments", () => {
   });
 
   it("Payments offline form offers Personal check", () => {
-    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={{ openCharges: [], payments: [], settlements: [], leases: [], units: [], tenants: [], leaseMemberships: [], schedules: [] }} initialAccount={null} initialShowOffline />);
+    const markup = renderClientMarkup(<RentalPaymentsPanel initialData={{ openCharges: [], payments: [], settlements: [], leases: [], units: [], tenants: [], leaseMemberships: [], schedules: [] }} initialAccount={null} initialShowOffline />);
     expect(markup).toContain('value="check"');
     expect(markup).toContain("Personal check");
   });

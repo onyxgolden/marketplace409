@@ -1,8 +1,13 @@
+// @vitest-environment jsdom
+// (Updated for the shared SWR hydration boundary: the server/first paint is always the
+// loading skeleton, even with a warm cache -- React #418; cached data appears instantly
+// after hydration, with no loading flash.)
 // Panels-slice warm-switch contract: the converted panels serve cached data
-// on first paint with no loading flash, and keep last-good data when a
+// after hydration with no loading flash, and keep last-good data when a
 // refresh fails. Loading skeletons appear only when nothing is cached.
 import { afterEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache, fetchWithDedupe } from "../../hooks/swrCache";
 import RecurringPaymentsPanel from "./RecurringPaymentsPanel.jsx";
 import ReconcileTransfersPanel from "./ReconcileTransfersPanel.jsx";
@@ -74,100 +79,106 @@ afterEach(() => { clearSWRCache(); });
 describe("panels slice warm-switch behavior", () => {
   it("renders cached recurring patterns instantly with no loading flash", async () => {
     await fetchWithDedupe("financial:recurring-patterns", () => Promise.resolve(recurringPatterns));
-    const html = renderToStaticMarkup(<RecurringPaymentsPanel />);
+    const html = renderClientMarkup(<RecurringPaymentsPanel />);
     expect(html).toContain("Recurring payments");
     expect(html).toContain("DuGood Checking");
     expect(html).not.toContain("Looking for recurring payments");
   });
 
   it("shows the recurring skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<RecurringPaymentsPanel />);
+    const html = renderClientMarkup(<RecurringPaymentsPanel />);
     expect(html).toContain("Looking for recurring payments…");
   });
 
   it("keeps the last good patterns visible when a refresh fails", async () => {
     await fetchWithDedupe("financial:recurring-patterns", () => Promise.resolve(recurringPatterns));
     await fetchWithDedupe("financial:recurring-patterns", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(<RecurringPaymentsPanel />);
+    const html = renderClientMarkup(<RecurringPaymentsPanel />);
     expect(html).toContain("DuGood Checking");
     expect(html).not.toContain("Looking for recurring payments");
   });
 
   it("renders the cached transfer preview instantly with no loading flash", async () => {
     await fetchWithDedupe("financial:reconcile-transfers", () => Promise.resolve(transfersPayload));
-    const html = renderToStaticMarkup(<ReconcileTransfersPanel />);
+    const html = renderClientMarkup(<ReconcileTransfersPanel />);
     expect(html).toContain("Transfers &amp; distributions");
     expect(html).toContain("Transfer to Share 0009");
     expect(html).not.toContain("Checking for misclassified transfers");
   });
 
   it("shows the transfer skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<ReconcileTransfersPanel />);
+    const html = renderClientMarkup(<ReconcileTransfersPanel />);
     expect(html).toContain("Checking for misclassified transfers…");
   });
 
   it("renders nothing when the transfer schema is unavailable", async () => {
     await fetchWithDedupe("financial:reconcile-transfers", () => Promise.resolve({ schemaUnavailable: true }));
-    const html = renderToStaticMarkup(<ReconcileTransfersPanel />);
+    const html = renderClientMarkup(<ReconcileTransfersPanel />);
     expect(html).toBe("");
   });
 
   it("renders the cached duplicates preview instantly with no loading flash", async () => {
     await fetchWithDedupe("financial:reconcile-duplicates", () => Promise.resolve(duplicatesPayload));
-    const html = renderToStaticMarkup(<ReconcileDuplicatesPanel />);
+    const html = renderClientMarkup(<ReconcileDuplicatesPanel />);
     expect(html).toContain("Duplicate transactions");
     expect(html).toContain("Rent payment");
     expect(html).not.toContain("Checking for duplicate transactions");
   });
 
   it("shows the duplicates skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<ReconcileDuplicatesPanel />);
+    const html = renderClientMarkup(<ReconcileDuplicatesPanel />);
     expect(html).toContain("Checking for duplicate transactions…");
   });
 
   it("renders the cached capture library instantly with no loading flash", async () => {
     await fetchWithDedupe("capture:library-items", () => Promise.resolve(captureItems));
-    const html = renderToStaticMarkup(<CaptureLibraryGrid />);
+    const html = renderClientMarkup(<CaptureLibraryGrid />);
     expect(html).toContain("Snagit-style screenshot");
     expect(html).not.toContain("Loading your library");
   });
 
   it("shows the library skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<CaptureLibraryGrid />);
+    const html = renderClientMarkup(<CaptureLibraryGrid />);
     expect(html).toContain("Loading your library…");
   });
 
   it("keeps the last good captures visible when a refresh fails", async () => {
     await fetchWithDedupe("capture:library-items", () => Promise.resolve(captureItems));
     await fetchWithDedupe("capture:library-items", () => Promise.reject(new Error("refresh failed"))).catch(() => {});
-    const html = renderToStaticMarkup(<CaptureLibraryGrid />);
+    const html = renderClientMarkup(<CaptureLibraryGrid />);
     expect(html).toContain("Snagit-style screenshot");
     expect(html).not.toContain("Loading your library");
   });
 
   it("renders cached reservation access instantly with no loading flash", async () => {
     await fetchWithDedupe("reservation:access:slug-1:tok-1", () => Promise.resolve(accessPayload));
-    const html = renderToStaticMarkup(<GuestReservationAccess slug="slug-1" token="tok-1" />);
+    const html = renderClientMarkup(<GuestReservationAccess slug="slug-1" token="tok-1" />);
     expect(html).toContain("Cabin Pinecone");
     expect(html).toContain("Gate code 1234.");
     expect(html).not.toContain("Loading reservation access");
   });
 
   it("shows the access skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<GuestReservationAccess slug="cold" token="tok" />);
+    const html = renderClientMarkup(<GuestReservationAccess slug="cold" token="tok" />);
     expect(html).toContain("Loading reservation access…");
   });
 
   it("renders the cached stay listing instantly with no loading flash", async () => {
     await fetchWithDedupe("reservation:listing:slug-1", () => Promise.resolve(listingPayload));
-    const html = renderToStaticMarkup(<PublicReservationBooking slug="slug-1" />);
+    const html = renderClientMarkup(<PublicReservationBooking slug="slug-1" />);
     expect(html).toContain("Cabin Pinecone");
     expect(html).toContain("Lakeside cabin.");
     expect(html).not.toContain("Loading stay");
   });
 
   it("shows the listing skeleton only when nothing is cached", () => {
-    const html = renderToStaticMarkup(<PublicReservationBooking slug="cold" />);
+    const html = renderClientMarkup(<PublicReservationBooking slug="cold" />);
     expect(html).toContain("Loading stay…");
+  });
+  it("server/first paint shows the loading skeleton even with a warm cache (no #418)", async () => {
+    await fetchWithDedupe("financial:recurring-patterns", () => Promise.resolve(recurringPatterns));
+    const html = renderToStaticMarkup(<RecurringPaymentsPanel />);
+    expect(html).toContain("Looking for recurring payments");
+    expect(html).not.toContain("DuGood Checking");
   });
 });

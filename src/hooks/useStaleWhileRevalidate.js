@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import {
   fetchWithDedupe,
   getCacheEntry,
@@ -9,12 +9,20 @@ import {
   isInflight,
   subscribe,
 } from "./swrCache";
+import {
+  getSWRHydrationServerSnapshot,
+  getSWRHydrationSnapshot,
+  subscribeSWRHydration,
+} from "./swrHydration";
 
 /**
  * useStaleWhileRevalidate(key, fetcher, options)
  *
- * - Serves the cached payload for `key` synchronously on mount — switching back
- *   to a recently viewed property/tenant renders instantly, no "Loading…" flash.
+ * - Serves the cached payload for `key` synchronously on mount -- switching back
+ *   to a recently viewed property/tenant renders instantly, no "Loading…" flash --
+ *   but only after the root app has hydrated (see the hydration boundary below).
+ *   The first render (server and first hydration) is always the loading state,
+ *   so it can never mismatch the server HTML (React #418).
  * - Revalidates in the background when the entry is missing or older than ttlMs.
  * - `refresh()` re-fetches on demand while keeping the old data on screen.
  * - Failed refreshes keep the last good data and surface `error` alongside it.
@@ -26,6 +34,17 @@ import {
  */
 export function useStaleWhileRevalidate(key, fetcher, options = {}) {
   const { ttlMs = 30000 } = options;
+  // Hydration boundary (React #418): until the root bridge marks the app
+  // hydrated, the first client render must match the server's loading state --
+  // the server has no disk entry, so a browser-only persisted entry must not
+  // become visible during hydration. After the root commits, readiness is
+  // true app-wide and warm cache-on-remount works as before (no per-hook
+  // mount gate, so client-side navigation keeps its instant switch-back).
+  const hydrationReady = useSyncExternalStore(
+    subscribeSWRHydration,
+    getSWRHydrationSnapshot,
+    getSWRHydrationServerSnapshot,
+  );
   const fetcherRef = useRef(fetcher);
   // Keep the ref current without reading/writing it during render. This effect
   // is declared before the fetch effect so the ref is fresh before any fetch.
@@ -59,7 +78,13 @@ export function useStaleWhileRevalidate(key, fetcher, options = {}) {
     return undefined;
   }, [key, ttlMs, identityTick]);
 
-  const entry = key == null ? undefined : getCacheEntry(key);
+  // Before hydration is ready, never read the cache during render: the entry
+  // stays undefined, so the hook returns the SSR-equivalent contract
+  // (data null, error "", isLoading when a key exists, not refreshing). A
+  // fetch or notification that completes before readiness must not make
+  // cached data visible before the boundary -- it becomes visible only once
+  // the bridge marks hydration and this subscription re-renders the hook.
+  const entry = !hydrationReady || key == null ? undefined : getCacheEntry(key);
 
   const refresh = useCallback(() => {
     if (key == null) return Promise.resolve(null);
