@@ -78,6 +78,39 @@ describe("RentalPropertyPerformancePanel", () => {
     expect(markup).toContain("Setup incomplete");
   });
 
+  it("labels a partial investment as Known capital improvements on both layouts when there is no setup row", () => {
+    const markup = renderToStaticMarkup(
+      <RentalPropertyPerformancePanel performance={performanceFixture()} onNavigate={() => {}} />,
+    );
+    // Mobile card label and desktop cell note both say the figure is a
+    // partial known amount, not a complete recorded-cash-invested total.
+    expect(markup).toContain("Known capital improvements");
+    expect(markup).toContain("known capital improvements only");
+  });
+
+  it("labels a complete investment as Recorded cash invested when a setup row exists", () => {
+    const complete = buildRentalPropertyPerformance({
+      today: TODAY,
+      units: [
+        { id: "unit_1", property_id: "1218-wagner", label: "1218 Wagner", status: "occupied" },
+        { id: "unit_2", property_id: "1900-w-decker", label: "1900 W Decker", status: "preparing" },
+      ],
+      financialEvents: [
+        event({ event_date: "2026-11-05", amount: "1500.00", transaction_kind: "income", source_system: "rentec", property_id: "1218-wagner" }),
+      ],
+      propertyFinancialSetups: [
+        { property_id: "1218-wagner", down_payment_cents: 2500000, closing_costs_cents: 500000 },
+        { property_id: "1900-w-decker", down_payment_cents: 1000000, closing_costs_cents: 200000 },
+      ],
+    });
+    const markup = renderToStaticMarkup(
+      <RentalPropertyPerformancePanel performance={complete} onNavigate={() => {}} />,
+    );
+    expect(markup).not.toContain("Known capital improvements");
+    expect(markup).not.toContain("Setup incomplete");
+    expect(markup).toContain("Recorded cash invested");
+  });
+
   it("renders an explicit unavailable state when the read model is null", () => {
     const markup = renderToStaticMarkup(
       <RentalPropertyPerformancePanel performance={null} onNavigate={() => {}} />,

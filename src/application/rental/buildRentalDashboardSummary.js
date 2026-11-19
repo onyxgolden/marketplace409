@@ -1,4 +1,5 @@
 import { buildRentalPropertyPerformance } from "./buildRentalPropertyPerformance";
+import { rentalReferenceDate } from "./rentalReferenceDate";
 import { isAwaitingDeposit, paymentNetCents } from "./paymentDepositState";
 
 const OPEN_STATUSES = new Set(["open", "pending", "submitted", "assigned", "in_progress"]);
@@ -36,7 +37,7 @@ function buildMaintenanceQueue(openItems, unitById) {
     }));
 }
 
-export function buildRentalDashboardSummary(data = {}, report = null, today = new Date().toISOString().slice(0, 10)) {
+export function buildRentalDashboardSummary(data = {}, report = null, today = rentalReferenceDate()) {
   const units = data.units || [];
   const leases = data.leases || [];
   const payments = data.payments || [];

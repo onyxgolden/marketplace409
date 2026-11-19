@@ -98,7 +98,10 @@ function PropertyCard({ property, expensePeriod, expanded, onToggleDetails, onNa
         <MetricPair label="Year to date profit" value={moneyValue(property.yearToDate.profitCents)} />
         <MetricPair label="All time profit (since 2014)" value={moneyValue(property.allTime.profitCents)} />
         <MetricPair label="Expenses (all time)" value={moneyValue(property.allTime.operatingExpensesCents)} />
-        <MetricPair label="Recorded cash invested" value={moneyValue(property.investmentCents)} />
+        {/* A house with no setup row has only known capital improvements —
+            never present that partial figure as a complete recorded-cash-
+            invested total. The label itself says which one it is. */}
+        <MetricPair label={property.hasSetup ? "Recorded cash invested" : "Known capital improvements"} value={moneyValue(property.investmentCents)} />
         <MetricPair label="Property tax paid (all time)" value={moneyValue(property.allTime.propertyTaxCents)} />
       </dl>
       {property.setupIncomplete && (
@@ -251,7 +254,7 @@ export default function RentalPropertyPerformancePanel({ performance, onNavigate
                       {moneyValue(property.investmentCents)}
                       {property.setupIncomplete && (
                         <span className="mt-1 block text-xs font-semibold text-slate-500 dark:text-slate-400">
-                          Setup incomplete —{" "}
+                          Setup incomplete — known capital improvements only.{" "}
                           <PropertySetupLink property={property} onNavigate={onNavigate}>add financial setup</PropertySetupLink>
                         </span>
                       )}

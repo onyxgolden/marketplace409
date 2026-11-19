@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
+import { rentalReferenceDate } from "@/application/rental/rentalReferenceDate";
 import { badRequest, now } from "./_actions/shared.js";
 import { saveUnit, setUnitStatus, restoreUnit, archiveUnit, deleteArchivedUnit } from "./_actions/units.js";
 import {
@@ -234,7 +235,11 @@ export async function GET() {
     // overdue balance just because it exists and is unpaid. This only classifies what's
     // determinable from FORGE's own data; genuine reconciliation-difference detection (comparing
     // against actual Rentec evidence) lives in /api/rental/reconciliation-preview, not here.
-    const today = new Date().toISOString().slice(0, 10);
+    // The reference date for the FORGE-cutover comparison is the owner's
+    // local calendar date in America/Chicago (rentalReferenceDate), not UTC
+    // — the same single date the Summary build uses for its reporting
+    // windows, so server and browser cannot disagree about which day it is.
+    const today = rentalReferenceDate();
     const scheduleById = new Map((schedulesResult.data || []).map((s) => [s.id, s]));
     const collectionSummary = (chargesResult.data || []).reduce((summary, charge) => {
       const schedule = scheduleById.get(charge.schedule_id);

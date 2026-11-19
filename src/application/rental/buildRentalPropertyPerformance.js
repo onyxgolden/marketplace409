@@ -32,14 +32,20 @@
 //   of all capitalized events would therefore double-count the closing costs
 //   (and, for a cash purchase, the purchase price).
 // - So: investment = (setup down_payment_cents + closing_costs_cents, when a
-//   setup row matches) + capitalized events EXCLUDING the setup-written
-//   purchase/closing-costs echo events (source_system =
+//   setup row matches) + verified capital improvements. A capital
+//   improvement is a capitalized EXPENSE row, or an asset_purchase row whose
+//   normalized_category is 'capital_improvement' (the category the setup RPC
+//   writes for renovation lines and legacy Rentec improvement rows carry).
+//   Setup-written purchase/closing-costs echo events (source_system =
 //   'property_financial_setup' with normalized_category 'real_estate_purchase'
-//   or 'closing_costs'). Setup-written renovation lines (':line:N',
-//   'capital_improvement') are NOT echoes and stay in the sum, as do
-//   capitalized events from other safe sources (e.g. legacy Rentec purchase /
-//   rehab rows) — for properties with no setup row, those ARE the investment
-//   record.
+//   or 'closing_costs') are excluded — their figures live on the setup row.
+//   A legacy asset_purchase with an acquisition-price category is the FULL
+//   purchase price, which can include financed money: it is NOT cash equity
+//   paid and is never added to the investment total (it is tracked separately
+//   in diagnostics.excludedAcquisitionCents so it never vanishes silently).
+//   For a property with no setup row, the investment figure is therefore a
+//   PARTIAL known amount (capital improvements only), never a gross purchase
+//   price labelled cash invested.
 // - investor_properties.rehab_cost is deliberately NOT added: the only live
 //   row (1053 Vincent st, $25,000) has no rental unit and no capitalized
 //   events, so it is a non-rental deal record, not a rental investment.
@@ -69,6 +75,7 @@ import {
   isSafeRentalEvent,
   toCents,
 } from "./buildRentalFinancialPerformance";
+import { rentalReferenceDate } from "./rentalReferenceDate";
 
 export const PROPERTY_TAX_CATEGORIES = Object.freeze(["property_tax", "taxes_property_tax"]);
 export const ALL_TIME_START_DATE = `${EARLIEST_PORTFOLIO_YEAR}-01-01`;
@@ -142,7 +149,32 @@ function isCapitalImprovement(event) {
   if (!event.event_date) return false;
   if (event.business_scope === "personal") return false;
   if (event.capitalized !== true) return false;
-  if (event.transaction_kind !== "expense" && event.transaction_kind !== "asset_purchase") return false;
+  if (!INVESTMENT_SOURCES.has(event.source_system)) return false;
+  // A capitalized EXPENSE row is a renovation/improvement by definition, so
+  // it counts. An asset_purchase counts ONLY when it is a verified
+  // renovation line (normalized_category 'capital_improvement' — the
+  // category the setup RPC writes for renovation lines, and the category
+  // legacy Rentec improvement rows carry). A legacy asset_purchase with an
+  // acquisition-price category (real_estate_purchase, closing_costs, ...) is
+  // the full purchase price, which can include financed money — it is NOT
+  // cash equity paid and must never be labelled cash invested.
+  if (event.transaction_kind === "expense") return true;
+  if (event.transaction_kind === "asset_purchase") return event.normalized_category === "capital_improvement";
+  return false;
+}
+
+// A legacy acquisition-price row: capitalized, an asset_purchase, but NOT a
+// verified renovation line and NOT a setup-written echo (those have their own
+// counter). Excluded from cash invested by design; tracked separately so the
+// amount never vanishes silently into the generic ineligible count.
+function isExcludedAcquisitionEvent(event) {
+  if (!event || event.status === "inactive" || event.status === "deleted" || event.is_deleted === true) return false;
+  if (!event.event_date) return false;
+  if (event.business_scope === "personal") return false;
+  if (event.capitalized !== true) return false;
+  if (event.transaction_kind !== "asset_purchase") return false;
+  if (event.normalized_category === "capital_improvement") return false;
+  if (isSetupEchoEvent(event)) return false;
   return INVESTMENT_SOURCES.has(event.source_system);
 }
 
@@ -228,7 +260,7 @@ export function buildRentalPropertyPerformance({
   units = [],
   financialEvents = [],
   propertyFinancialSetups = [],
-  today = new Date().toISOString().slice(0, 10),
+  today = rentalReferenceDate(),
 } = {}) {
   const events = Array.isArray(financialEvents) ? financialEvents : [];
   // Stale-projection guard: the pre-change payload selected no property_id,
@@ -286,6 +318,11 @@ export function buildRentalPropertyPerformance({
   // Setup echo events are skipped by design (their figures live on the setup
   // row), so they are counted separately from genuinely ineligible rows.
   let setupEchoEventCount = 0;
+  // Legacy acquisition-price rows (full purchase price, possibly financed)
+  // are excluded from cash invested by design — counted separately so the
+  // amount is visible in the reconciliation, not buried in "ineligible".
+  let excludedAcquisitionEventCount = 0;
+  let excludedAcquisitionCents = 0;
 
   // Single pass: classify each event once, then add it to every period it
   // belongs to. No per-property scans, no re-reads of the raw list.
@@ -301,9 +338,13 @@ export function buildRentalPropertyPerformance({
     const isTax = isIncome ? false : isPropertyTaxEvent(event);
     const isEcho = isSetupEchoEvent(event);
     const isCapital = isCapitalImprovement(event) && !isEcho;
+    const isExcludedAcquisition = isExcludedAcquisitionEvent(event);
     if (!isIncome && !isExpense && !isCapital) {
       if (isEcho) setupEchoEventCount += 1;
-      else ineligibleEventCount += 1;
+      else if (isExcludedAcquisition) {
+        excludedAcquisitionEventCount += 1;
+        excludedAcquisitionCents += cents;
+      } else ineligibleEventCount += 1;
       continue;
     }
 
@@ -400,6 +441,6 @@ export function buildRentalPropertyPerformance({
       ...pre2014,
       profitCents: pre2014.incomeCents - pre2014.operatingExpensesCents,
     }),
-    diagnostics: Object.freeze({ ineligibleEventCount, setupEchoEventCount }),
+    diagnostics: Object.freeze({ ineligibleEventCount, setupEchoEventCount, excludedAcquisitionEventCount, excludedAcquisitionCents }),
   });
 }

@@ -171,16 +171,67 @@ describe("buildRentalPropertyPerformance — investment", () => {
     expect(result.diagnostics.setupEchoEventCount).toBe(2);
   });
 
-  it("uses capitalized events as the investment record for a house with no setup row", () => {
+  it("excludes a legacy acquisition-price asset_purchase from cash invested", () => {
+    // A legacy Rentec asset_purchase row with an acquisition-price category
+    // is the full purchase price, which can include financed money — it is
+    // NOT cash equity paid, so it must never be labelled cash invested.
+    // The property has no setup row, so its investment is unknown/partial.
     const result = buildRentalPropertyPerformance(baseInput({
       financialEvents: [
-        event({ event_date: "2020-05-01", amount: "112500.00", transaction_kind: "asset_purchase", source_system: "rentec", property_id: "1218-wagner", normalized_category: "real_estate_purchase", affects_noi: false, capitalized: true }),
+        event({ event_date: "2020-05-01", amount: "180000.00", transaction_kind: "asset_purchase", source_system: "rentec", property_id: "1218-wagner", normalized_category: "real_estate_purchase", affects_noi: false, capitalized: true }),
       ],
     }));
     const property = result.properties[0];
     expect(property.hasSetup).toBe(false);
     expect(property.setupIncomplete).toBe(true);
-    expect(property.investmentCents).toBe(11250000);
+    expect(property.investmentCents).toBe(0);
+    expect(property.capitalImprovementsCents).toBe(0);
+    expect(result.diagnostics.excludedAcquisitionEventCount).toBe(1);
+    expect(result.diagnostics.excludedAcquisitionCents).toBe(18000000);
+    expect(result.diagnostics.ineligibleEventCount).toBe(0);
+  });
+
+  it("does not add a financed legacy purchase price to cash invested when a setup row exists", () => {
+    // Fictional financed purchase: the setup row records the cash actually
+    // paid (down payment + closing costs); the legacy asset_purchase row is
+    // the full purchase price including the financed portion and must not be
+    // added. A legacy capital-improvement row still counts.
+    const result = buildRentalPropertyPerformance(baseInput({
+      units: [unit({ id: "unit_finance", property_id: "999-example", label: "999 Example", status: "occupied" })],
+      propertyFinancialSetups: [{ property_id: "999-example", purchase_price_cents: 15000000, down_payment_cents: 2500000, closing_costs_cents: 500000 }],
+      financialEvents: [
+        event({ event_date: "2020-05-01", amount: "150000.00", transaction_kind: "asset_purchase", source_system: "rentec", property_id: "999-example", normalized_category: "real_estate_purchase", affects_noi: false, capitalized: true }),
+        event({ event_date: "2020-06-01", amount: "10000.00", transaction_kind: "expense", source_system: "rentec", property_id: "999-example", normalized_category: "capital_improvement", affects_noi: false, capitalized: true }),
+      ],
+    }));
+    const property = result.properties[0];
+    expect(property.hasSetup).toBe(true);
+    expect(property.setupCashCents).toBe(3000000);
+    // $25,000 down + $5,000 closing + $10,000 capital improvement = $40,000.
+    // The $150,000 legacy purchase-price row is excluded.
+    expect(property.investmentCents).toBe(4000000);
+    expect(property.capitalImprovementsCents).toBe(1000000);
+    expect(result.diagnostics.excludedAcquisitionEventCount).toBe(1);
+    expect(result.diagnostics.excludedAcquisitionCents).toBe(15000000);
+  });
+
+  it("counts legacy capital-improvement rows as invested cash even with no setup row", () => {
+    const result = buildRentalPropertyPerformance(baseInput({
+      financialEvents: [
+        // A legacy Rentec renovation line (asset_purchase, capital_improvement).
+        event({ event_date: "2020-05-01", amount: "50000.00", transaction_kind: "asset_purchase", source_system: "rentec", property_id: "1218-wagner", normalized_category: "capital_improvement", affects_noi: false, capitalized: true }),
+        // A legacy capitalized improvement expense.
+        event({ event_date: "2020-06-01", amount: "8000.00", transaction_kind: "expense", source_system: "rentec", property_id: "1218-wagner", normalized_category: "capital_improvement", affects_noi: false, capitalized: true }),
+      ],
+    }));
+    const property = result.properties[0];
+    expect(property.hasSetup).toBe(false);
+    expect(property.setupIncomplete).toBe(true);
+    // $50,000 + $8,000 of verified capital improvements — a partial known
+    // amount, not a complete recorded-cash-invested total.
+    expect(property.investmentCents).toBe(5800000);
+    expect(property.capitalImprovementsCents).toBe(5800000);
+    expect(result.diagnostics.excludedAcquisitionEventCount).toBe(0);
   });
 
   it("never puts the business-expenses capitalized bucket in a house", () => {
