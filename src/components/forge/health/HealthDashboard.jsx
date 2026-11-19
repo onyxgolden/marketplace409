@@ -978,6 +978,22 @@ function HealthProgramDayCard({ day, onChanged, onStartWorkout }) {
 // load completes, so no tab blanks on a refresh.
 const EMPTY_SNAPSHOT = { profiles: [], conditions: [], careTeam: [], labs: [], regimen: [], measurements: [], workouts: [], timeline: [], programs: [], programDays: [], documents: [] };
 
+// Stale-shape guard (P1-A): a persisted snapshot written before a collection key
+// existed (e.g. pre-#833 entries have no `documents`) is a non-null object, so
+// `snapshot ?? EMPTY_SNAPSHOT` does not apply and `data.documents.filter(...)`
+// throws. Normalize every expected collection to an array -- omitted keys and
+// malformed (null / string / object) values both become [] -- so a stale cache
+// can never crash the render. Valid arrays are preserved by reference.
+export function normalizeHealthSnapshot(snapshot) {
+  const source = snapshot && typeof snapshot === "object" ? snapshot : {};
+  return Object.fromEntries(
+    Object.keys(EMPTY_SNAPSHOT).map((key) => [
+      key,
+      Array.isArray(source[key]) ? source[key] : [],
+    ]),
+  );
+}
+
 export default function HealthDashboard({ initialMembership }) {
   const supabase = useMemo(() => createClient(), []);
   const [workspaceId, setWorkspaceId] = useState(initialMembership?.workspace_id ?? null);
@@ -1014,7 +1030,7 @@ export default function HealthDashboard({ initialMembership }) {
     fetchSnapshot,
     { ttlMs: 60_000 },
   );
-  const data = snapshot ?? EMPTY_SNAPSHOT;
+  const data = normalizeHealthSnapshot(snapshot);
   const [viewProfileId, setViewProfileId] = useState(null);
   const [currentUserEmail, setCurrentUserEmail] = useState(null);
   const [selectedProgramId, setSelectedProgramId] = useState(null);
