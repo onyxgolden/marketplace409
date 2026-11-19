@@ -1,3 +1,5 @@
+import { buildRentalPropertyPerformance } from "./buildRentalPropertyPerformance";
+import { rentalReferenceDate } from "./rentalReferenceDate";
 import { isAwaitingDeposit, paymentNetCents } from "./paymentDepositState";
 
 const OPEN_STATUSES = new Set(["open", "pending", "submitted", "assigned", "in_progress"]);
@@ -35,7 +37,7 @@ function buildMaintenanceQueue(openItems, unitById) {
     }));
 }
 
-export function buildRentalDashboardSummary(data = {}, report = null, today = new Date().toISOString().slice(0, 10)) {
+export function buildRentalDashboardSummary(data = {}, report = null, today = rentalReferenceDate()) {
   const units = data.units || [];
   const leases = data.leases || [];
   const payments = data.payments || [];
@@ -222,6 +224,17 @@ export function buildRentalDashboardSummary(data = {}, report = null, today = ne
     // its own period/year views from this via buildRentalFinancialPerformance, computed
     // client-side so switching periods never needs a re-fetch.
     financialEvents: Object.freeze(data.financialEvents || []),
+    // Per-property performance read model (buildRentalPropertyPerformance): one
+    // row per house plus portfolio totals and the Unassigned / unmatched
+    // reconciliation bucket. Null when the event projection is stale (rows
+    // carry no property_id) — the panel renders an explicit unavailable state
+    // instead of attributing those rows to the wrong bucket.
+    propertyPerformance: buildRentalPropertyPerformance({
+      units,
+      financialEvents: data.financialEvents || [],
+      propertyFinancialSetups: data.propertyFinancialSetups || [],
+      today,
+    }),
     needsAttention: Object.freeze(needsAttention.slice(0, NEEDS_ATTENTION_LIMIT)),
     vacantUnitDetails: Object.freeze(vacantUnits.slice(0, 6).map((unit) => Object.freeze({
       id: unit.id, label: unit.label || unit.id, photoUrl: unit.photo_url || null,

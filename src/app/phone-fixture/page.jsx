@@ -43,6 +43,13 @@
  *                 TypeError fix holds: the exact shape that crashed
  *                 production must render with no throw and no error
  *                 boundary.
+ *   rental-performance — the real RentalPropertyPerformancePanel (Rental
+ *                 Manager Summary per-property performance section), fed a
+ *                 fixture read model built by buildRentalPropertyPerformance
+ *                 from fixture units/events — including a very long property
+ *                 label and large amounts, so the phone-width check
+ *                 measures the stacked cards, the expense detail, and the
+ *                 totals at 390/400px. No network calls on render.
  *
  * The case comes from window.location.search after mount (no
  * useSearchParams, so no Suspense boundary is needed). The page sets
@@ -59,6 +66,8 @@ import WorkPackagePageHeader from "@/app/forge/work/page-header";
 import WorkspaceShell from "@/components/workspace-shell";
 import ForgeApplicationRail from "@/components/forge/ForgeApplicationRail";
 import RentalOverviewPanel from "@/components/forge/rental/RentalOverviewPanel";
+import RentalPropertyPerformancePanel from "@/components/forge/rental/RentalPropertyPerformancePanel";
+import { buildRentalPropertyPerformance } from "@/application/rental/buildRentalPropertyPerformance";
 import HealthDashboard, { HealthLabManualEntryForm, HealthSourceDocumentCard } from "@/components/forge/health/HealthDashboard";
 import { seedCacheEntry } from "@/hooks/swrCache";
 
@@ -298,6 +307,38 @@ function HealthDashboardCase() {
   );
 }
 
+// Rental-performance case — the real RentalPropertyPerformancePanel with a
+// fixture read model built by the real helper. The long label and the large
+// amounts are deliberate: the phone-width check must prove the stacked cards,
+// the expense detail, and the totals never overflow at 390/400px. The
+// unmatched event proves the reconciliation card renders too. No network
+// calls on render (the panel takes its read model as a prop).
+const RENTAL_PERFORMANCE_FIXTURE_TODAY = "2026-11-18";
+function RentalPerformanceCase() {
+  const performance = buildRentalPropertyPerformance({
+    today: RENTAL_PERFORMANCE_FIXTURE_TODAY,
+    units: [
+      { id: "unit_1", property_id: "17706-hwy-62-s", label: "17706 Highway 62 South, Orange, Texas 77630 — Display Lot B (Graceland Dealer Lot)", status: "preparing" },
+      { id: "unit_2", property_id: "1218-wagner", label: "1218 Wagner", status: "occupied" },
+    ],
+    financialEvents: [
+      { status: "active", is_deleted: false, event_date: "2026-11-05", amount: "1234567.89", transaction_kind: "income", source_system: "rentec", property_id: "17706-hwy-62-s" },
+      { status: "active", is_deleted: false, event_date: "2026-11-06", amount: "98765.43", transaction_kind: "expense", source_system: "rentec", property_id: "17706-hwy-62-s", normalized_category: "repairs_maintenance", affects_noi: true, capitalized: false },
+      { status: "active", is_deleted: false, event_date: "2026-11-07", amount: "12345.67", transaction_kind: "expense", source_system: "rentec", property_id: "17706-hwy-62-s", normalized_category: "property_tax", affects_noi: true, capitalized: false },
+      { status: "active", is_deleted: false, event_date: "2020-05-01", amount: "112500.00", transaction_kind: "asset_purchase", source_system: "rentec", property_id: "17706-hwy-62-s", normalized_category: "capital_improvement", affects_noi: false, capitalized: true },
+      { status: "active", is_deleted: false, event_date: "2026-11-05", amount: "1500.00", transaction_kind: "income", source_system: "rentec", property_id: "1218-wagner" },
+      { status: "active", is_deleted: false, event_date: "2026-11-06", amount: "200.00", transaction_kind: "expense", source_system: "rentec", property_id: "1218-wagner", normalized_category: "repairs_maintenance", affects_noi: true, capitalized: false },
+      { status: "active", is_deleted: false, event_date: "2026-11-05", amount: "900.00", transaction_kind: "income", source_system: "rentec", property_id: "unmatched-house" },
+    ],
+    propertyFinancialSetups: [],
+  });
+  return (
+    <main className="mx-auto w-full max-w-3xl space-y-4 p-4" data-testid="rental-performance-fixture">
+      <RentalPropertyPerformancePanel performance={performance} onNavigate={() => {}} />
+    </main>
+  );
+}
+
 const CASES = {
   designer: DesignerCase,
   fccu: FccuCase,
@@ -306,6 +347,7 @@ const CASES = {
   "app-header": AppHeaderCase,
   "forge-header": ForgeHeaderCase,
   "rental-23": Rental23Case,
+  "rental-performance": RentalPerformanceCase,
   health: HealthCase,
   "health-dashboard": HealthDashboardCase,
 };

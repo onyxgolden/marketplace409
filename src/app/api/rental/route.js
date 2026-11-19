@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
+import { rentalReferenceDate } from "@/application/rental/rentalReferenceDate";
 import { badRequest, now } from "./_actions/shared.js";
 import { saveUnit, setUnitStatus, restoreUnit, archiveUnit, deleteArchivedUnit } from "./_actions/units.js";
 import {
@@ -135,7 +136,7 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, membershipResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, lateAutoSettingsResult, lateTenantOverrideResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, leaseSignatureResult, autopayResult, insurancePolicyResult, insuranceRequirementResult, animalResult, supportResult, financialEventResult, conversationResult, creditsResult] = await Promise.all([
+    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, membershipResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, lateAutoSettingsResult, lateTenantOverrideResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, leaseSignatureResult, autopayResult, insurancePolicyResult, insuranceRequirementResult, animalResult, supportResult, propertyFinancialSetupResult, financialEventResult, conversationResult, creditsResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, schedule_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status, charge_type, related_charge_id")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
@@ -186,6 +187,17 @@ export async function GET() {
       authenticated.supabaseClient.from("renters_insurance_requirements").select("lease_id, required, minimum_liability_cents").order("lease_id",{ascending:true}),
       authenticated.supabaseClient.from("rental_animals").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_support_cases").select("*").order("opened_at",{ascending:false}),
+      // Owner-scoped financial setups (down payment / closing costs) for the
+      // Rental Summary's per-property performance section. Read-only, same
+      // effective-owner scoping as every table above; the setup row's
+      // property_id is the rental unit's property_id (validated by the
+      // save_property_financial_setup RPC), so it joins exactly. No
+      // investor_properties fetch: that table is not the rental inventory
+      // (it holds a single non-rental deal row) — the units already fetched
+      // above ARE the property inventory.
+      authenticated.supabaseClient.from("property_financial_setups")
+        .select("property_id, purchase_date, purchase_price_cents, down_payment_cents, closing_costs_cents")
+        .eq("owner_id", authenticated.effectiveOwnerId).order("property_id", { ascending: true }),
       // Read-only, owner-scoped explicitly (not just via RLS) like every table above. Used only to
       // build the Rental Summary's Portfolio performance chart (collected vs. rental operating
       // expenses) — never written to from this route, and never used to alter billing, collection
@@ -199,7 +211,11 @@ export async function GET() {
       // workspace. financial_events is explicitly owner-scoped here (not just via RLS) for the
       // Portfolio performance chart.
       fetchAllOwnerFinancialEvents(authenticated.supabaseClient, authenticated.effectiveOwnerId, {
-        columns: "event_date, amount, transaction_kind, source_system, status, is_deleted, business_scope",
+        // The per-property performance section needs property attribution,
+        // category, and the NOI/capitalization flags on top of the chart's
+        // existing projection. Retain every previously selected column — the
+        // Portfolio performance chart reads the same rows.
+        columns: "event_date, amount, transaction_kind, source_system, status, is_deleted, business_scope, property_id, normalized_category, affects_noi, capitalized",
       }).then((data) => ({ data, error: null })).catch((caught) => ({ data: null, error: caught })),
       authenticated.supabaseClient.from("rental_conversations").select("id, tenant_id, work_order_id, last_message_at, last_message_body, last_message_sender_type, owner_last_read_at, tenant_last_read_at").order("last_message_at",{ascending:false}),
       // Unapplied overpayment credits, for per-lease balance display only: the
@@ -208,7 +224,7 @@ export async function GET() {
       // nets them) and are not fetched.
       authenticated.supabaseClient.from("rental_tenant_credits").select("id, lease_id, tenant_id, remaining_cents, status").order("created_at", { ascending: true }),
     ]);
-    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || lateAutoSettingsResult.error || lateTenantOverrideResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || leaseSignatureResult.error || autopayResult.error || insurancePolicyResult.error || insuranceRequirementResult.error || animalResult.error || supportResult.error || financialEventResult.error || conversationResult.error || creditsResult.error;
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || lateAutoSettingsResult.error || lateTenantOverrideResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || leaseSignatureResult.error || autopayResult.error || insurancePolicyResult.error || insuranceRequirementResult.error || animalResult.error || supportResult.error || propertyFinancialSetupResult.error || financialEventResult.error || conversationResult.error || creditsResult.error;
     if (error) throw error;
     const [unitsWithPhotos, tenantsWithPhotos] = await Promise.all([
       withPhotoUrls(authenticated.supabaseClient, unitsResult.data || []),
@@ -219,7 +235,11 @@ export async function GET() {
     // overdue balance just because it exists and is unpaid. This only classifies what's
     // determinable from FORGE's own data; genuine reconciliation-difference detection (comparing
     // against actual Rentec evidence) lives in /api/rental/reconciliation-preview, not here.
-    const today = new Date().toISOString().slice(0, 10);
+    // The reference date for the FORGE-cutover comparison is the owner's
+    // local calendar date in America/Chicago (rentalReferenceDate), not UTC
+    // — the same single date the Summary build uses for its reporting
+    // windows, so server and browser cannot disagree about which day it is.
+    const today = rentalReferenceDate();
     const scheduleById = new Map((schedulesResult.data || []).map((s) => [s.id, s]));
     const collectionSummary = (chargesResult.data || []).reduce((summary, charge) => {
       const schedule = scheduleById.get(charge.schedule_id);
@@ -247,7 +267,7 @@ export async function GET() {
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
       depositTransactions: depositTransactionResult.data || [], inspections: inspectionResult.data || [],
       inspectionItems: inspectionItemResult.data || [], inspectionAcknowledgements: inspectionAckResult.data || [],
-      leases:leaseResult.data||[],leaseMemberships:membershipResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],lateFeeAutoSettings:lateAutoSettingsResult.data||null,convenienceFeeBps:lateAutoSettingsResult.data?.card_convenience_fee_bps??0,lateFeeTenantOverrides:lateTenantOverrideResult.data||[],paymentPolicy:lateAutoSettingsResult.data?.payment_policy||"allow_any_amount",contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],leaseSignatures:leaseSignatureResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],insuranceRequirements:insuranceRequirementResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[],financialEvents:financialEventResult.data||[],
+      leases:leaseResult.data||[],leaseMemberships:membershipResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],lateFeeAutoSettings:lateAutoSettingsResult.data||null,convenienceFeeBps:lateAutoSettingsResult.data?.card_convenience_fee_bps??0,lateFeeTenantOverrides:lateTenantOverrideResult.data||[],paymentPolicy:lateAutoSettingsResult.data?.payment_policy||"allow_any_amount",contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],leaseSignatures:leaseSignatureResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],insuranceRequirements:insuranceRequirementResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[],propertyFinancialSetups:propertyFinancialSetupResult.data||[],financialEvents:financialEventResult.data||[],
       // unread: the tenant sent the most recent message and the owner hasn't read past it yet --
       // never derived from tenant_last_read_at, which says nothing about what the OWNER has seen.
       // Work-order threads are conversation rows with work_order_id set; their unread flag is

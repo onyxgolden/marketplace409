@@ -8,6 +8,7 @@ import { buildRentalDashboardSummary } from "@/application/rental/buildRentalDas
 import { useRentalDashboardPayload } from "./useRentalDashboardPayload";
 import { RentalExceptionAlerts, RentalQuickAccess } from "./RentalExceptionAlerts";
 import { dashboardValueSizeClass } from "./dashboardCardSizing";
+import RentalPropertyPerformancePanel from "./RentalPropertyPerformancePanel";
 import RentalTodaysPrioritiesPanel from "./guided-workflow/RentalTodaysPrioritiesPanel";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -229,6 +230,8 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
       <section aria-label="Today's priorities" className="min-w-0 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
         <RentalTodaysPrioritiesPanel onNavigate={onNavigate} />
       </section>
+
+      <RentalPropertyPerformancePanel performance={summary.propertyPerformance} onNavigate={onNavigate} />
     </section>
   );
 }

@@ -167,7 +167,7 @@ describe("Rental Manager route", () => {
       rental_inspection_acknowledgements: result([]),rental_leases:result([{id:"lease_1",status:"active"}]),
       rental_lease_tenants:result([{lease_id:"lease_1",tenant_id:"tenant_1"}]),
       rental_lease_changes:result([{id:"change_1",status:"draft"}]),rental_late_fee_rules:result([{id:"rule_1",status:"active"}]),rental_late_fee_assessments:result([]),rental_late_fee_tenant_overrides:result([]),
-      rental_contractors:result([{id:"contractor_1",business_name:"Reliable Plumbing"}]),rental_maintenance_work_orders:result([{id:"work_1",request_id:"request_1"}]),rental_maintenance_work_events:result([{id:"event_1",work_order_id:"work_1"}]),rental_lease_preparations:result([{id:"prep_1",lease_id:"lease_1",current_version:1}]),rental_lease_preparation_versions:result([{preparation_id:"prep_1",version_number:1}]),rental_lease_signatures:result([{id:"sig_1",lease_id:"lease_1",preparation_id:"prep_1",version_number:1,tenant_id:"tenant_1",signer_name:"Jane Tenant",signed_at:"2026-09-05T10:00:00Z"}]),rental_conversations:result([{id:"conversation_1",tenant_id:"tenant_1",last_message_at:"2026-09-05T11:00:00Z",last_message_body:"Heater is broken",last_message_sender_type:"tenant",owner_last_read_at:null,tenant_last_read_at:"2026-09-05T11:00:00Z"}]),rental_autopay_enrollments:result([{id:"autopay_1",status:"setup_required"}]),renters_insurance_policies:result([{id:"policy_1",status:"pending_verification"}]),renters_insurance_requirements:result([{lease_id:"lease_1",required:true}]),rental_animals:result([{id:"animal_1",classification:"pet",approval_status:"requested"}]),rental_support_cases:result([{id:"case_1",case_type:"failed_payment",status:"open"}]),rental_billing_settings:result({billing_enabled:true}),financial_events:result([{event_date:"2026-08-05",amount:"1500.00",transaction_kind:"income",source_system:"rentec",status:"active",is_deleted:false}]) };
+      rental_contractors:result([{id:"contractor_1",business_name:"Reliable Plumbing"}]),rental_maintenance_work_orders:result([{id:"work_1",request_id:"request_1"}]),rental_maintenance_work_events:result([{id:"event_1",work_order_id:"work_1"}]),rental_lease_preparations:result([{id:"prep_1",lease_id:"lease_1",current_version:1}]),rental_lease_preparation_versions:result([{preparation_id:"prep_1",version_number:1}]),rental_lease_signatures:result([{id:"sig_1",lease_id:"lease_1",preparation_id:"prep_1",version_number:1,tenant_id:"tenant_1",signer_name:"Jane Tenant",signed_at:"2026-09-05T10:00:00Z"}]),rental_conversations:result([{id:"conversation_1",tenant_id:"tenant_1",last_message_at:"2026-09-05T11:00:00Z",last_message_body:"Heater is broken",last_message_sender_type:"tenant",owner_last_read_at:null,tenant_last_read_at:"2026-09-05T11:00:00Z"}]),rental_autopay_enrollments:result([{id:"autopay_1",status:"setup_required"}]),renters_insurance_policies:result([{id:"policy_1",status:"pending_verification"}]),renters_insurance_requirements:result([{lease_id:"lease_1",required:true}]),rental_animals:result([{id:"animal_1",classification:"pet",approval_status:"requested"}]),rental_support_cases:result([{id:"case_1",case_type:"failed_payment",status:"open"}]),rental_billing_settings:result({billing_enabled:true}),property_financial_setups:result([{property_id:"930 Highland Drive",purchase_price_cents:3750000,down_payment_cents:3750000,closing_costs_cents:62800}]),financial_events:result([{event_date:"2026-08-05",amount:"1500.00",transaction_kind:"income",source_system:"rentec",status:"active",is_deleted:false}]) };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1",
       supabaseClient: { from: vi.fn((table) => tables[table]) } });
@@ -178,7 +178,7 @@ describe("Rental Manager route", () => {
       notifications: [{ id: "notification_1", status: "queued" }], payments: [{ id: "payment_1", status: "succeeded" }],
       settlements: [{ id: "settlement_1", payment_id: "payment_1", status: "paid_out" }], deposits: [{ id: "deposit_1", status: "held" }],
       depositTransactions: [{ id: "deposit_tx_1", deposit_id: "deposit_1" }], inspections: [{ id: "inspection_1", status: "draft" }],
-      inspectionItems: [{ id: "item_1", inspection_id: "inspection_1" }], inspectionAcknowledgements: [],leases:[{id:"lease_1",status:"active"}],leaseMemberships:[{lease_id:"lease_1",tenant_id:"tenant_1"}],leaseChanges:[{id:"change_1",status:"draft"}],lateFeeRules:[{id:"rule_1",status:"active"}],lateFeeAssessments:[],contractors:[{id:"contractor_1",business_name:"Reliable Plumbing"}],workOrders:[{id:"work_1",request_id:"request_1"}],workEvents:[{id:"event_1",work_order_id:"work_1"}],leasePreparations:[{id:"prep_1",lease_id:"lease_1",current_version:1}],leasePreparationVersions:[{preparation_id:"prep_1",version_number:1}],leaseSignatures:[{id:"sig_1",lease_id:"lease_1",preparation_id:"prep_1",version_number:1,tenant_id:"tenant_1",signer_name:"Jane Tenant",signed_at:"2026-09-05T10:00:00Z"}],autopayEnrollments:[{id:"autopay_1",status:"setup_required"}],insurancePolicies:[{id:"policy_1",status:"pending_verification"}],insuranceRequirements:[{lease_id:"lease_1",required:true}],animals:[{id:"animal_1",classification:"pet",approval_status:"requested"}],supportCases:[{id:"case_1",case_type:"failed_payment",status:"open"}], billingEnabled: true, credits: [], financialEvents: [{ event_date: "2026-08-05", amount: "1500.00", transaction_kind: "income", source_system: "rentec", status: "active", is_deleted: false }],
+      inspectionItems: [{ id: "item_1", inspection_id: "inspection_1" }], inspectionAcknowledgements: [],leases:[{id:"lease_1",status:"active"}],leaseMemberships:[{lease_id:"lease_1",tenant_id:"tenant_1"}],leaseChanges:[{id:"change_1",status:"draft"}],lateFeeRules:[{id:"rule_1",status:"active"}],lateFeeAssessments:[],contractors:[{id:"contractor_1",business_name:"Reliable Plumbing"}],workOrders:[{id:"work_1",request_id:"request_1"}],workEvents:[{id:"event_1",work_order_id:"work_1"}],leasePreparations:[{id:"prep_1",lease_id:"lease_1",current_version:1}],leasePreparationVersions:[{preparation_id:"prep_1",version_number:1}],leaseSignatures:[{id:"sig_1",lease_id:"lease_1",preparation_id:"prep_1",version_number:1,tenant_id:"tenant_1",signer_name:"Jane Tenant",signed_at:"2026-09-05T10:00:00Z"}],autopayEnrollments:[{id:"autopay_1",status:"setup_required"}],insurancePolicies:[{id:"policy_1",status:"pending_verification"}],insuranceRequirements:[{lease_id:"lease_1",required:true}],animals:[{id:"animal_1",classification:"pet",approval_status:"requested"}],supportCases:[{id:"case_1",case_type:"failed_payment",status:"open"}], billingEnabled: true, credits: [], propertyFinancialSetups: [{ property_id: "930 Highland Drive", purchase_price_cents: 3750000, down_payment_cents: 3750000, closing_costs_cents: 62800 }], financialEvents: [{ event_date: "2026-08-05", amount: "1500.00", transaction_kind: "income", source_system: "rentec", status: "active", is_deleted: false }],
       conversations: [{ id: "conversation_1", tenantId: "tenant_1", lastMessageAt: "2026-09-05T11:00:00Z", lastMessageBody: "Heater is broken", lastMessageSenderType: "tenant", unread: true }] });
   });
   // The guided-workflow session (Today's Priorities) needs the acting user distinguished from the
@@ -196,7 +196,7 @@ describe("Rental Manager route", () => {
       rental_late_fee_assessments: empty, rental_late_fee_tenant_overrides: empty, rental_contractors: empty, rental_maintenance_work_orders: empty,
       rental_maintenance_work_events: empty, rental_lease_preparations: empty, rental_lease_preparation_versions: empty, rental_lease_signatures: empty, rental_conversations: empty,
       rental_autopay_enrollments: empty, renters_insurance_policies: empty, renters_insurance_requirements: empty, rental_animals: empty,
-      rental_support_cases: empty, rental_billing_settings: result(null), financial_events: empty };
+      rental_support_cases: empty, rental_billing_settings: result(null), property_financial_setups: empty, financial_events: empty };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "acting_user_co_owner" },
       effectiveOwnerId: "canonical_primary_owner", supabaseClient: { from: vi.fn((table) => tables[table]) } });
@@ -222,7 +222,7 @@ describe("Rental Manager route", () => {
       rental_late_fee_assessments: empty, rental_late_fee_tenant_overrides: empty, rental_contractors: empty, rental_maintenance_work_orders: empty,
       rental_maintenance_work_events: empty, rental_lease_preparations: empty, rental_lease_preparation_versions: empty, rental_lease_signatures: empty, rental_conversations: empty,
       rental_autopay_enrollments: empty, renters_insurance_policies: empty, renters_insurance_requirements: empty, rental_animals: empty,
-      rental_support_cases: empty, rental_billing_settings: result(null), financial_events: empty };
+      rental_support_cases: empty, rental_billing_settings: result(null), property_financial_setups: empty, financial_events: empty };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1",
       supabaseClient: { from: vi.fn((table) => tables[table]) } });
@@ -258,7 +258,7 @@ describe("Rental Manager route", () => {
       rental_lease_preparation_versions: result([]), rental_lease_signatures: result([]), rental_conversations: result([]), rental_autopay_enrollments: result([]), renters_insurance_policies: result([]),
       renters_insurance_requirements: result([]),
       rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null),
-      financial_events: financialEventsChain };
+      property_financial_setups: result([]), financial_events: financialEventsChain };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1",
       supabaseClient: { from: vi.fn((table) => tables[table]) } });
@@ -266,6 +266,45 @@ describe("Rental Manager route", () => {
     expect(response.status).toBe(200);
     expect(body.financialEvents).toHaveLength(1001);
     expect(body.financialEvents.some((event) => event.__page === 2)).toBe(true);
+  });
+  // The per-property performance section needs property attribution, category,
+  // and the NOI/capitalization flags on every event row — the chart's old
+  // projection (date/amount/kind/source/status/deleted/scope only) cannot
+  // attribute a single event to a house.
+  it("selects property_id, normalized_category, affects_noi, and capitalized on financial events", async () => {
+    const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(), maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
+      order: vi.fn().mockResolvedValue({ data, error: null }), range: vi.fn().mockResolvedValue({ data, error: null }) });
+    const empty = result([]);
+    const financialEventsChain = {
+      select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const tables = { rental_tenant_credits: empty, rent_charges: empty, rental_units: empty, rental_tenants: empty, rent_schedules: empty,
+      rental_maintenance_requests: empty, rental_notification_outbox: empty, rental_payments: empty,
+      rental_settlements: empty, rental_security_deposits: empty, rental_security_deposit_transactions: empty,
+      rental_inspections: empty, rental_inspection_items: empty, rental_inspection_acknowledgements: empty,
+      rental_leases: empty, rental_lease_tenants: empty, rental_lease_changes: empty, rental_late_fee_rules: empty,
+      rental_late_fee_assessments: empty, rental_late_fee_tenant_overrides: empty, rental_contractors: empty, rental_maintenance_work_orders: empty,
+      rental_maintenance_work_events: empty, rental_lease_preparations: empty, rental_lease_preparation_versions: empty, rental_lease_signatures: empty, rental_conversations: empty,
+      rental_autopay_enrollments: empty, renters_insurance_policies: empty, renters_insurance_requirements: empty, rental_animals: empty,
+      rental_support_cases: empty, rental_billing_settings: result(null), property_financial_setups: empty,
+      financial_events: financialEventsChain };
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1",
+      supabaseClient: { from: vi.fn((table) => tables[table]) } });
+    const response = await GET(); const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.propertyFinancialSetups).toEqual([]);
+    const selectedColumns = financialEventsChain.select.mock.calls[0][0];
+    for (const column of ["property_id", "normalized_category", "affects_noi", "capitalized"]) {
+      expect(selectedColumns).toContain(column);
+    }
+    // The chart's original columns stay selected — this is an extension, not
+    // a replacement of the projection.
+    for (const column of ["event_date", "amount", "transaction_kind", "source_system", "status", "is_deleted", "business_scope"]) {
+      expect(selectedColumns).toContain(column);
+    }
   });
   it("dashboard collectionSummary distinguishes FORGE-collectible from externally-managed open charges", async () => {
     const result = (data) => ({ data, error: null, select: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(),
@@ -286,7 +325,7 @@ describe("Rental Manager route", () => {
       rental_inspection_acknowledgements: result([]), rental_leases: result([]), rental_lease_tenants: result([]), rental_lease_changes: result([]),
       rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_late_fee_tenant_overrides: result([]), rental_contractors: result([]), rental_maintenance_work_orders: result([]),
       rental_maintenance_work_events: result([]), rental_lease_preparations: result([]), rental_lease_preparation_versions: result([]), rental_lease_signatures: result([]), rental_conversations: result([]),
-      rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), renters_insurance_requirements: result([]), rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null), financial_events: result([]) };
+      rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), renters_insurance_requirements: result([]), rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null), property_financial_setups: result([]), financial_events: result([]) };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn((table) => tables[table]) } });
     const response = await GET(); const body = await response.json();
@@ -310,7 +349,7 @@ describe("Rental Manager route", () => {
       rental_inspection_acknowledgements: result([]), rental_leases: result([]), rental_lease_tenants: result([]), rental_lease_changes: result([]),
       rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_late_fee_tenant_overrides: result([]), rental_contractors: result([]), rental_maintenance_work_orders: result([]),
       rental_maintenance_work_events: result([]), rental_lease_preparations: result([]), rental_lease_preparation_versions: result([]), rental_lease_signatures: result([]), rental_conversations: result([]),
-      rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), renters_insurance_requirements: result([]), rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null), financial_events: result([]) };
+      rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), renters_insurance_requirements: result([]), rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null), property_financial_setups: result([]), financial_events: result([]) };
     const createSignedUrl = vi.fn(async () => ({ data: { signedUrl: "https://signed.test/unit-photo" }, error: null }));
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1",
@@ -336,7 +375,7 @@ describe("Rental Manager route", () => {
       rental_inspection_acknowledgements: result([]), rental_leases: result([]), rental_lease_tenants: result([]), rental_lease_changes: result([]),
       rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_late_fee_tenant_overrides: result([]), rental_contractors: result([]), rental_maintenance_work_orders: result([]),
       rental_maintenance_work_events: result([]), rental_lease_preparations: result([]), rental_lease_preparation_versions: result([]), rental_lease_signatures: result([]), rental_conversations: result(conversations),
-      rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), renters_insurance_requirements: result([]), rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null), financial_events: result([]) };
+      rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), renters_insurance_requirements: result([]), rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null), property_financial_setups: result([]), financial_events: result([]) };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1",
       supabaseClient: { from: vi.fn((table) => tables[table]) } });

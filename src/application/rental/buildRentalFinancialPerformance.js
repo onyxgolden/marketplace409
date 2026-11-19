@@ -53,7 +53,9 @@
 const SAFE_INCOME_SOURCES = new Set(["rentec", "rentec_api", "forge_rental_payment"]);
 const SAFE_EXPENSE_SOURCES = new Set(["rentec", "rentec_api", "manual", "forge_rental_payment_adjustment"]);
 
-function isSafeRentalEvent(event) {
+// Exported for buildRentalPropertyPerformance: the per-property read model
+// must reuse this exact classification rather than a second, looser allowlist.
+export function isSafeRentalEvent(event) {
   if (!event || event.status === "inactive" || event.status === "deleted" || event.is_deleted === true) return false;
   if (!event.event_date) return false;
   // Defense in depth: SAFE_INCOME_SOURCES/SAFE_EXPENSE_SOURCES already exclude
@@ -66,7 +68,7 @@ function isSafeRentalEvent(event) {
   return false;
 }
 
-function toCents(amount) {
+export function toCents(amount) {
   return Math.round(Math.abs(Number(amount || 0)) * 100);
 }
 
@@ -123,7 +125,7 @@ const PERIOD_TYPES = Object.freeze(["oneMonth", "sixMonths", "ytd", "year", "all
 // ledger entries from 2005 and 2007 exist in the historical Rentec data (asset-purchase-adjacent
 // noise, not real portfolio income/expense activity), which would otherwise stretch the All Time
 // view back across nearly a decade of flat, empty years.
-const EARLIEST_PORTFOLIO_YEAR = 2014;
+export const EARLIEST_PORTFOLIO_YEAR = 2014;
 
 export function buildRentalFinancialPerformance(financialEvents = [], { today = new Date().toISOString().slice(0, 10), period = { type: "sixMonths" } } = {}) {
   const { byMonth, byYear } = bucketSafeEvents(financialEvents);
