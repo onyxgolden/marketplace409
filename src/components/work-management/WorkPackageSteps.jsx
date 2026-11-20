@@ -21,6 +21,7 @@ import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
 import { scopedSWRKey } from "./workspaceQuery.js";
 import EditableGridCell from "./EditableGridCell.jsx";
 import { BustBadge, useBustBadges } from "./WorkPackageBusts.jsx";
+import { FieldVerificationBadge, useFieldVerificationBadges } from "./WorkPackageFieldVerification.jsx";
 import WorkPackageImportDialog from "./WorkPackageImportDialog.jsx";
 
 // The work-steps worklist is a Maximo-style editable grid now (same
@@ -394,8 +395,10 @@ function AssignmentContext({ packageId }) {
 
 // Package-level, read-only context from takeoff progress: how much of
 // the takeoff quantity is installed so far. Steps carry no percent
-// complete in this slice, so this is context only.
-function ProgressContext({ packageId }) {
+// complete in this slice, so this is context only. Each line carries
+// its field-verification badge and a deep-link to that line's
+// verifications — the takeoff detail's "View verifications".
+function ProgressContext({ packageId, onViewVerifications = null }) {
   const pageQuery = usePageQuery();
   const pageContext = usePackagePageContext();
   const { data, error } = useStaleWhileRevalidate(
@@ -403,6 +406,7 @@ function ProgressContext({ packageId }) {
     () => api(pageQuery, `/api/work-packages/${packageId}/progress/summary`).then((b) => b.summary),
     { ttlMs: 10_000 },
   );
+  const fvBadges = useFieldVerificationBadges(packageId);
   if (error) return null;
   const summary = data || null;
   if (!summary) return null;
@@ -414,10 +418,34 @@ function ProgressContext({ packageId }) {
       {lines.length === 0 ? (
         <p className="mt-1 text-slate-500">No takeoff lines yet — progress will show here once drawings have takeoff lines.</p>
       ) : (
-        <p className="mt-1">
-          {aggregatePercent == null ? "—" : `${aggregatePercent}%`} installed across {lines.length} takeoff line{lines.length === 1 ? "" : "s"}
-          {summary.asOf ? ` (as of ${formatDate(summary.asOf)})` : ""}
-        </p>
+        <>
+          <p className="mt-1">
+            {aggregatePercent == null ? "—" : `${aggregatePercent}%`} installed across {lines.length} takeoff line{lines.length === 1 ? "" : "s"}
+            {summary.asOf ? ` (as of ${formatDate(summary.asOf)})` : ""}
+          </p>
+          <ul className="mt-2 space-y-1">
+            {lines.map((line) => (
+              <li key={line.lineId} className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-slate-900">
+                  {line.description ? `${line.description} — ` : ""}{line.baselineQuantity} {line.baselineUnit}
+                </span>
+                <span>
+                  installed {line.installed == null ? "—" : line.installed}
+                </span>
+                <FieldVerificationBadge badge={fvBadges.byTakeoffLine[line.lineId]} />
+                {onViewVerifications && (
+                  <button
+                    type="button"
+                    className="font-medium text-slate-900 underline"
+                    onClick={() => onViewVerifications({ targetType: "TAKEOFF_LINE", targetId: line.lineId })}
+                  >
+                    View verifications
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
       <p className="mt-1 text-slate-500">Package-level context only — steps are not linked to takeoff lines in this slice.</p>
     </div>
@@ -492,7 +520,7 @@ async function fetchPagedRows(fetchPage, pageCount) {
   return rows;
 }
 
-export default function WorkPackageSteps({ packageId, onChanged = null }) {
+export default function WorkPackageSteps({ packageId, onChanged = null, onViewVerifications = null }) {
   const pageQuery = usePageQuery();
   const pageContext = usePackagePageContext();
   const [showRetired, setShowRetired] = useState(false);
@@ -538,6 +566,9 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
   // Read-only linked-bust badges (active busts per step). A badge is
   // a flag, never a blocker — it never gates step execution.
   const bustBadges = useBustBadges(packageId);
+  // Read-only field-verification badges (active verifications per
+  // step / takeoff line). Same rule: a flag, never a blocker.
+  const fvBadges = useFieldVerificationBadges(packageId);
 
   const { data: drawingsData } = useStaleWhileRevalidate(
     scopedSWRKey(pageContext, "work-packages", packageId, "drawings"),
@@ -779,6 +810,7 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
               <span>
                 {step.title}
                 <BustBadge badge={bustBadges.byWorkStep[step.id]} />
+                <FieldVerificationBadge badge={fvBadges.byWorkStep[step.id]} />
                 {step.supersedesStepId && (
                   <span className="ml-2 text-slate-400">
                     · Replaces #{stepById.get(step.supersedesStepId)?.sequenceNo ?? "?"} {stepById.get(step.supersedesStepId)?.title ?? "a retired step"}
@@ -864,6 +896,12 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
               onClick={() => setHistoryId((current) => (current === step.id ? null : step.id))}>
               {historyId === step.id ? "Hide history" : "History"}
             </button>
+            {onViewVerifications && (
+              <button className={btnGhost} disabled={busy}
+                onClick={() => onViewVerifications({ targetType: "WORK_STEP", targetId: step.id })}>
+                View verifications
+              </button>
+            )}
           </div>
         </div>
         {editingId === step.id && (
@@ -978,7 +1016,7 @@ export default function WorkPackageSteps({ packageId, onChanged = null }) {
       {confirmation && <p className="mt-2 text-sm text-emerald-700">{confirmation}</p>}
 
       <AssignmentContext packageId={packageId} />
-      <ProgressContext packageId={packageId} />
+      <ProgressContext packageId={packageId} onViewVerifications={onViewVerifications} />
 
       {!isTerminal && (
         <form onSubmit={onCreate} className="mt-3 space-y-2">

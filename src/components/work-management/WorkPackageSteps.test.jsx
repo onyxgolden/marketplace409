@@ -191,6 +191,15 @@ function setupFetch({ list = [STEP_1, STEP_2], revisions = REVISIONS, linkRevisi
         }),
       };
     }
+    if (parsed.pathname === "/api/work-packages/pkg_1/field-verifications/badges" && !options.method) {
+      return {
+        ok: true,
+        json: async () => ({
+          byWorkStep: { forge_wps_1: { count: 1, statuses: ["DRAFT"] } },
+          byTakeoffLine: { tl_1: { count: 1, statuses: ["SUBMITTED"] } },
+        }),
+      };
+    }
     if (parsed.pathname === "/api/work-packages/pkg_1/drawings/readiness" && !options.method) {
       return {
         ok: true,
@@ -301,6 +310,26 @@ describe("WorkPackageSteps", () => {
     expect(container.textContent).toContain("48 person-hours");
     expect(container.textContent).toContain("Takeoff progress (from progress entries)");
     expect(container.textContent).toContain("40% installed across 2 takeoff lines");
+  });
+
+  it("shows the field-verification badge and deep-links a step row to its verifications", async () => {
+    setupFetch();
+    const onViewVerifications = vi.fn();
+    const { container } = await renderPanel({ onViewVerifications });
+    expect(container.textContent).toContain("1 verification");
+    const rows = stepRows(container);
+    const button = [...rows[0].querySelectorAll("button")].find((b) => b.textContent.trim() === "View verifications");
+    expect(button).not.toBeUndefined();
+    await act(async () => { button.click(); });
+    expect(onViewVerifications).toHaveBeenCalledWith({ targetType: "WORK_STEP", targetId: "forge_wps_1" });
+    // The takeoff lines link too: the first progress-context row
+    // deep-links its own line.
+    const lineButton = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent.trim() === "View verifications" && b.closest("li"),
+    );
+    expect(lineButton).not.toBeUndefined();
+    await act(async () => { lineButton.click(); });
+    expect(onViewVerifications).toHaveBeenCalledWith({ targetType: "TAKEOFF_LINE", targetId: "tl_1" });
   });
 
   it("creates a step and confirms it in plain words", async () => {

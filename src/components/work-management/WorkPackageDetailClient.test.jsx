@@ -151,6 +151,26 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
     if (bare === `/api/work-packages/${BASE_PKG.id}/busts`) {
       return { ok: true, json: async () => ({ busts: [], total: 0, limit: 100, offset: 0 }) };
     }
+    // Field verification: the Overview header strip fetches the list
+    // summary on every mount; the tab mounts the full panel (which
+    // also reads the work-steps package status and the progress
+    // summary for its target pickers).
+    if (bare === `/api/work-packages/${BASE_PKG.id}/field-verifications`) {
+      return {
+        ok: true,
+        json: async () => ({
+          verifications: [],
+          summary: { total: 0, draft: 0, submitted: 0, accepted: 0, returned: 0, rejected: 0, retired: 0, changedSinceReview: 0 },
+          total: 0, limit: 100, offset: 0,
+        }),
+      };
+    }
+    if (bare === `/api/work-packages/${BASE_PKG.id}/work-steps`) {
+      return { ok: true, json: async () => ({ steps: [], generation: 1, packageStatus: BASE_PKG.status }) };
+    }
+    if (bare === `/api/work-packages/${BASE_PKG.id}/progress/summary`) {
+      return { ok: true, json: async () => ({ summary: { packageId: BASE_PKG.id, asOf: "2026-11-15", lines: [] } }) };
+    }
     // PR B: the project-link block fetches the hierarchy tree (and the
     // current assignment's name when the package is linked). An empty
     // tree keeps the block quiet — no error alert — in these tests.
@@ -843,13 +863,13 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
     return [...container.querySelectorAll("h2")].map((h) => h.textContent);
   }
 
-  it("renders all ten tabs with Overview selected by default", () => {
+  it("renders all eleven tabs with Overview selected by default", () => {
     stubFetch();
     const { container } = renderDetail(BASE_PKG);
     const tabs = [...container.querySelectorAll('[role="tab"]')].map((b) => b.textContent);
     expect(tabs).toEqual([
       "Overview", "Work steps", "Planning Checklist", "Milestones", "Permits",
-      "IFA→IFC redlines", "Budget & Change Orders", "Busts", "Documents", "Activity / Audit",
+      "IFA→IFC redlines", "Budget & Change Orders", "Busts", "Field verification", "Documents", "Activity / Audit",
     ]);
     expect(tabButton(container, "Overview").getAttribute("aria-selected")).toBe("true");
     expect(headings(container)).toContain("Package");
@@ -863,6 +883,16 @@ describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
     expect(container.textContent).toContain("Detected — needs review");
     expect(container.textContent).toContain("No busts detected — nothing is over its frozen allowance.");
     expect(container.textContent).toContain("No busts recorded yet.");
+  });
+
+  it("switching to Field verification mounts the field verification panel", async () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    await act(async () => { tabButton(container, "Field verification").click(); });
+    await act(async () => {});
+    expect(tabButton(container, "Field verification").getAttribute("aria-selected")).toBe("true");
+    expect(container.textContent).toContain("Field verification records what was checked. It does not change recorded progress or the approved plan.");
+    expect(container.textContent).toContain("No verifications recorded yet.");
   });
 
   it("switching to Planning Checklist mounts the checklist with its computed progress", async () => {
