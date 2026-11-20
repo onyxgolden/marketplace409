@@ -6,9 +6,12 @@
 // cap, timeout, body cap, one concurrent request per host, one bounded
 // retry) and returns the raw response for the adapter to validate.
 //
-// Live preflight is NOT authorized in the R0 offline build. This module is
-// exercised by tests with an injected fake fetch; no live call is made by
-// any R0 code path in this build.
+// Live preflight runs only under Jason's separate authorization, passed
+// as an explicit --authorization reference to `preflight --live` (see
+// src/livePreflight.mjs). The runner refuses to run without one, and live
+// output goes only to a caller-supplied directory for review before any
+// fixture is committed. Tests exercise this module with an injected fake
+// fetch; no live call is made without that authorization.
 
 export const MAX_REDIRECTS = 2;
 export const DEFAULT_TIMEOUT_MS = 10000;

@@ -73,14 +73,14 @@
       },
       "observationTimeField": "features[].properties.effective",
       "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
-      "status": "disabled",
-      "statusReason": "Contract recorded. No live preflight run in the R0 offline build; acceptance pending separately authorized live preflight.",
+      "status": "accepted",
+      "statusReason": "Live preflight 2026-11-20T19:20:44.232Z passed under Jason's authorization; current live fixture recorded.",
       "killSwitch": true,
-      "lastPreflight": null,
-      "liveFixtureStatus": "pending-live-preflight",
-      "fixtureKind": "synthetic-contract",
+      "lastPreflight": "2026-11-20T19:20:44.232Z",
+      "liveFixtureStatus": "live",
+      "fixtureKind": "live",
       "fixtureManifest": "fixtures/nws-alerts/manifest.json",
-      "schemaDigest": "0fbd8a39042dc487fc56f0b260412b5deda46c6c16417588a82a2b5c96a53560",
+      "schemaDigest": "a2b616824e0d56fc57274f5dd36be2ce4ad7aace54f284fda949837054433a3c",
       "rights": {
         "metadataListing": {
           "mode": "allowed",
@@ -187,14 +187,14 @@
       },
       "observationTimeField": "features[].properties.time",
       "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
-      "status": "disabled",
-      "statusReason": "Contract recorded. No live preflight run in the R0 offline build; acceptance pending separately authorized live preflight.",
+      "status": "accepted",
+      "statusReason": "Live preflight 2026-11-20T19:20:44.232Z passed under Jason's authorization; current live fixture recorded.",
       "killSwitch": true,
-      "lastPreflight": null,
-      "liveFixtureStatus": "pending-live-preflight",
-      "fixtureKind": "synthetic-contract",
+      "lastPreflight": "2026-11-20T19:20:44.232Z",
+      "liveFixtureStatus": "live",
+      "fixtureKind": "live",
       "fixtureManifest": "fixtures/usgs-earthquakes/manifest.json",
-      "schemaDigest": "d9e64e54a709f961e0c3a1ac5c7cbbbe8be70ba3e109797ad7e7c4b6bffdeb26",
+      "schemaDigest": "791019cc3830d56ee67939d5d6c02d763eb50d44a2f3e41d97752ac0b7f0cb28",
       "rights": {
         "metadataListing": {
           "mode": "allowed",
@@ -257,20 +257,20 @@
       "serviceIdentity": {
         "service": "WFIGS_Interagency_Perimeters_Current",
         "item": "FeatureServer",
-        "layer": "WFIGS Interagency Perimeters Current",
+        "layer": "Perimeters",
         "layerId": 0
       },
       "response": {
         "format": "arcgis-geojson",
         "crs": "EPSG:4326",
         "requiredFields": [
-          "features[].attributes.OBJECTID",
-          "features[].attributes.IncidentName",
-          "features[].geometry.rings",
-          "exceededTransferLimit"
+          "features[].properties.OBJECTID",
+          "features[].properties.poly_IncidentName",
+          "features[].geometry.coordinates"
         ],
         "geometryTypes": [
-          "Polygon"
+          "Polygon",
+          "MultiPolygon"
         ]
       },
       "terms": {
@@ -296,16 +296,16 @@
           "vertices": 500000
         }
       },
-      "observationTimeField": "features[].attributes.DateCurrent",
+      "observationTimeField": "features[].properties.poly_DateCurrent",
       "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
-      "status": "disabled",
-      "statusReason": "Contract recorded. No live preflight run in the R0 offline build; acceptance pending separately authorized live preflight. A current live fixture is still owed for this adapter.",
+      "status": "accepted",
+      "statusReason": "Live preflight 2026-11-20T19:20:44.232Z passed under Jason's authorization; current live fixture recorded.",
       "killSwitch": true,
-      "lastPreflight": null,
-      "liveFixtureStatus": "pending-live-preflight",
-      "fixtureKind": "synthetic-contract",
+      "lastPreflight": "2026-11-20T19:20:44.232Z",
+      "liveFixtureStatus": "live",
+      "fixtureKind": "live",
       "fixtureManifest": "fixtures/wfigs-perimeters/manifest.json",
-      "schemaDigest": "4ec389191435fd6f28cb8b2a5045c21e4fb67095615eeb648679dee75b620c17",
+      "schemaDigest": "b51b50d16281fc1764bc1708c07f81ff06d1e8c306d803c454ea1c595029014f",
       "rights": {
         "metadataListing": {
           "mode": "allowed",
@@ -375,13 +375,13 @@
         "format": "arcgis-geojson",
         "crs": "EPSG:4326",
         "requiredFields": [
-          "features[].attributes.STORMNAME",
-          "features[].attributes.STORMID",
-          "features[].attributes.ADVISORY"
+          "features[].properties.STORMNAME",
+          "features[].properties.STORMID",
+          "features[].properties.ADVISORY"
         ],
         "geometryTypes": [
           "Point",
-          "Polyline",
+          "LineString",
           "Polygon"
         ]
       },
@@ -408,16 +408,16 @@
           "vertices": 500000
         }
       },
-      "observationTimeField": "features[].attributes.ADVISORY (advisory identity; storm time per layer)",
+      "observationTimeField": "features[].properties.ADVISORY (advisory identity; storm time per layer)",
       "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
-      "status": "disabled",
-      "statusReason": "Contract recorded. No live preflight run in the R0 offline build; layer IDs are pinned by name+ID only at live preflight. Acceptance pending separately authorized live preflight.",
+      "status": "accepted",
+      "statusReason": "Live preflight 2026-11-20T19:20:44.232Z passed under Jason's authorization; current live fixture recorded.",
       "killSwitch": true,
-      "lastPreflight": null,
-      "liveFixtureStatus": "pending-live-preflight",
-      "fixtureKind": "synthetic-contract",
+      "lastPreflight": "2026-11-20T19:20:44.232Z",
+      "liveFixtureStatus": "live",
+      "fixtureKind": "live",
       "fixtureManifest": "fixtures/nhc-tropical/manifest.json",
-      "schemaDigest": "2aabae0e37eb429f77842eef30d5e06cf7c65f085c06361853f0f5017e9dbf8f",
+      "schemaDigest": "b6c9760299fd0f7206df785c561da0de85d279ba5e9fd537df3ccd2a5c7fbed6",
       "rights": {
         "metadataListing": {
           "mode": "allowed",
@@ -488,10 +488,10 @@
         "format": "arcgis-geojson",
         "crs": "EPSG:4326",
         "requiredFields": [
-          "features[].attributes.FLD_ZONE",
-          "features[].attributes.SFHA_TF",
-          "features[].attributes.PANEL",
-          "features[].attributes.EFF_DATE"
+          "features[].properties.FLD_ZONE",
+          "features[].properties.SFHA_TF",
+          "features[].properties.PANEL",
+          "features[].properties.EFF_DATE"
         ],
         "geometryTypes": [
           "Polygon"
@@ -520,16 +520,16 @@
           "vertices": 1000
         }
       },
-      "observationTimeField": "features[].attributes.EFF_DATE (map effective date)",
+      "observationTimeField": "features[].properties.EFF_DATE (map effective date)",
       "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
-      "status": "disabled",
-      "statusReason": "Contract recorded. Layer 28 is an unverified candidate; the official service/item/layer must be resolved from FEMA's official link chain at live preflight. No live preflight run in the R0 offline build; a current live fixture is still owed for this adapter.",
+      "status": "blocked",
+      "statusReason": "Live preflight 2026-11-20T19:20:44.232Z blocked: NFHL REST endpoint unreachable from the preflight host (hazards.fema.gov closes the connection after the TLS handshake; www.fema.gov responds). No unofficial source substituted; synthetic fixture retained.",
       "killSwitch": true,
       "lastPreflight": null,
       "liveFixtureStatus": "pending-live-preflight",
       "fixtureKind": "synthetic-contract",
       "fixtureManifest": "fixtures/fema-nfhl/manifest.json",
-      "schemaDigest": "6d958a649dedc41cab5bc202b6a0b19447765338a837f1839e790f58e8551933",
+      "schemaDigest": "bbee2075cd687e67941ca55fce37836c8d7640c86a3d696b07cffbe4aabce68a",
       "rights": {
         "metadataListing": {
           "mode": "allowed",
@@ -634,14 +634,14 @@
       },
       "observationTimeField": "result.addressMatches[].addressComponents (vintage per match)",
       "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
-      "status": "disabled",
-      "statusReason": "Contract recorded. No live preflight run in the R0 offline build; acceptance pending separately authorized live preflight.",
+      "status": "accepted",
+      "statusReason": "Live preflight 2026-11-20T19:20:44.232Z passed under Jason's authorization; current live fixture recorded.",
       "killSwitch": true,
-      "lastPreflight": null,
-      "liveFixtureStatus": "pending-live-preflight",
-      "fixtureKind": "synthetic-contract",
+      "lastPreflight": "2026-11-20T19:20:44.232Z",
+      "liveFixtureStatus": "live",
+      "fixtureKind": "live",
       "fixtureManifest": "fixtures/census-geocoder/manifest.json",
-      "schemaDigest": "1be9fbee882bb035686bebdac00c2a120303968bb5e546f75d1fdd5331edb374",
+      "schemaDigest": "fa919ba685f2c2e8d5aa3b016d17f7f980b312baf76a317aa39d3ef22f2bc39b",
       "rights": {
         "metadataListing": {
           "mode": "allowed",

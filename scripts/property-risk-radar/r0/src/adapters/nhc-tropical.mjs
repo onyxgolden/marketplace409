@@ -2,7 +2,7 @@
 // Read-only contract for the R0 offline build. No live call is made here.
 // Storms are tracked by stormID + advisory, never by reused AT1/AT2 slots.
 
-import { shapeErrors } from "../schemaDigest.mjs";
+import { shapeErrors, checkDeclaredResponsePaths } from "../schemaDigest.mjs";
 
 export const CONTRACT = {
   id: "nhc-tropical",
@@ -33,11 +33,11 @@ export const CONTRACT = {
     format: "arcgis-geojson",
     crs: "EPSG:4326",
     requiredFields: [
-      "features[].attributes.STORMNAME",
-      "features[].attributes.STORMID",
-      "features[].attributes.ADVISORY",
+      "features[].properties.STORMNAME",
+      "features[].properties.STORMID",
+      "features[].properties.ADVISORY",
     ],
-    geometryTypes: ["Point", "Polyline", "Polygon"],
+    geometryTypes: ["Point", "LineString", "Polygon"],
   },
   terms: {
     landingUrl: "https://www.nhc.noaa.gov/gis/",
@@ -56,15 +56,14 @@ export const CONTRACT = {
     timeoutMs: 10000,
     caps: { redirects: 2, pages: 1, records: 1, bytes: 5242880, vertices: 500000 },
   },
-  observationTimeField: "features[].attributes.ADVISORY (advisory identity; storm time per layer)",
+  observationTimeField: "features[].properties.ADVISORY (advisory identity; storm time per layer)",
   retrievalTimeField: "retrievalTime (recorded by the preflight run, never the source)",
-  status: "disabled",
-  statusReason:
-    "Contract recorded. No live preflight run in the R0 offline build; layer IDs are pinned by name+ID only at live preflight. Acceptance pending separately authorized live preflight.",
+  status: "accepted",
+  statusReason: "Live preflight 2026-11-20T19:20:44.232Z passed under Jason's authorization; current live fixture recorded.",
   killSwitch: true,
-  lastPreflight: null,
-  liveFixtureStatus: "pending-live-preflight",
-  fixtureKind: "synthetic-contract",
+  lastPreflight: "2026-11-20T19:20:44.232Z",
+  liveFixtureStatus: "live",
+  fixtureKind: "live",
 };
 
 export const RIGHTS = {
@@ -127,10 +126,26 @@ export function validateSample(sample) {
   const errors = shapeErrors(sample, [
     { name: "type", type: "string", required: true },
     { name: "features", type: "array", required: true },
-    { name: "exceededTransferLimit", type: "boolean", required: true },
+    // The transfer flag is absent from live responses with no features
+    // (verified 2026-11-20: an empty FeatureCollection carries no
+    // exceededTransferLimit). Optional: type-checked when present, never
+    // required. Its absence is not a failure.
+    { name: "exceededTransferLimit", type: "boolean", required: false },
   ], "nhc-tropical.sample");
   if (errors.length > 0) {
     return errors;
+  }
+  // ArcGIS GeoJSON carries the transfer flag under top-level properties
+  // when the service reports it (see WFIGS). When present it must be a
+  // boolean; its absence is not a failure.
+  if (
+    sample.properties &&
+    sample.properties.exceededTransferLimit !== undefined &&
+    typeof sample.properties.exceededTransferLimit !== "boolean"
+  ) {
+    errors.push(
+      "nhc-tropical.sample.properties.exceededTransferLimit: expected boolean",
+    );
   }
   if (sample.type !== "FeatureCollection") {
     errors.push("nhc-tropical.sample.type: expected FeatureCollection");
@@ -161,6 +176,12 @@ export function validateSample(sample) {
       errors.push(`${label}.geometry.type: unexpected geometry type`);
     }
   });
+  // The declared contract paths must resolve against the actual response:
+  // a contract describing ArcGIS-JSON (attributes/Polyline) must fail
+  // here, not silently pass while the validator checks GeoJSON properties.
+  errors.push(
+    ...checkDeclaredResponsePaths(sample, CONTRACT, "nhc-tropical.sample"),
+  );
   return errors;
 }
 

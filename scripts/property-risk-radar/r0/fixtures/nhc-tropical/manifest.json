@@ -1,19 +1,19 @@
 {
   "adapterId": "nhc-tropical",
-  "fixtureKind": "synthetic-contract",
-  "liveFixtureStatus": "pending-live-preflight",
-  "generatedFrom": "Contract in src/adapters/nhc-tropical.mjs; synthetic values invented 2026-11-20; no live fetch.",
+  "fixtureKind": "live",
+  "liveFixtureStatus": "live",
+  "generatedFrom": "Live preflight 2026-11-20T19:20:44.232Z under authorization \"Jason Morgan 2026-11-20 12:44 CST — Authorize the bounded live preflight (PR #840 verdict P1 fix)\". Raw response digests are in the live record; fixture files are the sanitized live responses.",
   "files": [
     {
       "name": "metadata.json",
-      "sha256": "774fab72f7eb95aa397393654332ec2deb0f71f7173d75df6f7a3fc4aeca41a6",
-      "bytes": 404
+      "sha256": "8c91e2841206b91f559a9e98668fbf620966fd47d2e29575700f8a47959ca0fe",
+      "bytes": 131709
     },
     {
       "name": "sample.json",
-      "sha256": "961cb43de70516092de3956efe448d8b26afcaabe7d5950f8520df4216d6cb79",
-      "bytes": 260
+      "sha256": "312f9c5c93fd0e721e6741de91b9008dbd470bacff273af0c757cc54d59a7989",
+      "bytes": 74
     }
   ],
-  "digest": "be65fe25f2a6e2554b5fc5c4fcc44371f7c24845360a01c197dfb85d0077d66b"
+  "digest": "c8828702ccb411a23e32d4357b5a784b5f01a96b4357ec9419595f537550e06a"
 }

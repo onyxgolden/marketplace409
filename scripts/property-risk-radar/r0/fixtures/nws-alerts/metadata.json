@@ -1,1 +1,66 @@
-{"info":{"title":"NWS API (synthetic contract excerpt)","version":"1.0.0"},"note":"Synthetic contract excerpt invented for R0. Not a live response.","openapi":"3.0.3","paths":{"/alerts/active":{"get":{"summary":"Active alerts"}}},"synthetic":true}
+{
+  "synthetic": false,
+  "openapi": "3.1.2",
+  "info": {
+    "title": "weather.gov API",
+    "description": "weather.gov API",
+    "version": "3.12.2"
+  },
+  "paths": {
+    "/alerts/active": {
+      "get": {
+        "description": "Returns all currently active alerts",
+        "operationId": "alerts_active",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AlertStatus"
+          },
+          {
+            "$ref": "#/components/parameters/AlertMessageType"
+          },
+          {
+            "$ref": "#/components/parameters/AlertEventName"
+          },
+          {
+            "$ref": "#/components/parameters/AlertCode"
+          },
+          {
+            "$ref": "#/components/parameters/AlertArea"
+          },
+          {
+            "$ref": "#/components/parameters/AlertPoint"
+          },
+          {
+            "$ref": "#/components/parameters/AlertRegion"
+          },
+          {
+            "$ref": "#/components/parameters/AlertRegionType"
+          },
+          {
+            "$ref": "#/components/parameters/AlertZone"
+          },
+          {
+            "$ref": "#/components/parameters/AlertUrgency"
+          },
+          {
+            "$ref": "#/components/parameters/AlertSeverity"
+          },
+          {
+            "$ref": "#/components/parameters/AlertCertainty"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ActiveAlertCollection"
+          },
+          "301": {
+            "description": "Certain common queries may be redirected to discrete URLs"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,19 +1,19 @@
 {
   "adapterId": "nws-alerts",
-  "fixtureKind": "synthetic-contract",
-  "liveFixtureStatus": "pending-live-preflight",
-  "generatedFrom": "Contract in src/adapters/nws-alerts.mjs; synthetic values invented 2026-11-20; no live fetch.",
+  "fixtureKind": "live",
+  "liveFixtureStatus": "live",
+  "generatedFrom": "Live preflight 2026-11-20T19:20:44.232Z under authorization \"Jason Morgan 2026-11-20 12:44 CST — Authorize the bounded live preflight (PR #840 verdict P1 fix)\". Raw response digests are in the live record; fixture files are the sanitized live responses.",
   "files": [
     {
       "name": "metadata.json",
-      "sha256": "cc69e249b8b74be2cffe53ffe8c9ddb349990b5f699b9a54e9d66bd67fb09207",
-      "bytes": 247
+      "sha256": "4817f026739eb896f9f03a9ca4bfe9fe107122ebc219b2e4dd06fdc1c0cfd6d0",
+      "bytes": 1709
     },
     {
       "name": "sample.json",
-      "sha256": "372fe8c370fc6069c5142eaea2610c009a48b9755698dc3076cac5fabac4cf44",
-      "bytes": 427
+      "sha256": "9e0bd7b3675ee59b27be8687d443d1583d6a646c98d920089ce57ea16381d1d2",
+      "bytes": 760677
     }
   ],
-  "digest": "f50d2bf970d993316fd134ec2a734fa83a9f89f2e8869231389aa257cb3534f4"
+  "digest": "8c05ab09f2925a528cac7ed3a780765a1eb710e093fb7e5f05347705b195f12a"
 }

@@ -17,12 +17,14 @@ function loadJson(filePath) {
   return JSON.parse(readFileSync(filePath, "utf8"));
 }
 
-function walkValues(value, visit) {
-  visit(value);
+function walkValues(value, visit, trail = "") {
+  visit(value, trail);
   if (Array.isArray(value)) {
-    value.forEach((entry) => walkValues(entry, visit));
+    value.forEach((entry, i) => walkValues(entry, visit, `${trail}[${i}]`));
   } else if (value !== null && typeof value === "object") {
-    Object.values(value).forEach((entry) => walkValues(entry, visit));
+    Object.entries(value).forEach(([key, entry]) =>
+      walkValues(entry, visit, `${trail}.${key}`),
+    );
   }
 }
 
@@ -36,11 +38,13 @@ test("every adapter metadata + sample fixture validates against its contract", (
 });
 
 test("every fixture manifest matches the files it covers", () => {
+  const registry = loadJson(path.join(R0, "registry", "source-registry.v1.json"));
   for (const id of Object.keys(ADAPTERS)) {
+    const source = registry.sources.find((s) => s.id === id);
     const manifest = loadJson(path.join(R0, "fixtures", id, "manifest.json"));
     assert.equal(manifest.adapterId, id);
-    assert.equal(manifest.fixtureKind, "synthetic-contract");
-    assert.equal(manifest.liveFixtureStatus, "pending-live-preflight");
+    assert.equal(manifest.fixtureKind, source.fixtureKind, `${id} fixtureKind`);
+    assert.equal(manifest.liveFixtureStatus, source.liveFixtureStatus, `${id} liveFixtureStatus`);
     for (const file of manifest.files) {
       const text = readFileSync(
         path.join(R0, "fixtures", id, file.name),
@@ -69,14 +73,24 @@ test("no fixture, registry, or schema file contains secret-like content", () => 
   assert.equal(findSecretLike(registry), null, "registry");
 });
 
-test("all fixtures are marked synthetic and carry only WGS84-range coordinates", () => {
+test("fixtures carry the synthetic flag matching their kind and only WGS84-range coordinates", () => {
+  const registry = loadJson(path.join(R0, "registry", "source-registry.v1.json"));
   for (const id of Object.keys(ADAPTERS)) {
+    const source = registry.sources.find((s) => s.id === id);
     const metadata = loadJson(path.join(R0, "fixtures", id, "metadata.json"));
     const sample = loadJson(path.join(R0, "fixtures", id, "sample.json"));
-    assert.equal(metadata.synthetic, true, `${id} metadata`);
-    assert.equal(sample.synthetic, true, `${id} sample`);
-    walkValues(sample, (value) => {
-      if (Array.isArray(value) && value.length === 2) {
+    // Live fixtures are real responses (synthetic: false); synthetic
+    // contracts stay marked synthetic. Either way the flag must agree
+    // with the registry's fixtureKind.
+    const expectedSynthetic = source.fixtureKind === "synthetic-contract";
+    assert.equal(metadata.synthetic, expectedSynthetic, `${id} metadata`);
+    assert.equal(sample.synthetic, expectedSynthetic, `${id} sample`);
+    walkValues(sample, (value, trail) => {
+      // Only arrays on a `.coordinates` path are positions: metadata and
+      // samples can carry two-number arrays that are not coordinates
+      // (e.g. NHC layers[].subLayerIds), and flagging those is a false
+      // positive (verified against the live NHC metadata 2026-11-20).
+      if (trail.includes(".coordinates") && Array.isArray(value) && value.length === 2) {
         const [a, b] = value;
         if (typeof a === "number" && typeof b === "number") {
           assert.ok(a >= -180 && a <= 180, `${id}: lng ${a} out of range`);

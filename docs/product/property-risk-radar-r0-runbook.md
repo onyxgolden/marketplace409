@@ -11,9 +11,17 @@ only a reviewed passing registry version.
 - R0 records contracts, rights, and shape evidence. It proves the registry
   is coherent, the fixtures match their contracts, and every negative fails
   closed.
-- R0 does **not** call any live endpoint. No live preflight, live fixture
-  fetch, provider signup, terms acceptance, account, key, or contact has
-  happened in this build. The live preflight needs Jason's separate word.
+- The live preflight ran 2026-11-20T19:20:44.232Z under Jason's separate
+  authorization ("Authorize the bounded live preflight", 2026-11-20 12:44
+  CST): 5 of 6 data adapters accepted with current live fixtures (NWS,
+  USGS, WFIGS, NHC, Census). FEMA NFHL stays BLOCKED — its REST endpoint
+  is unreachable from the preflight host (hazards.fema.gov closes the
+  connection after the TLS handshake; www.fema.gov responds). No
+  unofficial source was substituted; FEMA keeps its synthetic fixture.
+  The live run also corrected four contract bugs the documentation had
+  wrong (USGS depth coordinates, WFIGS poly_ fields / MultiPolygon /
+  properties-level transfer flag, NHC empty-result transfer flag, Census
+  object-form input) — see the acceptance report's live-run section.
 - HTTP 200 is never rights evidence. One rights mode never implies another.
 
 ## Commands
@@ -40,6 +48,13 @@ caller-supplied directory):
 node scripts/property-risk-radar/r0/src/preflight.mjs report --out /tmp/r0-report
 ```
 
+For a live report, pass the run's live record (only after promotion —
+the CLI refuses a live record the registry does not agree with):
+
+```sh
+node scripts/property-risk-radar/r0/src/preflight.mjs report --out /tmp/r0-report --live-record /tmp/r0-live-20261120c/live-record.json
+```
+
 The committed report lives at
 `scripts/property-risk-radar/r0/reports/r0-acceptance.{json,md}`. It is
 deterministic: it records the registry `reviewedAt` as its timestamp (never
@@ -51,22 +66,44 @@ diff /tmp/r0-check/r0-acceptance.json scripts/property-risk-radar/r0/reports/r0-
 diff /tmp/r0-check/r0-acceptance.md scripts/property-risk-radar/r0/reports/r0-acceptance.md
 ```
 
-## Live preflight (separately authorized — NOT part of R0)
+## Live preflight (separately authorized)
 
-`preflight --live` is refused by the CLI (exit 2) until the live preflight
-is separately authorized. When it is authorized, the operator runs the
-preflight with an explicit `--out` directory, reviews the output before
-committing anything, and records:
+`preflight --live` is refused by the CLI (exit 2) without an explicit
+`--authorization` reference naming who authorized it, when, and for
+what. With authorization, the run is bounded (one concurrent request per
+host, 10 s timeout, two allowlisted HTTPS redirects, 5 MiB cap, at most
+one 429/5xx retry honoring Retry-After) and writes only to the
+caller-supplied `--out` directory:
 
-- exact invocation and time,
-- per-adapter HTTP status, bytes, redirects, retries,
-- fixture digests for the live responses,
-- the FEMA official service/item/layer resolution (layer 28 is a candidate
-  only; a 403, a moved service, or unverifiable identity means BLOCKED),
-- current live fixtures for FEMA and WFIGS (the R0 acceptance criterion
-  that is still pending).
+```sh
+node scripts/property-risk-radar/r0/src/preflight.mjs preflight --live \
+  --out /tmp/r0-live-20261120 \
+  --authorization "Jason Morgan 2026-11-20 12:44 CST — Authorize the bounded live preflight (PR #840 verdict P1 fix)"
+```
 
-Live output is never committed without review.
+The run writes `live-record.json` plus `fixtures/<id>/{metadata,sample,
+manifest}.json` per accepted adapter. A provider failure, 403, moved
+identity, or unavailable current schema is recorded as BLOCKED — never
+replaced with an unofficial source. A transport failure is recorded per
+step (status 0 + the error), so the block reason names the step.
+
+### Promotion (review before commit — the run never writes to the repo)
+
+1. Review the output directory: read every live fixture (no keys,
+   headers, private addresses/coordinates, tokens, or restricted media),
+   confirm the resolved identities, and confirm the per-step digests in
+   `live-record.json`.
+2. Copy the accepted adapters' fixtures + manifests into
+   `scripts/property-risk-radar/r0/fixtures/<id>/`. Blocked adapters keep
+   their synthetic fixtures.
+3. Update the adapter CONTRACTs (the single source of truth) — status,
+   statusReason, lastPreflight, liveFixtureStatus, fixtureKind — and the
+   registry mirror, then recompute schema digests from the contract +
+   manifest. Never patch a digest by hand.
+4. Regenerate the acceptance report with `--live-record <path>` into
+   `reports/` and verify the offline battery (validate, full tests,
+   deterministic report twice, eslint) is green.
+5. Commit the registry, fixtures, receipts, and report together.
 
 ## Registry rules (enforced by `validateRegistry.mjs`)
 
@@ -122,7 +159,8 @@ as disabled — not as empty data.
 - `schema digest does not match` — the registry was hand-edited or a
   fixture changed without re-running assembly. Regenerate, do not patch
   the digest by hand.
-- `LIVE PREFLIGHT REFUSED` — expected. The live preflight needs Jason's
-  separate authorization.
+- `LIVE PREFLIGHT REFUSED` — the run was called without `--authorization`
+  (or without `--out`). Pass the authorization reference that Jason gave;
+  the refusal is the guard working, not a failure.
 - A test that touches the network is a bug: all R0 tests use injected fake
   fetches or committed fixtures. Report it, do not add a live call.

@@ -1,4 +1,4 @@
-// Registry tests — the R0 seed registry must validate, and the validator
+// Registry tests — the R0 registry must validate, and the validator
 // must fail closed on every tampered variant.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -11,6 +11,7 @@ import {
   computeSchemaDigest,
 } from "../src/validateRegistry.mjs";
 import { digestObject } from "../src/schemaDigest.mjs";
+import { ADAPTERS } from "../src/preflight.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const R0 = path.resolve(__dirname, "..");
@@ -37,21 +38,39 @@ test("registry top level: version, review date, deny-by-default", () => {
   assert.equal(registry.defaultNetworkPolicy, "deny");
 });
 
-test("seed registry: 11 sources, 6 data adapters + 5 cameras, all disabled", () => {
+test("registry: 11 sources, 5 accepted data adapters, 1 blocked, 5 disabled cameras", () => {
   const registry = loadRegistry();
   assert.equal(registry.sources.length, 11);
   const data = registry.sources.filter((s) => s.category !== "camera");
   const cameras = registry.sources.filter((s) => s.category === "camera");
   assert.equal(data.length, 6);
   assert.equal(cameras.length, 5);
-  for (const source of registry.sources) {
-    assert.equal(source.status, "disabled", source.id);
+  for (const source of data) {
     assert.equal(source.killSwitch, true, source.id);
-    assert.equal(source.lastPreflight, null, source.id);
     assert.ok(
       source.terms.quota !== undefined && source.terms.quota !== null,
       `${source.id} needs a quota or literal UNKNOWN`,
     );
+    if (source.status === "accepted") {
+      assert.equal(source.fixtureKind, "live", source.id);
+      assert.equal(source.liveFixtureStatus, "live", source.id);
+      assert.ok(
+        typeof source.lastPreflight === "string" && source.lastPreflight.length > 0,
+        `${source.id} needs a lastPreflight record`,
+      );
+    } else {
+      // FEMA: blocked at the live preflight (NFHL endpoint unreachable).
+      assert.equal(source.id, "fema-nfhl", source.id);
+      assert.equal(source.status, "blocked", source.id);
+      assert.equal(source.fixtureKind, "synthetic-contract", source.id);
+      assert.equal(source.liveFixtureStatus, "pending-live-preflight", source.id);
+      assert.equal(source.lastPreflight, null, source.id);
+    }
+  }
+  for (const source of cameras) {
+    assert.equal(source.status, "disabled", source.id);
+    assert.equal(source.killSwitch, true, source.id);
+    assert.equal(source.lastPreflight, null, source.id);
   }
 });
 
@@ -71,6 +90,44 @@ test("every schema digest recomputes from contract + fixture manifest", () => {
       source.schemaDigest,
       `${source.id} schema digest`,
     );
+  }
+});
+
+test("every data adapter CONTRACT matches its registry entry", () => {
+  const registry = loadRegistry();
+  const mirrored = [
+    "serviceIdentity",
+    "status",
+    "statusReason",
+    "lastPreflight",
+    "liveFixtureStatus",
+    "fixtureKind",
+    "terms",
+    "policy",
+    "retrievalTimeField",
+    "adapterVersion",
+    "owner",
+    "product",
+    "category",
+    "id",
+  ];
+  for (const [id, adapter] of Object.entries(ADAPTERS)) {
+    const source = sourceById(registry, id);
+    assert.deepEqual(source.response, adapter.CONTRACT.response, `${id} response`);
+    assert.equal(
+      source.observationTimeField,
+      adapter.CONTRACT.observationTimeField,
+      `${id} observationTimeField`,
+    );
+    assert.deepEqual(source.network, adapter.CONTRACT.network, `${id} network`);
+    assert.deepEqual(source.endpoints, adapter.CONTRACT.endpoints, `${id} endpoints`);
+    for (const field of mirrored) {
+      assert.deepEqual(
+        source[field],
+        adapter.CONTRACT[field],
+        `${id} ${field}`,
+      );
+    }
   }
 });
 
@@ -104,7 +161,8 @@ test("validator rejects a source with no quota state", () => {
 test("validator rejects an accepted source without a last-preflight record", () => {
   const registry = loadRegistry();
   const tampered = clone(registry);
-  sourceById(tampered, "nws-alerts").status = "accepted";
+  // FEMA is blocked with no lastPreflight; claiming it accepted must fail.
+  sourceById(tampered, "fema-nfhl").status = "accepted";
   const { ok, errors } = validateRegistryObject(tampered, R0);
   assert.equal(ok, false);
   assert.ok(errors.some((e) => e.includes("last-preflight")));

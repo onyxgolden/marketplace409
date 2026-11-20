@@ -1,7 +1,7 @@
 // USGS earthquake adapter contract — summary GeoJSON feed, last 24h.
 // Read-only contract for the R0 offline build. No live call is made here.
 
-import { shapeErrors, isLngLat } from "../schemaDigest.mjs";
+import { shapeErrors, isLngLat, isFiniteNumber } from "../schemaDigest.mjs";
 
 export const CONTRACT = {
   id: "usgs-earthquakes",
@@ -62,13 +62,12 @@ export const CONTRACT = {
   },
   observationTimeField: "features[].properties.time",
   retrievalTimeField: "retrievalTime (recorded by the preflight run, never the source)",
-  status: "disabled",
-  statusReason:
-    "Contract recorded. No live preflight run in the R0 offline build; acceptance pending separately authorized live preflight.",
+  status: "accepted",
+  statusReason: "Live preflight 2026-11-20T19:20:44.232Z passed under Jason's authorization; current live fixture recorded.",
   killSwitch: true,
-  lastPreflight: null,
-  liveFixtureStatus: "pending-live-preflight",
-  fixtureKind: "synthetic-contract",
+  lastPreflight: "2026-11-20T19:20:44.232Z",
+  liveFixtureStatus: "live",
+  fixtureKind: "live",
 };
 
 export const RIGHTS = {
@@ -140,8 +139,21 @@ export function validateSample(sample) {
     const label = `usgs-earthquakes.sample.features[${index}]`;
     if (!feature.geometry || feature.geometry.type !== "Point") {
       errors.push(`${label}.geometry: expected a Point geometry`);
-    } else if (!isLngLat(feature.geometry.coordinates)) {
-      errors.push(`${label}.geometry.coordinates: expected [lng, lat] in WGS84 range`);
+    } else {
+      // The live feed carries depth as a third element: [lng, lat, depth].
+      // Validate the [lng, lat] pair and, when present, require depth to
+      // be a finite number. A two-element pair stays valid.
+      const coords = feature.geometry.coordinates;
+      const coordsOk =
+        Array.isArray(coords) &&
+        (coords.length === 2 || coords.length === 3) &&
+        isLngLat([coords[0], coords[1]]) &&
+        (coords.length === 2 || isFiniteNumber(coords[2]));
+      if (!coordsOk) {
+        errors.push(
+          `${label}.geometry.coordinates: expected [lng, lat] or [lng, lat, depth] in WGS84 range`,
+        );
+      }
     }
     if (feature.properties) {
       errors.push(...shapeErrors(feature.properties, [

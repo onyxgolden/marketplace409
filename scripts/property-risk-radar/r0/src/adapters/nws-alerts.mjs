@@ -61,13 +61,12 @@ export const CONTRACT = {
   },
   observationTimeField: "features[].properties.effective",
   retrievalTimeField: "retrievalTime (recorded by the preflight run, never the source)",
-  status: "disabled",
-  statusReason:
-    "Contract recorded. No live preflight run in the R0 offline build; acceptance pending separately authorized live preflight.",
+  status: "accepted",
+  statusReason: "Live preflight 2026-11-20T19:20:44.232Z passed under Jason's authorization; current live fixture recorded.",
   killSwitch: true,
-  lastPreflight: null,
-  liveFixtureStatus: "pending-live-preflight",
-  fixtureKind: "synthetic-contract",
+  lastPreflight: "2026-11-20T19:20:44.232Z",
+  liveFixtureStatus: "live",
+  fixtureKind: "live",
 };
 
 export const RIGHTS = {

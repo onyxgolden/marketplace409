@@ -7,7 +7,7 @@
 // official link chain before this adapter can be accepted. A 403, a moved
 // service, or unverifiable identity means BLOCKED — never a scraped mirror.
 
-import { shapeErrors } from "../schemaDigest.mjs";
+import { shapeErrors, checkDeclaredResponsePaths } from "../schemaDigest.mjs";
 
 export const CONTRACT = {
   id: "fema-nfhl",
@@ -39,10 +39,10 @@ export const CONTRACT = {
     format: "arcgis-geojson",
     crs: "EPSG:4326",
     requiredFields: [
-      "features[].attributes.FLD_ZONE",
-      "features[].attributes.SFHA_TF",
-      "features[].attributes.PANEL",
-      "features[].attributes.EFF_DATE",
+      "features[].properties.FLD_ZONE",
+      "features[].properties.SFHA_TF",
+      "features[].properties.PANEL",
+      "features[].properties.EFF_DATE",
     ],
     geometryTypes: ["Polygon"],
   },
@@ -63,11 +63,10 @@ export const CONTRACT = {
     timeoutMs: 10000,
     caps: { redirects: 2, pages: 1, records: 1, bytes: 5242880, vertices: 1000 },
   },
-  observationTimeField: "features[].attributes.EFF_DATE (map effective date)",
+  observationTimeField: "features[].properties.EFF_DATE (map effective date)",
   retrievalTimeField: "retrievalTime (recorded by the preflight run, never the source)",
-  status: "disabled",
-  statusReason:
-    "Contract recorded. Layer 28 is an unverified candidate; the official service/item/layer must be resolved from FEMA's official link chain at live preflight. No live preflight run in the R0 offline build; a current live fixture is still owed for this adapter.",
+  status: "blocked",
+  statusReason: "Live preflight 2026-11-20T19:20:44.232Z blocked: NFHL REST endpoint unreachable from the preflight host (hazards.fema.gov closes the connection after the TLS handshake; www.fema.gov responds). No unofficial source substituted; synthetic fixture retained.",
   killSwitch: true,
   lastPreflight: null,
   liveFixtureStatus: "pending-live-preflight",
@@ -158,6 +157,13 @@ export function validateSample(sample) {
       { name: "EFF_DATE", type: "string", required: true },
     ], `${label}.properties`));
   });
+  // The declared contract paths must resolve against the actual response:
+  // a contract describing ArcGIS-JSON (attributes) must fail here, not
+  // silently pass while the validator checks GeoJSON properties. An empty
+  // features array stays valid: the traversal skips paths through it.
+  errors.push(
+    ...checkDeclaredResponsePaths(sample, CONTRACT, "fema-nfhl.sample"),
+  );
   return errors;
 }
 
@@ -169,7 +175,7 @@ export function preflightPlan() {
       urlTemplate: "https://www.fema.gov/flood-maps/national-flood-hazard-layer",
       purpose: "Follow FEMA's current official NFHL link chain to the public ArcGIS REST service (outside the ArcGIS host allowlist; resolve, then record).",
       bounds: { timeoutMs: 10000, bytes: 5242880 },
-      note: "The link-chain step is recorded, not executed, until the live preflight is separately authorized.",
+      note: "The link-chain step executed at the live preflight 2026-11-20T19:20:44.232Z under Jason's authorization; the page linked the official Map Service Center (msc.fema.gov/nfhl). The NFHL REST endpoint itself was unreachable from the preflight host, so FEMA stays blocked.",
     },
     {
       step: 2,

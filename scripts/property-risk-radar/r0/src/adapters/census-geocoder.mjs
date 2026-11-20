@@ -69,13 +69,12 @@ export const CONTRACT = {
   },
   observationTimeField: "result.addressMatches[].addressComponents (vintage per match)",
   retrievalTimeField: "retrievalTime (recorded by the preflight run, never the source)",
-  status: "disabled",
-  statusReason:
-    "Contract recorded. No live preflight run in the R0 offline build; acceptance pending separately authorized live preflight.",
+  status: "accepted",
+  statusReason: "Live preflight 2026-11-20T19:20:44.232Z passed under Jason's authorization; current live fixture recorded.",
   killSwitch: true,
-  lastPreflight: null,
-  liveFixtureStatus: "pending-live-preflight",
-  fixtureKind: "synthetic-contract",
+  lastPreflight: "2026-11-20T19:20:44.232Z",
+  liveFixtureStatus: "live",
+  fixtureKind: "live",
 };
 
 export const RIGHTS = {
@@ -152,14 +151,28 @@ export function validateSample(sample) {
     { name: "addressMatches", type: "array", required: true },
   ], "census-geocoder.sample.result"));
   if (sample.result.input) {
-    errors.push(...shapeErrors(sample.result.input, [
-      { name: "address", type: "string", required: true },
-      { name: "benchmark", type: "string", required: true },
-    ], "census-geocoder.sample.result.input"));
-    if (
-      sample.result.input.benchmark &&
-      sample.result.input.benchmark !== "Public_AR_Current"
-    ) {
+    // Live wire format (verified 2026-11-20): input.address and
+    // input.benchmark are OBJECTS, not strings —
+    // address: { address: "<full address>" },
+    // benchmark: { id, benchmarkName: "Public_AR_Current", ... }.
+    // Accept either shape; the benchmark must resolve to Public_AR_Current.
+    const input = sample.result.input;
+    const address =
+      typeof input.address === "string" ? input.address : input.address?.address;
+    const benchmark =
+      typeof input.benchmark === "string"
+        ? input.benchmark
+        : input.benchmark?.benchmarkName;
+    if (typeof address !== "string" || address.length === 0) {
+      errors.push(
+        "census-geocoder.sample.result.input.address: expected a string or { address: string }",
+      );
+    }
+    if (typeof benchmark !== "string" || benchmark.length === 0) {
+      errors.push(
+        "census-geocoder.sample.result.input.benchmark: expected a string or { benchmarkName: string }",
+      );
+    } else if (benchmark !== "Public_AR_Current") {
       errors.push(
         "census-geocoder.sample.result.input.benchmark: expected Public_AR_Current",
       );

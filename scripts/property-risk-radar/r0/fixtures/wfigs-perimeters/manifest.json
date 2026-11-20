@@ -1,19 +1,19 @@
 {
   "adapterId": "wfigs-perimeters",
-  "fixtureKind": "synthetic-contract",
-  "liveFixtureStatus": "pending-live-preflight",
-  "generatedFrom": "Contract in src/adapters/wfigs-perimeters.mjs; synthetic values invented 2026-11-20; no live fetch.",
+  "fixtureKind": "live",
+  "liveFixtureStatus": "live",
+  "generatedFrom": "Live preflight 2026-11-20T19:20:44.232Z under authorization \"Jason Morgan 2026-11-20 12:44 CST — Authorize the bounded live preflight (PR #840 verdict P1 fix)\". Raw response digests are in the live record; fixture files are the sanitized live responses.",
   "files": [
     {
       "name": "metadata.json",
-      "sha256": "98b671722b951d939ba0b6ed933b9e2d00f04e6095c81db4ad6076bb045cecba",
-      "bytes": 237
+      "sha256": "d4370c862be167e88009ebb7e7c1bd1ebc4284320d9b139e2a325285ffedd553",
+      "bytes": 58538
     },
     {
       "name": "sample.json",
-      "sha256": "1a7562eb46b556d0dbc9fb9de05e0f71c83ca099bf0124caa7f0db2cd0d8a665",
-      "bytes": 327
+      "sha256": "a709fbe422e088336778896a3e8e85428c55116b552669013acaa72b8a7f4cc3",
+      "bytes": 1190214
     }
   ],
-  "digest": "467829d6088d8e8a2a9a09ae66fae9c990d7771bfb27b710301f3401c69c847d"
+  "digest": "7b5aa7bee4488fb28c4ca1980d867f8e894d309bdb374a3f5a28c7074bd4fc3e"
 }

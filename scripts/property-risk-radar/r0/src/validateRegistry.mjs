@@ -300,14 +300,15 @@ function checkSource(source, index, errors, seenIds, r0Dir) {
   if (!["pending-live-preflight", "live", "not-applicable"].includes(source.liveFixtureStatus)) {
     errors.push(`${idLabel}.liveFixtureStatus: unknown value`);
   }
-  if (!["synthetic-contract", "contract-only"].includes(source.fixtureKind)) {
+  if (!["synthetic-contract", "contract-only", "live"].includes(source.fixtureKind)) {
     errors.push(`${idLabel}.fixtureKind: unknown value`);
   }
 
   checkRights(source, errors);
 
-  // Accepted sources carry the full evidence burden. Nothing in the R0
-  // offline build is accepted: no live preflight has run.
+  // Accepted sources carry the full evidence burden: a schema digest, a
+  // fixture manifest, and a last-preflight record from the live run that
+  // accepted them.
   if (source.status === "accepted") {
     if (!source.schemaDigest) {
       errors.push(`${idLabel}: accepted source needs a schema digest`);
