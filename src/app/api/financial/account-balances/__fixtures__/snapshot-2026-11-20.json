@@ -1,0 +1,1830 @@
+{
+  "syntheticFixture": "All names, IDs, and monetary values are invented for regression testing. No production data.",
+  "frozenNow": "2026-11-20T15:56:00.000Z",
+  "accounts": [
+    {
+      "id": "financial_account_synth_001",
+      "name": "Aldergrove Business Card",
+      "type": "credit",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_002",
+      "name": "Summit Rewards Card",
+      "type": "credit",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_003",
+      "name": "Juniper Rewards Card",
+      "type": "credit",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_004",
+      "name": "Copperfield Home Equity Line",
+      "type": "credit",
+      "subtype": "other",
+      "provider": "stripe_financial_connections",
+      "active": true,
+      "connectionId": "connection_synth_001"
+    },
+    {
+      "id": "financial_account_synth_005",
+      "name": "Cinder Store Card",
+      "type": "credit",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_006",
+      "name": "Sable Electronics Card",
+      "type": "credit",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_007",
+      "name": "Harbor Home Card",
+      "type": "credit",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_008",
+      "name": "Prairie Business Visa",
+      "type": "credit",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_009",
+      "name": "Mesquite Business Card",
+      "type": "credit",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_010",
+      "name": "Bluebonnet Trade Card",
+      "type": "credit",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_011",
+      "name": "Redbud Home Card",
+      "type": "credit",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_012",
+      "name": "Juniper Checking",
+      "type": "depository",
+      "subtype": "checking",
+      "provider": "stripe_financial_connections",
+      "active": true,
+      "connectionId": "connection_synth_002"
+    },
+    {
+      "id": "financial_account_synth_013",
+      "name": "Sable Business Checking",
+      "type": "depository",
+      "subtype": "checking",
+      "provider": "stripe_financial_connections",
+      "active": true,
+      "connectionId": "connection_synth_001"
+    },
+    {
+      "id": "financial_account_synth_014",
+      "name": "Mesquite Business Checking",
+      "type": "depository",
+      "subtype": "checking",
+      "provider": "stripe_financial_connections",
+      "active": true,
+      "connectionId": "connection_synth_003"
+    },
+    {
+      "id": "financial_account_synth_015",
+      "name": "Ironwood Business Savings",
+      "type": "depository",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_016",
+      "name": "Ironwood Business Savings",
+      "type": "depository",
+      "subtype": "savings",
+      "provider": "stripe_financial_connections",
+      "active": true,
+      "connectionId": "connection_synth_003"
+    },
+    {
+      "id": "financial_account_synth_017",
+      "name": "Aldergrove Checking",
+      "type": "depository",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_018",
+      "name": "Petty Cash",
+      "type": "depository",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_019",
+      "name": "Bluebonnet Business Checking",
+      "type": "depository",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_020",
+      "name": "Copperfield Personal Checking",
+      "type": "depository",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_021",
+      "name": "Prairie Personal Savings",
+      "type": "depository",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_022",
+      "name": "Harbor Savings",
+      "type": "depository",
+      "subtype": "savings",
+      "provider": "stripe_financial_connections",
+      "active": true,
+      "connectionId": "connection_synth_001"
+    },
+    {
+      "id": "investment_account_synth_001",
+      "name": "Aldergrove Brokerage",
+      "type": "investment",
+      "subtype": "taxable_brokerage",
+      "provider": "manual_investment",
+      "active": true,
+      "connectionId": "manual_investments"
+    },
+    {
+      "id": "investment_account_synth_002",
+      "name": "Summit 401(k) Plan",
+      "type": "investment",
+      "subtype": "401k",
+      "provider": "manual_investment",
+      "active": true,
+      "connectionId": "manual_investments"
+    },
+    {
+      "id": "investment_account_synth_003",
+      "name": "Juniper Brokerage",
+      "type": "investment",
+      "subtype": "taxable_brokerage",
+      "provider": "manual_investment",
+      "active": true,
+      "connectionId": "manual_investments"
+    },
+    {
+      "id": "investment_account_synth_004",
+      "name": "Copperfield Brokerage",
+      "type": "investment",
+      "subtype": "taxable_brokerage",
+      "provider": "manual_investment",
+      "active": true,
+      "connectionId": "manual_investments"
+    },
+    {
+      "id": "investment_account_synth_005",
+      "name": "Ironwood Private Fund",
+      "type": "investment",
+      "subtype": "private_investment",
+      "provider": "manual_investment",
+      "active": true,
+      "connectionId": "manual_investments"
+    },
+    {
+      "id": "investment_account_synth_006",
+      "name": "Mesquite IRA",
+      "type": "investment",
+      "subtype": "ira",
+      "provider": "manual_investment",
+      "active": true,
+      "connectionId": "manual_investments"
+    },
+    {
+      "id": "investment_account_synth_007",
+      "name": "Bluebonnet IRA",
+      "type": "investment",
+      "subtype": "ira",
+      "provider": "manual_investment",
+      "active": true,
+      "connectionId": "manual_investments"
+    },
+    {
+      "id": "investment_account_synth_008",
+      "name": "Harbor 401(k) Plan",
+      "type": "investment",
+      "subtype": "401k",
+      "provider": "manual_investment",
+      "active": true,
+      "connectionId": "manual_investments"
+    },
+    {
+      "id": "financial_account_synth_023",
+      "name": "Summit Digital Wallet",
+      "type": "investment",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "investment_account_synth_009",
+      "name": "Prairie 401(k) Plan",
+      "type": "investment",
+      "subtype": "401k",
+      "provider": "manual_investment",
+      "active": true,
+      "connectionId": "manual_investments"
+    },
+    {
+      "id": "financial_account_synth_024",
+      "name": "Trailhead SUV Loan",
+      "type": "loan",
+      "subtype": "manual",
+      "provider": "manual_account",
+      "active": true,
+      "connectionId": "manual"
+    },
+    {
+      "id": "financial_account_synth_025",
+      "name": "Prairie Credit Line",
+      "type": "loan",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_026",
+      "name": "Cactus Wren Mortgage",
+      "type": "loan",
+      "subtype": "manual",
+      "provider": "manual_account",
+      "active": true,
+      "connectionId": "manual"
+    },
+    {
+      "id": "financial_asset_synth_001",
+      "name": "12 Juniper Lane",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_002",
+      "name": "48 Cactus Wren Way",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_003",
+      "name": "310 Mesquite Drive",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_004",
+      "name": "7 Bluebonnet Court",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_account_synth_027",
+      "name": "9 Harborview Lane",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": false,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_asset_synth_005",
+      "name": "925 Redbud Trail",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_006",
+      "name": "1600 Ironwood Avenue",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_account_synth_028",
+      "name": "14 Stonebridge Court",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": false,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_asset_synth_007",
+      "name": "23 Sable Lane",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_account_synth_029",
+      "name": "5 Wildflower Way",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": false,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_asset_synth_008",
+      "name": "77 Prairie Rose Road",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_009",
+      "name": "1400 Copperfield Blvd",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_010",
+      "name": "2016 Family SUV",
+      "type": "other",
+      "subtype": "vehicle",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_account_synth_030",
+      "name": "2016 Family SUV",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_asset_synth_011",
+      "name": "2022 Luxury SUV",
+      "type": "other",
+      "subtype": "vehicle",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_012",
+      "name": "2019 Work Pickup",
+      "type": "other",
+      "subtype": "vehicle",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_account_synth_031",
+      "name": "2022 Luxury SUV",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_asset_synth_013",
+      "name": "55 Harbor Point Drive",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_account_synth_032",
+      "name": "72 Foxglove Drive",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": false,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_033",
+      "name": "301 Bluebird Hollow",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": false,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_asset_synth_014",
+      "name": "800 Aldergrove Road",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_015",
+      "name": "19 Cinder Way",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_016",
+      "name": "420 Summit Ridge Road",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_017",
+      "name": "88 Willow Bend Court",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_account_synth_034",
+      "name": "44 Quail Run",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": false,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_asset_synth_018",
+      "name": "1500 Falcon Ridge Drive",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_019",
+      "name": "33 Larkspur Lane",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_020",
+      "name": "2700 Pecan Grove Road",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_021",
+      "name": "61 Chaparral Street",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_022",
+      "name": "940 Antler Oaks Drive",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_023",
+      "name": "1205 Coyote Run",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_024",
+      "name": "75 Magnolia Bluff Lane",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_025",
+      "name": "600 Tumbleweed Trail",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_asset_synth_026",
+      "name": "18 Longleaf Drive",
+      "type": "other",
+      "subtype": "real_estate",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_account_synth_035",
+      "name": "Utility Trailer",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_036",
+      "name": "Harbor Rewards Card",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_037",
+      "name": "Enclosed Trailer",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_038",
+      "name": "Prairie Store Card",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_asset_synth_027",
+      "name": "Compact Tractor",
+      "type": "other",
+      "subtype": "other",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_account_synth_039",
+      "name": "Summit Gift Card",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_040",
+      "name": "Cinder Collectible",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_asset_synth_028",
+      "name": "Zero-Turn Mower",
+      "type": "other",
+      "subtype": "other",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_account_synth_041",
+      "name": "Riding Mower",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_asset_synth_029",
+      "name": "Gold Bullion Coins",
+      "type": "other",
+      "subtype": "other",
+      "provider": "manual_asset",
+      "active": true,
+      "connectionId": "manual_assets"
+    },
+    {
+      "id": "financial_account_synth_042",
+      "name": "Farm Tractor",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    },
+    {
+      "id": "financial_account_synth_043",
+      "name": "Flatbed Trailer",
+      "type": "other",
+      "subtype": "csv_import",
+      "provider": "quicken_simplifi_csv",
+      "active": true,
+      "connectionId": "quicken_simplifi_csv"
+    }
+  ],
+  "balances": [
+    {
+      "id": "account_balance_synth_001",
+      "financialAccountId": "financial_account_synth_024",
+      "currentBalanceCents": 6592331,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-01 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_002",
+      "financialAccountId": "financial_account_synth_026",
+      "currentBalanceCents": 17702307,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-01 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_003",
+      "financialAccountId": "financial_account_synth_018",
+      "currentBalanceCents": 4987679,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_004",
+      "financialAccountId": "financial_account_synth_038",
+      "currentBalanceCents": -87460,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_005",
+      "financialAccountId": "financial_account_synth_036",
+      "currentBalanceCents": -56976,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_006",
+      "financialAccountId": "financial_account_synth_021",
+      "currentBalanceCents": 1082339,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_007",
+      "financialAccountId": "financial_account_synth_017",
+      "currentBalanceCents": 1251616,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_008",
+      "financialAccountId": "financial_account_synth_010",
+      "currentBalanceCents": 48731,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_009",
+      "financialAccountId": "financial_account_synth_023",
+      "currentBalanceCents": 661470,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_010",
+      "financialAccountId": "financial_account_synth_001",
+      "currentBalanceCents": 0,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_011",
+      "financialAccountId": "financial_account_synth_019",
+      "currentBalanceCents": 690140,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_012",
+      "financialAccountId": "financial_account_synth_006",
+      "currentBalanceCents": 61047,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_013",
+      "financialAccountId": "financial_account_synth_007",
+      "currentBalanceCents": 0,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_014",
+      "financialAccountId": "financial_account_synth_009",
+      "currentBalanceCents": 38292,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_015",
+      "financialAccountId": "financial_account_synth_015",
+      "currentBalanceCents": 2343333,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_016",
+      "financialAccountId": "financial_account_synth_025",
+      "currentBalanceCents": 0,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_017",
+      "financialAccountId": "financial_account_synth_005",
+      "currentBalanceCents": 0,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_018",
+      "financialAccountId": "financial_account_synth_039",
+      "currentBalanceCents": 14084,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_019",
+      "financialAccountId": "financial_account_synth_020",
+      "currentBalanceCents": 783682,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_020",
+      "financialAccountId": "financial_account_synth_011",
+      "currentBalanceCents": 14887,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_021",
+      "financialAccountId": "financial_account_synth_003",
+      "currentBalanceCents": 245202,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_022",
+      "financialAccountId": "financial_account_synth_040",
+      "currentBalanceCents": 6790,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_023",
+      "financialAccountId": "financial_account_synth_008",
+      "currentBalanceCents": 1943,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual"
+    },
+    {
+      "id": "account_balance_synth_024",
+      "financialAccountId": "financial_account_synth_012",
+      "currentBalanceCents": 455186,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-09 02:20:26+00",
+      "provider": "stripe_financial_connections"
+    },
+    {
+      "id": "account_balance_synth_025",
+      "financialAccountId": "financial_account_synth_014",
+      "currentBalanceCents": 1920996,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-10 03:46:18+00",
+      "provider": "stripe_financial_connections"
+    },
+    {
+      "id": "account_balance_synth_026",
+      "financialAccountId": "financial_account_synth_016",
+      "currentBalanceCents": 3818898,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-10 03:46:18+00",
+      "provider": "stripe_financial_connections"
+    },
+    {
+      "id": "account_balance_synth_027",
+      "financialAccountId": "financial_account_synth_013",
+      "currentBalanceCents": 689685,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-10 03:23:05+00",
+      "provider": "stripe_financial_connections"
+    },
+    {
+      "id": "account_balance_synth_028",
+      "financialAccountId": "financial_account_synth_022",
+      "currentBalanceCents": 948777,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-10 03:23:05+00",
+      "provider": "stripe_financial_connections"
+    },
+    {
+      "id": "account_balance_synth_029",
+      "financialAccountId": "financial_account_synth_004",
+      "currentBalanceCents": -17564185,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-10 03:23:05+00",
+      "provider": "stripe_financial_connections"
+    },
+    {
+      "id": "account_balance_synth_030",
+      "financialAccountId": "financial_asset_synth_026",
+      "currentBalanceCents": 5735616,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_031",
+      "financialAccountId": "financial_asset_synth_010",
+      "currentBalanceCents": 1763820,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-01 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_032",
+      "financialAccountId": "financial_asset_synth_027",
+      "currentBalanceCents": 1212851,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-01 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_033",
+      "financialAccountId": "financial_asset_synth_025",
+      "currentBalanceCents": 24411497,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_034",
+      "financialAccountId": "financial_asset_synth_023",
+      "currentBalanceCents": 8459514,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_035",
+      "financialAccountId": "financial_asset_synth_015",
+      "currentBalanceCents": 16655037,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_036",
+      "financialAccountId": "financial_asset_synth_003",
+      "currentBalanceCents": 15108384,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_037",
+      "financialAccountId": "financial_asset_synth_014",
+      "currentBalanceCents": 12547088,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_038",
+      "financialAccountId": "financial_asset_synth_007",
+      "currentBalanceCents": 16790991,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_039",
+      "financialAccountId": "financial_asset_synth_020",
+      "currentBalanceCents": 25209864,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_040",
+      "financialAccountId": "financial_asset_synth_028",
+      "currentBalanceCents": 698867,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-01 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_041",
+      "financialAccountId": "financial_asset_synth_016",
+      "currentBalanceCents": 14582856,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_042",
+      "financialAccountId": "financial_asset_synth_009",
+      "currentBalanceCents": 13616592,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_043",
+      "financialAccountId": "financial_asset_synth_002",
+      "currentBalanceCents": 9204819,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_044",
+      "financialAccountId": "financial_asset_synth_019",
+      "currentBalanceCents": 15986235,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_045",
+      "financialAccountId": "financial_asset_synth_004",
+      "currentBalanceCents": 7324590,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_046",
+      "financialAccountId": "financial_asset_synth_017",
+      "currentBalanceCents": 20766293,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_047",
+      "financialAccountId": "financial_asset_synth_029",
+      "currentBalanceCents": 1420945,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-01 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_048",
+      "financialAccountId": "financial_asset_synth_024",
+      "currentBalanceCents": 14576804,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_049",
+      "financialAccountId": "financial_asset_synth_012",
+      "currentBalanceCents": 6670223,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-01 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_050",
+      "financialAccountId": "financial_asset_synth_018",
+      "currentBalanceCents": 17550051,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_051",
+      "financialAccountId": "financial_asset_synth_008",
+      "currentBalanceCents": 12494274,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_052",
+      "financialAccountId": "financial_asset_synth_006",
+      "currentBalanceCents": 18820902,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_053",
+      "financialAccountId": "financial_asset_synth_013",
+      "currentBalanceCents": 14022617,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_054",
+      "financialAccountId": "financial_asset_synth_011",
+      "currentBalanceCents": 1582514,
+      "availableBalanceCents": null,
+      "asOf": "2026-09-01 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_055",
+      "financialAccountId": "financial_asset_synth_001",
+      "currentBalanceCents": 8000729,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_056",
+      "financialAccountId": "financial_asset_synth_021",
+      "currentBalanceCents": 13822415,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_057",
+      "financialAccountId": "financial_asset_synth_005",
+      "currentBalanceCents": 16265462,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_058",
+      "financialAccountId": "financial_asset_synth_022",
+      "currentBalanceCents": 56838924,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_asset"
+    },
+    {
+      "id": "account_balance_synth_059",
+      "financialAccountId": "investment_account_synth_003",
+      "currentBalanceCents": 48044,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_investment"
+    },
+    {
+      "id": "account_balance_synth_060",
+      "financialAccountId": "investment_account_synth_006",
+      "currentBalanceCents": 5730,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_investment"
+    },
+    {
+      "id": "account_balance_synth_061",
+      "financialAccountId": "investment_account_synth_002",
+      "currentBalanceCents": 0,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_investment"
+    },
+    {
+      "id": "account_balance_synth_062",
+      "financialAccountId": "investment_account_synth_004",
+      "currentBalanceCents": 1336899,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_investment"
+    },
+    {
+      "id": "account_balance_synth_063",
+      "financialAccountId": "investment_account_synth_008",
+      "currentBalanceCents": 2964960,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_investment"
+    },
+    {
+      "id": "account_balance_synth_064",
+      "financialAccountId": "investment_account_synth_001",
+      "currentBalanceCents": 1340,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_investment"
+    },
+    {
+      "id": "account_balance_synth_065",
+      "financialAccountId": "investment_account_synth_005",
+      "currentBalanceCents": 15853887,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_investment"
+    },
+    {
+      "id": "account_balance_synth_066",
+      "financialAccountId": "investment_account_synth_009",
+      "currentBalanceCents": 0,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_investment"
+    },
+    {
+      "id": "account_balance_synth_067",
+      "financialAccountId": "investment_account_synth_007",
+      "currentBalanceCents": 373076,
+      "availableBalanceCents": null,
+      "asOf": "2026-08-25 00:00:00+00",
+      "provider": "manual_investment"
+    }
+  ],
+  "groups": [
+    {
+      "group": {
+        "id": "financial_account_group_synth_001",
+        "relationship": "same_real_account"
+      },
+      "activeMemberFinancialAccountIds": [
+        "financial_account_synth_012",
+        "financial_account_synth_017"
+      ]
+    },
+    {
+      "group": {
+        "id": "financial_account_group_synth_002",
+        "relationship": "same_real_account"
+      },
+      "activeMemberFinancialAccountIds": [
+        "financial_account_synth_013",
+        "financial_account_synth_020"
+      ]
+    },
+    {
+      "group": {
+        "id": "financial_account_group_synth_003",
+        "relationship": "same_real_account"
+      },
+      "activeMemberFinancialAccountIds": [
+        "financial_account_synth_022",
+        "financial_account_synth_021"
+      ]
+    },
+    {
+      "group": {
+        "id": "financial_account_group_synth_004",
+        "relationship": "same_real_account"
+      },
+      "activeMemberFinancialAccountIds": [
+        "financial_account_synth_014",
+        "financial_account_synth_019"
+      ]
+    },
+    {
+      "group": {
+        "id": "financial_account_group_synth_005",
+        "relationship": "same_real_account"
+      },
+      "activeMemberFinancialAccountIds": [
+        "financial_account_synth_016",
+        "financial_account_synth_015"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "connection_synth_004",
+      "status": "connected"
+    },
+    {
+      "id": "connection_synth_005",
+      "status": "connected"
+    },
+    {
+      "id": "connection_synth_006",
+      "status": "connected"
+    },
+    {
+      "id": "connection_synth_007",
+      "status": "connected"
+    },
+    {
+      "id": "connection_synth_008",
+      "status": "disconnected"
+    },
+    {
+      "id": "connection_synth_002",
+      "status": "connected"
+    },
+    {
+      "id": "connection_synth_001",
+      "status": "needs_attention"
+    },
+    {
+      "id": "connection_synth_003",
+      "status": "needs_attention"
+    }
+  ],
+  "assets": [
+    {
+      "id": "financial_asset_synth_027",
+      "name": "Compact Tractor",
+      "assetClass": "other",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_028",
+      "name": "Zero-Turn Mower",
+      "assetClass": "other",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_029",
+      "name": "Gold Bullion Coins",
+      "assetClass": "other",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_001",
+      "name": "12 Juniper Lane",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_002",
+      "name": "48 Cactus Wren Way",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_003",
+      "name": "310 Mesquite Drive",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_004",
+      "name": "7 Bluebonnet Court",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_005",
+      "name": "925 Redbud Trail",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_006",
+      "name": "1600 Ironwood Avenue",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_007",
+      "name": "23 Sable Lane",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_008",
+      "name": "77 Prairie Rose Road",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_009",
+      "name": "1400 Copperfield Blvd",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_013",
+      "name": "55 Harbor Point Drive",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_014",
+      "name": "800 Aldergrove Road",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_015",
+      "name": "19 Cinder Way",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_016",
+      "name": "420 Summit Ridge Road",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_017",
+      "name": "88 Willow Bend Court",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_018",
+      "name": "1500 Falcon Ridge Drive",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_019",
+      "name": "33 Larkspur Lane",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_020",
+      "name": "2700 Pecan Grove Road",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_021",
+      "name": "61 Chaparral Street",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_022",
+      "name": "940 Antler Oaks Drive",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_023",
+      "name": "1205 Coyote Run",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_024",
+      "name": "75 Magnolia Bluff Lane",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_025",
+      "name": "600 Tumbleweed Trail",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_026",
+      "name": "18 Longleaf Drive",
+      "assetClass": "real_estate",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_010",
+      "name": "2016 Family SUV",
+      "assetClass": "vehicle",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_011",
+      "name": "2022 Luxury SUV",
+      "assetClass": "vehicle",
+      "active": true
+    },
+    {
+      "id": "financial_asset_synth_012",
+      "name": "2019 Work Pickup",
+      "assetClass": "vehicle",
+      "active": true
+    }
+  ],
+  "assetValuations": [
+    {
+      "assetId": "financial_asset_synth_027",
+      "amountCents": 1212851,
+      "effectiveDate": "2026-09-01",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_028",
+      "amountCents": 698867,
+      "effectiveDate": "2026-09-01",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_029",
+      "amountCents": 1420945,
+      "effectiveDate": "2026-09-01",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_012",
+      "amountCents": 6670223,
+      "effectiveDate": "2026-09-01",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_011",
+      "amountCents": 1582514,
+      "effectiveDate": "2026-09-01",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_010",
+      "amountCents": 1763820,
+      "effectiveDate": "2026-09-01",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_004",
+      "amountCents": 7324590,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_026",
+      "amountCents": 5735616,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_022",
+      "amountCents": 56838924,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_025",
+      "amountCents": 24411497,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_021",
+      "amountCents": 13822415,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_020",
+      "amountCents": 25209864,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_018",
+      "amountCents": 17550051,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_017",
+      "amountCents": 20766293,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_015",
+      "amountCents": 16655037,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_009",
+      "amountCents": 13616592,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_008",
+      "amountCents": 12494274,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_007",
+      "amountCents": 16790991,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_006",
+      "amountCents": 18820902,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_002",
+      "amountCents": 9204819,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_001",
+      "amountCents": 8000729,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_024",
+      "amountCents": 14576804,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_023",
+      "amountCents": 8459514,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_019",
+      "amountCents": 15986235,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_016",
+      "amountCents": 14582856,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_014",
+      "amountCents": 12547088,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_013",
+      "amountCents": 14022617,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_005",
+      "amountCents": 16265462,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "assetId": "financial_asset_synth_003",
+      "amountCents": 15108384,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    }
+  ],
+  "investmentAccounts": [
+    {
+      "id": "investment_account_synth_002",
+      "name": "Summit 401(k) Plan",
+      "accountType": "401k",
+      "active": true
+    },
+    {
+      "id": "investment_account_synth_008",
+      "name": "Harbor 401(k) Plan",
+      "accountType": "401k",
+      "active": true
+    },
+    {
+      "id": "investment_account_synth_009",
+      "name": "Prairie 401(k) Plan",
+      "accountType": "401k",
+      "active": true
+    },
+    {
+      "id": "investment_account_synth_006",
+      "name": "Mesquite IRA",
+      "accountType": "ira",
+      "active": true
+    },
+    {
+      "id": "investment_account_synth_007",
+      "name": "Bluebonnet IRA",
+      "accountType": "ira",
+      "active": true
+    },
+    {
+      "id": "investment_account_synth_005",
+      "name": "Ironwood Private Fund",
+      "accountType": "private_investment",
+      "active": true
+    },
+    {
+      "id": "investment_account_synth_001",
+      "name": "Aldergrove Brokerage",
+      "accountType": "taxable_brokerage",
+      "active": true
+    },
+    {
+      "id": "investment_account_synth_003",
+      "name": "Juniper Brokerage",
+      "accountType": "taxable_brokerage",
+      "active": true
+    },
+    {
+      "id": "investment_account_synth_004",
+      "name": "Copperfield Brokerage",
+      "accountType": "taxable_brokerage",
+      "active": true
+    }
+  ],
+  "investmentValuations": [
+    {
+      "accountId": "investment_account_synth_004",
+      "amountCents": 1336899,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "accountId": "investment_account_synth_009",
+      "amountCents": 0,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "accountId": "investment_account_synth_002",
+      "amountCents": 0,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "accountId": "investment_account_synth_008",
+      "amountCents": 2964960,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "accountId": "investment_account_synth_007",
+      "amountCents": 373076,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "accountId": "investment_account_synth_006",
+      "amountCents": 5730,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "accountId": "investment_account_synth_005",
+      "amountCents": 15853887,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "accountId": "investment_account_synth_003",
+      "amountCents": 48044,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    },
+    {
+      "accountId": "investment_account_synth_001",
+      "amountCents": 1340,
+      "effectiveDate": "2026-08-25",
+      "source": "manual"
+    }
+  ],
+  "expected": {
+    "assetsCents": 424401407,
+    "liabilitiesCents": 42268925,
+    "netWorthCents": 382132482,
+    "bankingCents": 11138789,
+    "standaloneOtherCents": -123562
+  }
+}
