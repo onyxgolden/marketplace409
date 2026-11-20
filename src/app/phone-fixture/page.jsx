@@ -50,6 +50,17 @@
  *                 label and large amounts, so the phone-width check
  *                 measures the stacked cards, the expense detail, and the
  *                 totals at 390/400px. No network calls on render.
+ *   projects-list — the real ProjectsScreen (Scheduling Projects list,
+ *                 Phone Slice 3), with a fixture project list seeded into
+ *                 the in-memory SWR cache — the same long project name and
+ *                 September dates the unit tests use, plus a SHARED EXAMPLE
+ *                 and an owner project. The guard also intercepts
+ *                 /api/forge/scheduling (GET only) as a backstop, so a
+ *                 revalidation never touches production. The wrapper
+ *                 mirrors WorkspaceShell's production containment
+ *                 (min-w-0 flex-1 + min-w-0 content div) — never a bare
+ *                 full-width div, which would hide a real containment
+ *                 overflow.
  *
  * The case comes from window.location.search after mount (no
  * useSearchParams, so no Suspense boundary is needed). The page sets
@@ -65,6 +76,7 @@ import { loadVerifiedFccuLevelDesign } from "./fccuFixture";
 import WorkPackagePageHeader from "@/app/forge/work/page-header";
 import WorkspaceShell from "@/components/workspace-shell";
 import ForgeApplicationRail from "@/components/forge/ForgeApplicationRail";
+import ProjectsScreen from "@/components/forge/scheduling/ProjectsScreen";
 import RentalOverviewPanel from "@/components/forge/rental/RentalOverviewPanel";
 import RentalPropertyPerformancePanel from "@/components/forge/rental/RentalPropertyPerformancePanel";
 import { buildRentalPropertyPerformance } from "@/application/rental/buildRentalPropertyPerformance";
@@ -339,6 +351,62 @@ function RentalPerformanceCase() {
   );
 }
 
+// Projects-list case — the real ProjectsScreen (Phone Slice 3). The
+// fixture list is seeded into the in-memory SWR cache synchronously
+// during render (same pattern as HealthDashboardCase), so the list
+// renders on first paint; the guard also intercepts
+// /api/forge/scheduling (GET only) as a backstop. Longest-month
+// September dates + a long name exercise the card's full-date rendering;
+// one SHARED EXAMPLE and one owner project exercise the badge and the
+// owner-only delete. The wrapper mirrors WorkspaceShell's production
+// containment (min-w-0 flex-1 + min-w-0 content div).
+const PROJECTS_LIST_FIXTURE = [
+  {
+    id: "p-long-name",
+    name: "FCCU Turnaround — Fall 2026 Shutdown and Revamp",
+    startDate: "2026-09-30",
+    endDate: "2026-12-31",
+    createdAt: "2026-08-01T12:00:00Z",
+    updatedAt: "2026-11-10T14:00:00Z",
+    isPublic: true,
+    isOwner: false,
+  },
+  {
+    id: "p-owner",
+    name: "Crude Unit Revamp",
+    startDate: "2026-11-02",
+    endDate: "2026-11-20",
+    createdAt: "2026-09-15T12:00:00Z",
+    updatedAt: "2026-11-12T08:00:00Z",
+    isPublic: false,
+    isOwner: true,
+  },
+  {
+    id: "p-plain",
+    name: "Hydrocracker Catalyst Change",
+    startDate: "2026-09-15",
+    endDate: "2026-10-02",
+    createdAt: "2026-07-20T12:00:00Z",
+    updatedAt: "2026-09-01T12:00:00Z",
+    isPublic: false,
+    isOwner: false,
+  },
+];
+function SchedulingProjectsCase() {
+  // Seed synchronously during render (SSR-safe: memory-only, no localStorage)
+  // so the list's first render reads it; see HealthDashboardCase above.
+  seedCacheEntry("scheduling:projects", PROJECTS_LIST_FIXTURE);
+  return (
+    <div className="flex min-h-dvh w-full">
+      <div className="min-w-0 flex-1">
+        <div data-workspace-content className="min-w-0">
+          <ProjectsScreen />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const CASES = {
   designer: DesignerCase,
   fccu: FccuCase,
@@ -348,6 +416,7 @@ const CASES = {
   "forge-header": ForgeHeaderCase,
   "rental-23": Rental23Case,
   "rental-performance": RentalPerformanceCase,
+  "projects-list": SchedulingProjectsCase,
   health: HealthCase,
   "health-dashboard": HealthDashboardCase,
 };
