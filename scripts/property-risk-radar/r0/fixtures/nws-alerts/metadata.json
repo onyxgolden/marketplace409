@@ -1,0 +1,1 @@
+{"info":{"title":"NWS API (synthetic contract excerpt)","version":"1.0.0"},"note":"Synthetic contract excerpt invented for R0. Not a live response.","openapi":"3.0.3","paths":{"/alerts/active":{"get":{"summary":"Active alerts"}}},"synthetic":true}

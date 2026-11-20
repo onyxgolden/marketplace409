@@ -1,0 +1,1 @@
+{"features":[{"geometry":{"coordinates":[-95.3698,29.7604],"type":"Point"},"properties":{"mag":2.5,"place":"Synthetic test event 10km E of Houston, Texas","time":1763596800000,"type":"earthquake","updated":1763596800000},"type":"Feature"}],"metadata":{"count":1,"generated":1763596800000},"synthetic":true,"type":"FeatureCollection"}

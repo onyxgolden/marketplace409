@@ -1,0 +1,1 @@
+{"exceededTransferLimit":false,"features":[{"geometry":{"coordinates":[-75.0,25.0],"type":"Point"},"properties":{"ADVISORY":"SYNTHETIC-001","STORMID":"AL012026","STORMNAME":"SYNTHETIC TEST STORM"},"type":"Feature"}],"synthetic":true,"type":"FeatureCollection"}

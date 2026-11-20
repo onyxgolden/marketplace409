@@ -1,0 +1,19 @@
+{
+  "adapterId": "nhc-tropical",
+  "fixtureKind": "synthetic-contract",
+  "liveFixtureStatus": "pending-live-preflight",
+  "generatedFrom": "Contract in src/adapters/nhc-tropical.mjs; synthetic values invented 2026-11-20; no live fetch.",
+  "files": [
+    {
+      "name": "metadata.json",
+      "sha256": "774fab72f7eb95aa397393654332ec2deb0f71f7173d75df6f7a3fc4aeca41a6",
+      "bytes": 404
+    },
+    {
+      "name": "sample.json",
+      "sha256": "961cb43de70516092de3956efe448d8b26afcaabe7d5950f8520df4216d6cb79",
+      "bytes": 260
+    }
+  ],
+  "digest": "be65fe25f2a6e2554b5fc5c4fcc44371f7c24845360a01c197dfb85d0077d66b"
+}

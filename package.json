@@ -29,7 +29,9 @@
     "forge:brain:acceptance-report": "node scripts/engineering-brain/renderAcceptanceReport.mjs",
     "forge:team-brain:fixture": "node scripts/team-brain/runFixtureReport.mjs",
     "forge:team-brain:eng-memory": "node scripts/team-brain/eng-memory/runBattery.mjs",
-    "test:e2e:smoke": "playwright test --config=e2e/playwright.config.js"
+    "test:e2e:smoke": "playwright test --config=e2e/playwright.config.js",
+    "risk-radar:r0:validate": "node scripts/property-risk-radar/r0/src/validateRegistry.mjs",
+    "risk-radar:r0:test": "node --test \"scripts/property-risk-radar/r0/tests/*.test.mjs\""
   },
   "dependencies": {
     "@google-cloud/vision": "^5.3.7",

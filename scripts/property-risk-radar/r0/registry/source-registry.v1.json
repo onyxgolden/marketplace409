@@ -1,0 +1,1224 @@
+{
+  "registryVersion": "1.0.0",
+  "reviewedAt": "2026-11-20",
+  "defaultNetworkPolicy": "deny",
+  "sources": [
+    {
+      "id": "nws-alerts",
+      "owner": "NOAA / National Weather Service",
+      "product": "NWS API — active alerts",
+      "category": "hazard-data",
+      "adapterVersion": "1.0.0",
+      "network": {
+        "hosts": [
+          "api.weather.gov"
+        ],
+        "pathPrefixes": [
+          "/openapi.json",
+          "/alerts/"
+        ],
+        "method": "GET",
+        "maxRedirects": 2,
+        "credentialMode": "none"
+      },
+      "endpoints": {
+        "metadataUrlTemplate": "https://api.weather.gov/openapi.json",
+        "sampleUrlTemplate": "https://api.weather.gov/alerts/active?status=actual&message_type=alert"
+      },
+      "serviceIdentity": {
+        "service": "NWS API",
+        "item": null,
+        "layer": null,
+        "layerId": null
+      },
+      "response": {
+        "format": "geojson",
+        "crs": "EPSG:4326",
+        "requiredFields": [
+          "features[].id",
+          "features[].properties.status",
+          "features[].properties.messageType",
+          "features[].properties.effective",
+          "features[].properties.expires",
+          "features[].properties.areaDesc"
+        ],
+        "geometryTypes": [
+          "Polygon",
+          "MultiPolygon",
+          null
+        ]
+      },
+      "terms": {
+        "landingUrl": "https://www.weather.gov/documentation/services-web-api",
+        "termsUrl": "https://www.weather.gov/disclaimer",
+        "termsDate": "2026-10-16",
+        "attribution": "National Weather Service (NOAA)",
+        "coverage": {
+          "geographic": "United States (CONUS, AK, HI, territories)",
+          "temporal": "Current active alerts; validity per alert effective/expires"
+        },
+        "quota": "UNKNOWN"
+      },
+      "policy": {
+        "spacingMs": 30000,
+        "concurrency": 1,
+        "timeoutMs": 10000,
+        "caps": {
+          "redirects": 2,
+          "pages": 1,
+          "records": 1000,
+          "bytes": 5242880,
+          "vertices": 500000
+        }
+      },
+      "observationTimeField": "features[].properties.effective",
+      "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
+      "status": "disabled",
+      "statusReason": "Contract recorded. No live preflight run in the R0 offline build; acceptance pending separately authorized live preflight.",
+      "killSwitch": true,
+      "lastPreflight": null,
+      "liveFixtureStatus": "pending-live-preflight",
+      "fixtureKind": "synthetic-contract",
+      "fixtureManifest": "fixtures/nws-alerts/manifest.json",
+      "schemaDigest": "0fbd8a39042dc487fc56f0b260412b5deda46c6c16417588a82a2b5c96a53560",
+      "rights": {
+        "metadataListing": {
+          "mode": "allowed",
+          "receipt": "receipts/nws-alerts.md",
+          "receiptDate": "2026-11-20"
+        },
+        "imageDisplay": {
+          "mode": "not_applicable",
+          "receipt": "receipts/nws-alerts.md",
+          "receiptDate": "2026-11-20"
+        },
+        "iframeEmbed": {
+          "mode": "not_applicable",
+          "receipt": "receipts/nws-alerts.md",
+          "receiptDate": "2026-11-20"
+        },
+        "hotlinking": {
+          "mode": "not_applicable",
+          "receipt": "receipts/nws-alerts.md",
+          "receiptDate": "2026-11-20"
+        },
+        "proxying": {
+          "mode": "forbidden",
+          "receipt": "receipts/nws-alerts.md",
+          "receiptDate": "2026-11-20"
+        },
+        "caching": {
+          "mode": "allowed",
+          "receipt": "receipts/nws-alerts.md",
+          "receiptDate": "2026-11-20"
+        },
+        "archive": {
+          "mode": "unknown",
+          "receipt": "receipts/nws-alerts.md",
+          "receiptDate": "2026-11-20"
+        }
+      }
+    },
+    {
+      "id": "usgs-earthquakes",
+      "owner": "U.S. Geological Survey",
+      "product": "USGS Earthquake Hazards Program — summary feeds",
+      "category": "hazard-data",
+      "adapterVersion": "1.0.0",
+      "network": {
+        "hosts": [
+          "earthquake.usgs.gov"
+        ],
+        "pathPrefixes": [
+          "/earthquakes/feed/v1.0/summary/"
+        ],
+        "method": "GET",
+        "maxRedirects": 2,
+        "credentialMode": "none"
+      },
+      "endpoints": {
+        "metadataUrlTemplate": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/geojson.php",
+        "sampleUrlTemplate": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson"
+      },
+      "serviceIdentity": {
+        "service": "USGS GeoJSON summary feed",
+        "item": "all_day",
+        "layer": null,
+        "layerId": null
+      },
+      "response": {
+        "format": "geojson",
+        "crs": "EPSG:4326",
+        "requiredFields": [
+          "metadata.generated",
+          "metadata.count",
+          "features[].geometry.coordinates",
+          "features[].properties.mag",
+          "features[].properties.place",
+          "features[].properties.time",
+          "features[].properties.updated"
+        ],
+        "geometryTypes": [
+          "Point"
+        ]
+      },
+      "terms": {
+        "landingUrl": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/geojson.php",
+        "termsUrl": "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits",
+        "termsDate": "2026-10-16",
+        "attribution": "U.S. Geological Survey",
+        "coverage": {
+          "geographic": "Global (feed is worldwide; FORGE use is US-focused)",
+          "temporal": "Last 24 hours in all_day; generated time is source time"
+        },
+        "quota": "UNKNOWN"
+      },
+      "policy": {
+        "spacingMs": 60000,
+        "concurrency": 1,
+        "timeoutMs": 10000,
+        "caps": {
+          "redirects": 2,
+          "pages": 1,
+          "records": 10000,
+          "bytes": 5242880,
+          "vertices": 500000
+        }
+      },
+      "observationTimeField": "features[].properties.time",
+      "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
+      "status": "disabled",
+      "statusReason": "Contract recorded. No live preflight run in the R0 offline build; acceptance pending separately authorized live preflight.",
+      "killSwitch": true,
+      "lastPreflight": null,
+      "liveFixtureStatus": "pending-live-preflight",
+      "fixtureKind": "synthetic-contract",
+      "fixtureManifest": "fixtures/usgs-earthquakes/manifest.json",
+      "schemaDigest": "d9e64e54a709f961e0c3a1ac5c7cbbbe8be70ba3e109797ad7e7c4b6bffdeb26",
+      "rights": {
+        "metadataListing": {
+          "mode": "allowed",
+          "receipt": "receipts/usgs-earthquakes.md",
+          "receiptDate": "2026-11-20"
+        },
+        "imageDisplay": {
+          "mode": "not_applicable",
+          "receipt": "receipts/usgs-earthquakes.md",
+          "receiptDate": "2026-11-20"
+        },
+        "iframeEmbed": {
+          "mode": "not_applicable",
+          "receipt": "receipts/usgs-earthquakes.md",
+          "receiptDate": "2026-11-20"
+        },
+        "hotlinking": {
+          "mode": "not_applicable",
+          "receipt": "receipts/usgs-earthquakes.md",
+          "receiptDate": "2026-11-20"
+        },
+        "proxying": {
+          "mode": "forbidden",
+          "receipt": "receipts/usgs-earthquakes.md",
+          "receiptDate": "2026-11-20"
+        },
+        "caching": {
+          "mode": "allowed",
+          "receipt": "receipts/usgs-earthquakes.md",
+          "receiptDate": "2026-11-20"
+        },
+        "archive": {
+          "mode": "unknown",
+          "receipt": "receipts/usgs-earthquakes.md",
+          "receiptDate": "2026-11-20"
+        }
+      }
+    },
+    {
+      "id": "wfigs-perimeters",
+      "owner": "National Interagency Fire Center (NIFC)",
+      "product": "WFIGS — Current Interagency Fire Perimeters",
+      "category": "hazard-data",
+      "adapterVersion": "1.0.0",
+      "network": {
+        "hosts": [
+          "services3.arcgis.com"
+        ],
+        "pathPrefixes": [
+          "/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_Current/"
+        ],
+        "method": "GET",
+        "maxRedirects": 2,
+        "credentialMode": "none"
+      },
+      "endpoints": {
+        "metadataUrlTemplate": "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_Current/FeatureServer/0?f=pjson",
+        "sampleUrlTemplate": "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_Current/FeatureServer/0/query?where=1%3D1&outFields=*&geometry=&outSR=4326&resultRecordCount=1&f=geojson"
+      },
+      "serviceIdentity": {
+        "service": "WFIGS_Interagency_Perimeters_Current",
+        "item": "FeatureServer",
+        "layer": "WFIGS Interagency Perimeters Current",
+        "layerId": 0
+      },
+      "response": {
+        "format": "arcgis-geojson",
+        "crs": "EPSG:4326",
+        "requiredFields": [
+          "features[].attributes.OBJECTID",
+          "features[].attributes.IncidentName",
+          "features[].geometry.rings",
+          "exceededTransferLimit"
+        ],
+        "geometryTypes": [
+          "Polygon"
+        ]
+      },
+      "terms": {
+        "landingUrl": "https://data-nifc.opendata.arcgis.com/datasets/nifc::wfigs-current-interagency-fire-perimeters/about",
+        "termsUrl": "https://data-nifc.opendata.arcgis.com/",
+        "termsDate": "2026-10-16",
+        "attribution": "National Interagency Fire Center (NIFC)",
+        "coverage": {
+          "geographic": "United States (interagency incidents)",
+          "temporal": "Current perimeters; source update time per feature"
+        },
+        "quota": "UNKNOWN"
+      },
+      "policy": {
+        "spacingMs": 1000,
+        "concurrency": 1,
+        "timeoutMs": 10000,
+        "caps": {
+          "redirects": 2,
+          "pages": 1,
+          "records": 1,
+          "bytes": 5242880,
+          "vertices": 500000
+        }
+      },
+      "observationTimeField": "features[].attributes.DateCurrent",
+      "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
+      "status": "disabled",
+      "statusReason": "Contract recorded. No live preflight run in the R0 offline build; acceptance pending separately authorized live preflight. A current live fixture is still owed for this adapter.",
+      "killSwitch": true,
+      "lastPreflight": null,
+      "liveFixtureStatus": "pending-live-preflight",
+      "fixtureKind": "synthetic-contract",
+      "fixtureManifest": "fixtures/wfigs-perimeters/manifest.json",
+      "schemaDigest": "4ec389191435fd6f28cb8b2a5045c21e4fb67095615eeb648679dee75b620c17",
+      "rights": {
+        "metadataListing": {
+          "mode": "allowed",
+          "receipt": "receipts/wfigs-perimeters.md",
+          "receiptDate": "2026-11-20"
+        },
+        "imageDisplay": {
+          "mode": "not_applicable",
+          "receipt": "receipts/wfigs-perimeters.md",
+          "receiptDate": "2026-11-20"
+        },
+        "iframeEmbed": {
+          "mode": "not_applicable",
+          "receipt": "receipts/wfigs-perimeters.md",
+          "receiptDate": "2026-11-20"
+        },
+        "hotlinking": {
+          "mode": "not_applicable",
+          "receipt": "receipts/wfigs-perimeters.md",
+          "receiptDate": "2026-11-20"
+        },
+        "proxying": {
+          "mode": "forbidden",
+          "receipt": "receipts/wfigs-perimeters.md",
+          "receiptDate": "2026-11-20"
+        },
+        "caching": {
+          "mode": "allowed",
+          "receipt": "receipts/wfigs-perimeters.md",
+          "receiptDate": "2026-11-20"
+        },
+        "archive": {
+          "mode": "unknown",
+          "receipt": "receipts/wfigs-perimeters.md",
+          "receiptDate": "2026-11-20"
+        }
+      }
+    },
+    {
+      "id": "nhc-tropical",
+      "owner": "NOAA / National Hurricane Center",
+      "product": "NHC Tropical Weather — operational MapServer",
+      "category": "hazard-data",
+      "adapterVersion": "1.0.0",
+      "network": {
+        "hosts": [
+          "mapservices.weather.noaa.gov"
+        ],
+        "pathPrefixes": [
+          "/tropical/rest/services/tropical/NHC_tropical_weather/"
+        ],
+        "method": "GET",
+        "maxRedirects": 2,
+        "credentialMode": "none"
+      },
+      "endpoints": {
+        "metadataUrlTemplate": "https://mapservices.weather.noaa.gov/tropical/rest/services/tropical/NHC_tropical_weather/MapServer?f=pjson",
+        "sampleUrlTemplate": "https://mapservices.weather.noaa.gov/tropical/rest/services/tropical/NHC_tropical_weather/MapServer/layers?f=pjson"
+      },
+      "serviceIdentity": {
+        "service": "NHC_tropical_weather",
+        "item": "MapServer",
+        "layer": "forecast points / track / cone (pinned by name+ID at live preflight)",
+        "layerId": null
+      },
+      "response": {
+        "format": "arcgis-geojson",
+        "crs": "EPSG:4326",
+        "requiredFields": [
+          "features[].attributes.STORMNAME",
+          "features[].attributes.STORMID",
+          "features[].attributes.ADVISORY"
+        ],
+        "geometryTypes": [
+          "Point",
+          "Polyline",
+          "Polygon"
+        ]
+      },
+      "terms": {
+        "landingUrl": "https://www.nhc.noaa.gov/gis/",
+        "termsUrl": "https://www.weather.gov/disclaimer",
+        "termsDate": "2026-10-16",
+        "attribution": "National Hurricane Center (NOAA)",
+        "coverage": {
+          "geographic": "Atlantic / Eastern Pacific tropical basins",
+          "temporal": "Advisory-driven; service updates on a 6-hour / 3-hour cadence"
+        },
+        "quota": "UNKNOWN"
+      },
+      "policy": {
+        "spacingMs": 900000,
+        "concurrency": 1,
+        "timeoutMs": 10000,
+        "caps": {
+          "redirects": 2,
+          "pages": 1,
+          "records": 1,
+          "bytes": 5242880,
+          "vertices": 500000
+        }
+      },
+      "observationTimeField": "features[].attributes.ADVISORY (advisory identity; storm time per layer)",
+      "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
+      "status": "disabled",
+      "statusReason": "Contract recorded. No live preflight run in the R0 offline build; layer IDs are pinned by name+ID only at live preflight. Acceptance pending separately authorized live preflight.",
+      "killSwitch": true,
+      "lastPreflight": null,
+      "liveFixtureStatus": "pending-live-preflight",
+      "fixtureKind": "synthetic-contract",
+      "fixtureManifest": "fixtures/nhc-tropical/manifest.json",
+      "schemaDigest": "2aabae0e37eb429f77842eef30d5e06cf7c65f085c06361853f0f5017e9dbf8f",
+      "rights": {
+        "metadataListing": {
+          "mode": "allowed",
+          "receipt": "receipts/nhc-tropical.md",
+          "receiptDate": "2026-11-20"
+        },
+        "imageDisplay": {
+          "mode": "not_applicable",
+          "receipt": "receipts/nhc-tropical.md",
+          "receiptDate": "2026-11-20"
+        },
+        "iframeEmbed": {
+          "mode": "not_applicable",
+          "receipt": "receipts/nhc-tropical.md",
+          "receiptDate": "2026-11-20"
+        },
+        "hotlinking": {
+          "mode": "not_applicable",
+          "receipt": "receipts/nhc-tropical.md",
+          "receiptDate": "2026-11-20"
+        },
+        "proxying": {
+          "mode": "forbidden",
+          "receipt": "receipts/nhc-tropical.md",
+          "receiptDate": "2026-11-20"
+        },
+        "caching": {
+          "mode": "allowed",
+          "receipt": "receipts/nhc-tropical.md",
+          "receiptDate": "2026-11-20"
+        },
+        "archive": {
+          "mode": "unknown",
+          "receipt": "receipts/nhc-tropical.md",
+          "receiptDate": "2026-11-20"
+        }
+      }
+    },
+    {
+      "id": "fema-nfhl",
+      "owner": "Federal Emergency Management Agency (FEMA)",
+      "product": "National Flood Hazard Layer (NFHL)",
+      "category": "hazard-data",
+      "adapterVersion": "1.0.0",
+      "network": {
+        "hosts": [
+          "hazards.fema.gov"
+        ],
+        "pathPrefixes": [
+          "/gis/nfhl/rest/services/public/NFHL/"
+        ],
+        "method": "GET",
+        "maxRedirects": 2,
+        "credentialMode": "none"
+      },
+      "endpoints": {
+        "metadataUrlTemplate": "https://hazards.fema.gov/gis/nfhl/rest/services/public/NFHL/MapServer?f=pjson",
+        "sampleUrlTemplate": "https://hazards.fema.gov/gis/nfhl/rest/services/public/NFHL/MapServer/28/query?geometry=-95.3698%2C29.7604&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&outSR=4326&f=geojson"
+      },
+      "serviceIdentity": {
+        "service": "NFHL",
+        "item": "MapServer",
+        "layer": "Flood Hazard Zones (layer 28 is a CANDIDATE, not verified)",
+        "layerId": 28,
+        "layerCandidate": true
+      },
+      "response": {
+        "format": "arcgis-geojson",
+        "crs": "EPSG:4326",
+        "requiredFields": [
+          "features[].attributes.FLD_ZONE",
+          "features[].attributes.SFHA_TF",
+          "features[].attributes.PANEL",
+          "features[].attributes.EFF_DATE"
+        ],
+        "geometryTypes": [
+          "Polygon"
+        ]
+      },
+      "terms": {
+        "landingUrl": "https://www.fema.gov/flood-maps/national-flood-hazard-layer",
+        "termsUrl": "https://msc.fema.gov/",
+        "termsDate": "2026-10-16",
+        "attribution": "Federal Emergency Management Agency (FEMA)",
+        "coverage": {
+          "geographic": "United States where NFHL mapping exists; unmapped areas return no match",
+          "temporal": "Effective regulatory context (map effective date per panel), not live conditions"
+        },
+        "quota": "UNKNOWN"
+      },
+      "policy": {
+        "spacingMs": 86400000,
+        "concurrency": 1,
+        "timeoutMs": 10000,
+        "caps": {
+          "redirects": 2,
+          "pages": 1,
+          "records": 1,
+          "bytes": 5242880,
+          "vertices": 1000
+        }
+      },
+      "observationTimeField": "features[].attributes.EFF_DATE (map effective date)",
+      "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
+      "status": "disabled",
+      "statusReason": "Contract recorded. Layer 28 is an unverified candidate; the official service/item/layer must be resolved from FEMA's official link chain at live preflight. No live preflight run in the R0 offline build; a current live fixture is still owed for this adapter.",
+      "killSwitch": true,
+      "lastPreflight": null,
+      "liveFixtureStatus": "pending-live-preflight",
+      "fixtureKind": "synthetic-contract",
+      "fixtureManifest": "fixtures/fema-nfhl/manifest.json",
+      "schemaDigest": "6d958a649dedc41cab5bc202b6a0b19447765338a837f1839e790f58e8551933",
+      "rights": {
+        "metadataListing": {
+          "mode": "allowed",
+          "receipt": "receipts/fema-nfhl.md",
+          "receiptDate": "2026-11-20"
+        },
+        "imageDisplay": {
+          "mode": "not_applicable",
+          "receipt": "receipts/fema-nfhl.md",
+          "receiptDate": "2026-11-20"
+        },
+        "iframeEmbed": {
+          "mode": "not_applicable",
+          "receipt": "receipts/fema-nfhl.md",
+          "receiptDate": "2026-11-20"
+        },
+        "hotlinking": {
+          "mode": "not_applicable",
+          "receipt": "receipts/fema-nfhl.md",
+          "receiptDate": "2026-11-20"
+        },
+        "proxying": {
+          "mode": "forbidden",
+          "receipt": "receipts/fema-nfhl.md",
+          "receiptDate": "2026-11-20"
+        },
+        "caching": {
+          "mode": "allowed",
+          "receipt": "receipts/fema-nfhl.md",
+          "receiptDate": "2026-11-20"
+        },
+        "archive": {
+          "mode": "unknown",
+          "receipt": "receipts/fema-nfhl.md",
+          "receiptDate": "2026-11-20"
+        }
+      }
+    },
+    {
+      "id": "census-geocoder",
+      "owner": "U.S. Census Bureau",
+      "product": "Census Geocoder — onelineaddress",
+      "category": "geocoder",
+      "adapterVersion": "1.0.0",
+      "network": {
+        "hosts": [
+          "geocoding.geo.census.gov"
+        ],
+        "pathPrefixes": [
+          "/geocoder/locations/onelineaddress"
+        ],
+        "method": "GET",
+        "maxRedirects": 2,
+        "credentialMode": "none"
+      },
+      "endpoints": {
+        "metadataUrlTemplate": "https://www.census.gov/programs-surveys/geography/technical-documentation/complete-technical-documentation/census-geocoder.html",
+        "sampleUrlTemplate": "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=4600%20Silver%20Hill%20Rd%2C%20Washington%2C%20DC%20233&benchmark=Public_AR_Current&format=json"
+      },
+      "serviceIdentity": {
+        "service": "Census Geocoder",
+        "item": "onelineaddress",
+        "layer": null,
+        "layerId": null
+      },
+      "response": {
+        "format": "json",
+        "crs": "EPSG:4326",
+        "requiredFields": [
+          "result.input.address",
+          "result.input.benchmark",
+          "result.addressMatches[].matchedAddress",
+          "result.addressMatches[].coordinates",
+          "result.addressMatches[].addressComponents"
+        ],
+        "geometryTypes": [
+          "Point"
+        ]
+      },
+      "terms": {
+        "landingUrl": "https://www.census.gov/programs-surveys/geography/technical-documentation/complete-technical-documentation/census-geocoder.html",
+        "termsUrl": "https://geocoding.geo.census.gov/geocoder/Geocoding_Services_API.html",
+        "termsDate": "2026-10-16",
+        "attribution": "U.S. Census Bureau",
+        "coverage": {
+          "geographic": "United States street addresses",
+          "temporal": "Current benchmark (mutable); matched-address vintage per result"
+        },
+        "quota": "UNKNOWN"
+      },
+      "policy": {
+        "spacingMs": 1000,
+        "concurrency": 1,
+        "timeoutMs": 10000,
+        "caps": {
+          "redirects": 2,
+          "pages": 1,
+          "records": 1,
+          "bytes": 5242880,
+          "vertices": 0
+        }
+      },
+      "observationTimeField": "result.addressMatches[].addressComponents (vintage per match)",
+      "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
+      "status": "disabled",
+      "statusReason": "Contract recorded. No live preflight run in the R0 offline build; acceptance pending separately authorized live preflight.",
+      "killSwitch": true,
+      "lastPreflight": null,
+      "liveFixtureStatus": "pending-live-preflight",
+      "fixtureKind": "synthetic-contract",
+      "fixtureManifest": "fixtures/census-geocoder/manifest.json",
+      "schemaDigest": "1be9fbee882bb035686bebdac00c2a120303968bb5e546f75d1fdd5331edb374",
+      "rights": {
+        "metadataListing": {
+          "mode": "allowed",
+          "receipt": "receipts/census-geocoder.md",
+          "receiptDate": "2026-11-20"
+        },
+        "imageDisplay": {
+          "mode": "not_applicable",
+          "receipt": "receipts/census-geocoder.md",
+          "receiptDate": "2026-11-20"
+        },
+        "iframeEmbed": {
+          "mode": "not_applicable",
+          "receipt": "receipts/census-geocoder.md",
+          "receiptDate": "2026-11-20"
+        },
+        "hotlinking": {
+          "mode": "not_applicable",
+          "receipt": "receipts/census-geocoder.md",
+          "receiptDate": "2026-11-20"
+        },
+        "proxying": {
+          "mode": "forbidden",
+          "receipt": "receipts/census-geocoder.md",
+          "receiptDate": "2026-11-20"
+        },
+        "caching": {
+          "mode": "allowed",
+          "receipt": "receipts/census-geocoder.md",
+          "receiptDate": "2026-11-20"
+        },
+        "archive": {
+          "mode": "unknown",
+          "receipt": "receipts/census-geocoder.md",
+          "receiptDate": "2026-11-20"
+        }
+      }
+    },
+    {
+      "id": "houston-transtar",
+      "owner": "Houston TranStar (TxDOT / regional partners)",
+      "product": "Houston TranStar traffic cameras",
+      "category": "camera",
+      "adapterVersion": "1.0.0",
+      "network": {
+        "hosts": [
+          "www.houstontranstar.org",
+          "traffic.houstontranstar.org"
+        ],
+        "pathPrefixes": [
+          "/",
+          "/faq/",
+          "/disclaimer.aspx"
+        ],
+        "method": "GET",
+        "maxRedirects": 2,
+        "credentialMode": "none"
+      },
+      "endpoints": {
+        "metadataUrlTemplate": "https://www.houstontranstar.org/",
+        "sampleUrlTemplate": "https://traffic.houstontranstar.org/disclaimer.aspx"
+      },
+      "serviceIdentity": {
+        "service": "Houston TranStar",
+        "item": null,
+        "layer": null,
+        "layerId": null
+      },
+      "response": {
+        "format": "viewer-link",
+        "crs": null,
+        "requiredFields": [
+          "viewerUrl",
+          "disclaimerUrl"
+        ],
+        "geometryTypes": []
+      },
+      "terms": {
+        "landingUrl": "https://www.houstontranstar.org/faq/webfaq.aspx",
+        "termsUrl": "https://traffic.houstontranstar.org/disclaimer.aspx",
+        "termsDate": "2026-10-16",
+        "attribution": "Houston TranStar",
+        "coverage": {
+          "geographic": "Houston, Texas region",
+          "temporal": "Snapshots approximately every 3 minutes per FAQ; no stored footage"
+        },
+        "quota": "UNKNOWN"
+      },
+      "policy": {
+        "spacingMs": 180000,
+        "concurrency": 1,
+        "timeoutMs": 10000,
+        "caps": {
+          "redirects": 2,
+          "pages": 1,
+          "records": 0,
+          "bytes": 0,
+          "vertices": 0
+        }
+      },
+      "observationTimeField": null,
+      "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
+      "status": "disabled",
+      "statusReason": "LINK_ONLY until written TxDOT consent or a source-specific license is documented. No image, player, hotlink, proxy, cache, or archive use.",
+      "killSwitch": true,
+      "lastPreflight": null,
+      "liveFixtureStatus": "pending-live-preflight",
+      "fixtureKind": "synthetic-contract",
+      "referenceMode": "LINK_ONLY",
+      "fixtureManifest": null,
+      "schemaDigest": "f35c36e2e0deff6f040459f0c35d04ad8ff7c81bbf9cb216e00e14f9b979ce14",
+      "rights": {
+        "metadataListing": {
+          "mode": "allowed",
+          "receipt": "receipts/houston-transtar.md",
+          "receiptDate": "2026-11-20"
+        },
+        "imageDisplay": {
+          "mode": "forbidden",
+          "receipt": "receipts/houston-transtar.md",
+          "receiptDate": "2026-11-20"
+        },
+        "iframeEmbed": {
+          "mode": "forbidden",
+          "receipt": "receipts/houston-transtar.md",
+          "receiptDate": "2026-11-20"
+        },
+        "hotlinking": {
+          "mode": "forbidden",
+          "receipt": "receipts/houston-transtar.md",
+          "receiptDate": "2026-11-20"
+        },
+        "proxying": {
+          "mode": "forbidden",
+          "receipt": "receipts/houston-transtar.md",
+          "receiptDate": "2026-11-20"
+        },
+        "caching": {
+          "mode": "forbidden",
+          "receipt": "receipts/houston-transtar.md",
+          "receiptDate": "2026-11-20"
+        },
+        "archive": {
+          "mode": "forbidden",
+          "receipt": "receipts/houston-transtar.md",
+          "receiptDate": "2026-11-20"
+        }
+      }
+    },
+    {
+      "id": "txdot",
+      "owner": "Texas Department of Transportation (TxDOT)",
+      "product": "TxDOT live traffic cameras / official viewers",
+      "category": "camera",
+      "adapterVersion": "1.0.0",
+      "network": {
+        "hosts": [
+          "www.txdot.gov"
+        ],
+        "pathPrefixes": [
+          "/discover/live-traffic-cameras.html"
+        ],
+        "method": "GET",
+        "maxRedirects": 2,
+        "credentialMode": "none"
+      },
+      "endpoints": {
+        "metadataUrlTemplate": "https://www.txdot.gov/discover/live-traffic-cameras.html",
+        "sampleUrlTemplate": "https://www.txdot.gov/discover/live-traffic-cameras.html"
+      },
+      "serviceIdentity": {
+        "service": "TxDOT live traffic cameras",
+        "item": null,
+        "layer": null,
+        "layerId": null
+      },
+      "response": {
+        "format": "viewer-link",
+        "crs": null,
+        "requiredFields": [
+          "viewerUrl"
+        ],
+        "geometryTypes": []
+      },
+      "terms": {
+        "landingUrl": "https://www.txdot.gov/discover/live-traffic-cameras.html",
+        "termsUrl": "https://www.txdot.gov/discover/live-traffic-cameras.html",
+        "termsDate": "2026-10-16",
+        "attribution": "Texas Department of Transportation",
+        "coverage": {
+          "geographic": "Texas (district viewers)",
+          "temporal": "Live viewing; monitoring footage is not recorded per TxDOT"
+        },
+        "quota": "UNKNOWN"
+      },
+      "policy": {
+        "spacingMs": 86400000,
+        "concurrency": 1,
+        "timeoutMs": 10000,
+        "caps": {
+          "redirects": 2,
+          "pages": 1,
+          "records": 0,
+          "bytes": 0,
+          "vertices": 0
+        }
+      },
+      "observationTimeField": null,
+      "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
+      "status": "disabled",
+      "statusReason": "Disabled pending a direct reusable-feed/license receipt. Viewer metadata may be recorded; no image/player use without explicit agreement.",
+      "killSwitch": true,
+      "lastPreflight": null,
+      "liveFixtureStatus": "pending-live-preflight",
+      "fixtureKind": "synthetic-contract",
+      "referenceMode": "LINK_ONLY",
+      "fixtureManifest": null,
+      "schemaDigest": "fa7e3e33d385cd3c70b3e956f832f49d59ffb79eea913a3810efc57729935ea7",
+      "rights": {
+        "metadataListing": {
+          "mode": "allowed",
+          "receipt": "receipts/txdot.md",
+          "receiptDate": "2026-11-20"
+        },
+        "imageDisplay": {
+          "mode": "forbidden",
+          "receipt": "receipts/txdot.md",
+          "receiptDate": "2026-11-20"
+        },
+        "iframeEmbed": {
+          "mode": "forbidden",
+          "receipt": "receipts/txdot.md",
+          "receiptDate": "2026-11-20"
+        },
+        "hotlinking": {
+          "mode": "forbidden",
+          "receipt": "receipts/txdot.md",
+          "receiptDate": "2026-11-20"
+        },
+        "proxying": {
+          "mode": "forbidden",
+          "receipt": "receipts/txdot.md",
+          "receiptDate": "2026-11-20"
+        },
+        "caching": {
+          "mode": "forbidden",
+          "receipt": "receipts/txdot.md",
+          "receiptDate": "2026-11-20"
+        },
+        "archive": {
+          "mode": "forbidden",
+          "receipt": "receipts/txdot.md",
+          "receiptDate": "2026-11-20"
+        }
+      }
+    },
+    {
+      "id": "windy",
+      "owner": "Windy (Windy Webcams API v3)",
+      "product": "Windy Webcams — free tier",
+      "category": "camera",
+      "adapterVersion": "1.0.0",
+      "network": {
+        "hosts": [
+          "api.windy.com"
+        ],
+        "pathPrefixes": [
+          "/webcams/"
+        ],
+        "method": "GET",
+        "maxRedirects": 2,
+        "credentialMode": "none"
+      },
+      "endpoints": {
+        "metadataUrlTemplate": "https://api.windy.com/webcams/pricing",
+        "sampleUrlTemplate": "https://api.windy.com/webcams/docs"
+      },
+      "serviceIdentity": {
+        "service": "Windy Webcams API v3",
+        "item": null,
+        "layer": null,
+        "layerId": null
+      },
+      "response": {
+        "format": "api-json",
+        "crs": null,
+        "requiredFields": [
+          "termsUrl"
+        ],
+        "geometryTypes": []
+      },
+      "terms": {
+        "landingUrl": "https://api.windy.com/webcams/pricing",
+        "termsUrl": "https://account.windy.com/agreements/windy-api-webcams-terms-of-use",
+        "termsDate": "2026-10-16",
+        "attribution": "Windy",
+        "coverage": {
+          "geographic": "Worldwide webcam network (application-only use)",
+          "temporal": "Camera 'active' may merely mean updated within 24h; not a live guarantee"
+        },
+        "quota": "UNKNOWN"
+      },
+      "policy": {
+        "spacingMs": 86400000,
+        "concurrency": 1,
+        "timeoutMs": 10000,
+        "caps": {
+          "redirects": 2,
+          "pages": 1,
+          "records": 0,
+          "bytes": 0,
+          "vertices": 0
+        }
+      },
+      "observationTimeField": null,
+      "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
+      "status": "disabled",
+      "statusReason": "Disabled: use entails terms acceptance and typically a key/account, and the free tier is application-only (no public reusable camera catalog, no redistribution). Terms recorded only.",
+      "killSwitch": true,
+      "lastPreflight": null,
+      "liveFixtureStatus": "pending-live-preflight",
+      "fixtureKind": "synthetic-contract",
+      "referenceMode": null,
+      "fixtureManifest": null,
+      "schemaDigest": "1dc45fd89a26f712216358d35b41652679976592cb642561ea215dd0b4c41240",
+      "rights": {
+        "metadataListing": {
+          "mode": "forbidden",
+          "receipt": "receipts/windy.md",
+          "receiptDate": "2026-11-20"
+        },
+        "imageDisplay": {
+          "mode": "forbidden",
+          "receipt": "receipts/windy.md",
+          "receiptDate": "2026-11-20"
+        },
+        "iframeEmbed": {
+          "mode": "forbidden",
+          "receipt": "receipts/windy.md",
+          "receiptDate": "2026-11-20"
+        },
+        "hotlinking": {
+          "mode": "forbidden",
+          "receipt": "receipts/windy.md",
+          "receiptDate": "2026-11-20"
+        },
+        "proxying": {
+          "mode": "forbidden",
+          "receipt": "receipts/windy.md",
+          "receiptDate": "2026-11-20"
+        },
+        "caching": {
+          "mode": "forbidden",
+          "receipt": "receipts/windy.md",
+          "receiptDate": "2026-11-20"
+        },
+        "archive": {
+          "mode": "forbidden",
+          "receipt": "receipts/windy.md",
+          "receiptDate": "2026-11-20"
+        }
+      }
+    },
+    {
+      "id": "program-511",
+      "owner": "Individual state 511 programs (representative: 511NY)",
+      "product": "511 camera programs",
+      "category": "camera",
+      "adapterVersion": "1.0.0",
+      "network": {
+        "hosts": [
+          "www.511ny.org",
+          "prod-ny.ibi511.com"
+        ],
+        "pathPrefixes": [
+          "/developers/"
+        ],
+        "method": "GET",
+        "maxRedirects": 2,
+        "credentialMode": "none"
+      },
+      "endpoints": {
+        "metadataUrlTemplate": "https://www.511ny.org/developers/resources",
+        "sampleUrlTemplate": "https://prod-ny.ibi511.com/developers/help/api/get-api-getcameras_key_format"
+      },
+      "serviceIdentity": {
+        "service": "511NY developer program (representative)",
+        "item": null,
+        "layer": null,
+        "layerId": null
+      },
+      "response": {
+        "format": "api-json",
+        "crs": null,
+        "requiredFields": [
+          "agreementUrl"
+        ],
+        "geometryTypes": []
+      },
+      "terms": {
+        "landingUrl": "https://www.511ny.org/developers/resources",
+        "termsUrl": "https://prod-ny.ibi511.com/developers/daa",
+        "termsDate": "2026-10-16",
+        "attribution": "511NY / IBI Group",
+        "coverage": {
+          "geographic": "New York State (representative program only)",
+          "temporal": "Per-program agreement terms"
+        },
+        "quota": "UNKNOWN"
+      },
+      "policy": {
+        "spacingMs": 86400000,
+        "concurrency": 1,
+        "timeoutMs": 10000,
+        "caps": {
+          "redirects": 2,
+          "pages": 1,
+          "records": 0,
+          "bytes": 0,
+          "vertices": 0
+        }
+      },
+      "observationTimeField": null,
+      "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
+      "status": "disabled",
+      "statusReason": "Disabled: one contract per program, not a national adapter. Registration/key/agreement sources remain disabled until a per-program agreement is separately authorized.",
+      "killSwitch": true,
+      "lastPreflight": null,
+      "liveFixtureStatus": "pending-live-preflight",
+      "fixtureKind": "synthetic-contract",
+      "referenceMode": null,
+      "fixtureManifest": null,
+      "schemaDigest": "6067e27f72ca8044777b5f5da1df8a118736584b95593d11d953411e14bb88ac",
+      "rights": {
+        "metadataListing": {
+          "mode": "unknown",
+          "receipt": "receipts/program-511.md",
+          "receiptDate": "2026-11-20"
+        },
+        "imageDisplay": {
+          "mode": "forbidden",
+          "receipt": "receipts/program-511.md",
+          "receiptDate": "2026-11-20"
+        },
+        "iframeEmbed": {
+          "mode": "forbidden",
+          "receipt": "receipts/program-511.md",
+          "receiptDate": "2026-11-20"
+        },
+        "hotlinking": {
+          "mode": "forbidden",
+          "receipt": "receipts/program-511.md",
+          "receiptDate": "2026-11-20"
+        },
+        "proxying": {
+          "mode": "forbidden",
+          "receipt": "receipts/program-511.md",
+          "receiptDate": "2026-11-20"
+        },
+        "caching": {
+          "mode": "forbidden",
+          "receipt": "receipts/program-511.md",
+          "receiptDate": "2026-11-20"
+        },
+        "archive": {
+          "mode": "forbidden",
+          "receipt": "receipts/program-511.md",
+          "receiptDate": "2026-11-20"
+        }
+      }
+    },
+    {
+      "id": "earthcam",
+      "owner": "EarthCam",
+      "product": "EarthCam network cameras",
+      "category": "camera",
+      "adapterVersion": "1.0.0",
+      "network": {
+        "hosts": [
+          "www.earthcam.com"
+        ],
+        "pathPrefixes": [
+          "/"
+        ],
+        "method": "GET",
+        "maxRedirects": 2,
+        "credentialMode": "none"
+      },
+      "endpoints": {
+        "metadataUrlTemplate": "https://www.earthcam.com/company/mediapriorityaccess/",
+        "sampleUrlTemplate": "https://www.earthcam.com/myearthcam/help/faq.php"
+      },
+      "serviceIdentity": {
+        "service": "EarthCam",
+        "item": null,
+        "layer": null,
+        "layerId": null
+      },
+      "response": {
+        "format": "viewer-link",
+        "crs": null,
+        "requiredFields": [
+          "viewerUrl"
+        ],
+        "geometryTypes": []
+      },
+      "terms": {
+        "landingUrl": "https://www.earthcam.com/company/mediapriorityaccess/",
+        "termsUrl": "https://www.earthcam.com/myearthcam/help/faq.php",
+        "termsDate": "2026-10-16",
+        "attribution": "EarthCam",
+        "coverage": {
+          "geographic": "Worldwide network",
+          "temporal": "Per-stream licensing"
+        },
+        "quota": "UNKNOWN"
+      },
+      "policy": {
+        "spacingMs": 86400000,
+        "concurrency": 1,
+        "timeoutMs": 10000,
+        "caps": {
+          "redirects": 2,
+          "pages": 1,
+          "records": 0,
+          "bytes": 0,
+          "vertices": 0
+        }
+      },
+      "observationTimeField": null,
+      "retrievalTimeField": "retrievalTime (recorded by the preflight run, never the source)",
+      "status": "disabled",
+      "statusReason": "LINK_ONLY absent a specific no-cost FORGE embed authorization. Licensed media integration only; no assumed free commercial network API.",
+      "killSwitch": true,
+      "lastPreflight": null,
+      "liveFixtureStatus": "pending-live-preflight",
+      "fixtureKind": "synthetic-contract",
+      "referenceMode": "LINK_ONLY",
+      "fixtureManifest": null,
+      "schemaDigest": "2ecab831a5f4b2092b551665f817f8566b0f8360ee5fd072ff03dfb2c4d93df5",
+      "rights": {
+        "metadataListing": {
+          "mode": "allowed",
+          "receipt": "receipts/earthcam.md",
+          "receiptDate": "2026-11-20"
+        },
+        "imageDisplay": {
+          "mode": "forbidden",
+          "receipt": "receipts/earthcam.md",
+          "receiptDate": "2026-11-20"
+        },
+        "iframeEmbed": {
+          "mode": "forbidden",
+          "receipt": "receipts/earthcam.md",
+          "receiptDate": "2026-11-20"
+        },
+        "hotlinking": {
+          "mode": "forbidden",
+          "receipt": "receipts/earthcam.md",
+          "receiptDate": "2026-11-20"
+        },
+        "proxying": {
+          "mode": "forbidden",
+          "receipt": "receipts/earthcam.md",
+          "receiptDate": "2026-11-20"
+        },
+        "caching": {
+          "mode": "forbidden",
+          "receipt": "receipts/earthcam.md",
+          "receiptDate": "2026-11-20"
+        },
+        "archive": {
+          "mode": "forbidden",
+          "receipt": "receipts/earthcam.md",
+          "receiptDate": "2026-11-20"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "adapterId": "usgs-earthquakes",
+  "fixtureKind": "synthetic-contract",
+  "liveFixtureStatus": "pending-live-preflight",
+  "generatedFrom": "Contract in src/adapters/usgs-earthquakes.mjs; synthetic values invented 2026-11-20; no live fetch.",
+  "files": [
+    {
+      "name": "metadata.json",
+      "sha256": "c9acd9f5a5f6fe4dc5bf87cda54c0424f787a782a4f224936eb29dd37ada1d5e",
+      "bytes": 128
+    },
+    {
+      "name": "sample.json",
+      "sha256": "417d34f9f284f722926d9ffcfae60e8a14d243443f10ccbd4e13df7034e974c7",
+      "bytes": 333
+    }
+  ],
+  "digest": "62917c356ab19f20cad3e87f779f2a05e385f34d6b04a82bfd2d4d08e3c75bc6"
+}

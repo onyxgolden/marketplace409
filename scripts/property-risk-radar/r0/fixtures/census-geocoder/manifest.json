@@ -1,0 +1,19 @@
+{
+  "adapterId": "census-geocoder",
+  "fixtureKind": "synthetic-contract",
+  "liveFixtureStatus": "pending-live-preflight",
+  "generatedFrom": "Contract in src/adapters/census-geocoder.mjs; synthetic values invented 2026-11-20; no live fetch.",
+  "files": [
+    {
+      "name": "metadata.json",
+      "sha256": "9752469b29da7b8d24e2dbbcf97aeb4f3f2eee0c5155e552222c517f8410ffbf",
+      "bytes": 208
+    },
+    {
+      "name": "sample.json",
+      "sha256": "5138938d01a2dd3bea0ff6168bca7c5bdac857e20ff70bf82922253ff4b5150d",
+      "bytes": 500
+    }
+  ],
+  "digest": "6da71b240bc87776553e2787948d25cd54e2584ed6eb2864c6d4f4c17494dd5e"
+}

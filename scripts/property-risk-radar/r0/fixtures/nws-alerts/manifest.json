@@ -1,0 +1,19 @@
+{
+  "adapterId": "nws-alerts",
+  "fixtureKind": "synthetic-contract",
+  "liveFixtureStatus": "pending-live-preflight",
+  "generatedFrom": "Contract in src/adapters/nws-alerts.mjs; synthetic values invented 2026-11-20; no live fetch.",
+  "files": [
+    {
+      "name": "metadata.json",
+      "sha256": "cc69e249b8b74be2cffe53ffe8c9ddb349990b5f699b9a54e9d66bd67fb09207",
+      "bytes": 247
+    },
+    {
+      "name": "sample.json",
+      "sha256": "372fe8c370fc6069c5142eaea2610c009a48b9755698dc3076cac5fabac4cf44",
+      "bytes": 427
+    }
+  ],
+  "digest": "f50d2bf970d993316fd134ec2a734fa83a9f89f2e8869231389aa257cb3534f4"
+}
