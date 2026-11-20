@@ -51,14 +51,35 @@ const ASSET_SUBGROUPS = Object.freeze([
   Object.freeze({ key: "other_assets", label: "Other Assets", classes: Object.freeze(["equipment", "trailer", "collectible", "crypto", "other"]) }),
 ]);
 
+function isLiabilityAccount(account) {
+  // kind comes from the route; fall back to type so older payloads/fixtures
+  // without kind still classify credit/loan rows as liabilities.
+  return account.kind === "liability" || account.type === "credit" || account.type === "loan";
+}
+
+// The position model sums assets signed and liabilities absolute (see
+// NetWorthService: a stored negative mortgage balance is still a debt owed).
+// The panel must use the same rule or its totals drift from the KPI: a negative
+// asset balance (e.g. a type-"other" row at -$802.35) stays negative, and a
+// liability balance is always shown and summed as the debt owed.
+function displayBalanceCents(account) {
+  if (!account.latestBalance) return 0;
+  return isLiabilityAccount(account)
+    ? Math.abs(account.latestBalance.currentBalanceCents)
+    : account.latestBalance.currentBalanceCents;
+}
+
 function accountBalanceCents(account) {
-  return account.latestBalance ? Math.abs(account.latestBalance.currentBalanceCents) : 0;
+  return displayBalanceCents(account);
 }
 
 function BalanceRow({ account, onSaved, onSelectAccount, isSelected }) {
   const [editing, setEditing] = useState(!account.latestBalance);
+  // A negative manual asset opens as a negative number so saving it back does
+  // not flip its sign (the old Math.abs here turned -$802.35 into +$802.35 on
+  // save). Liabilities open as the absolute debt owed.
   const [dollars, setDollars] = useState(
-    account.latestBalance ? String(Math.abs(account.latestBalance.currentBalanceCents) / 100) : "",
+    account.latestBalance ? String(displayBalanceCents(account) / 100) : "",
   );
   const [asOf, setAsOf] = useState(account.latestBalance?.asOf?.slice(0, 10) || new Date().toISOString().slice(0, 10));
   const [saving, setSaving] = useState(false);
@@ -112,10 +133,17 @@ function BalanceRow({ account, onSaved, onSelectAccount, isSelected }) {
       {notEditable ? (
         <div className="shrink-0 text-right">
           <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">
-            {money.format(Math.abs(account.latestBalance.currentBalanceCents) / 100)}
+            {money.format(displayBalanceCents(account) / 100)}
           </p>
-          <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400" title={`Synced from ${account.latestBalance.provider}`}>
-            Synced from {humanizeProvider(account.latestBalance.provider)}
+          <p
+            className="text-[10px] font-semibold text-slate-500 dark:text-slate-400"
+            title={`Synced from ${account.latestBalance.provider}${account.latestBalance.asOf ? ` · as of ${account.latestBalance.asOf.slice(0, 10)}` : ""}`}
+          >
+            {account.sourceLabel === "last known / manual"
+              ? "Last known / manual"
+              : account.sourceLabel === "stale"
+                ? `Stale · Synced from ${humanizeProvider(account.latestBalance.provider)}`
+                : `Synced from ${humanizeProvider(account.latestBalance.provider)}`}
           </p>
         </div>
       ) : editing ? (
@@ -143,13 +171,20 @@ function BalanceRow({ account, onSaved, onSelectAccount, isSelected }) {
           {error ? <span role="alert" className="w-full text-[10px] font-bold text-rose-700 dark:text-rose-400">{error}</span> : null}
         </form>
       ) : account.latestBalance ? (
-        <div className="flex items-center gap-2">
-          <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">
-            {money.format(Math.abs(account.latestBalance.currentBalanceCents) / 100)}
-          </p>
-          <button type="button" onClick={() => setEditing(true)} className="text-[10px] font-black text-sky-700 hover:underline dark:text-sky-400">
-            Edit
-          </button>
+        <div className="shrink-0 text-right">
+          <div className="flex items-center justify-end gap-2">
+            <p className="text-xs font-black tabular-nums text-slate-900 dark:text-slate-100">
+              {money.format(displayBalanceCents(account) / 100)}
+            </p>
+            <button type="button" onClick={() => setEditing(true)} className="text-[10px] font-black text-sky-700 hover:underline dark:text-sky-400">
+              Edit
+            </button>
+          </div>
+          {account.sourceLabel === "last known / manual" || account.sourceLabel === "stale" ? (
+            <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+              {account.sourceLabel === "last known / manual" ? "Last known / manual" : "Stale"}
+            </p>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -441,6 +476,25 @@ function AddAssetRow({ onCreated }) {
   );
 }
 
+const EXCLUDED_REASON_LABELS = Object.freeze({
+  duplicate: "Duplicate — already counted once",
+  missing: "Missing balance — not counted",
+  "no-mirror": "No linked account — not counted",
+});
+
+// A row the position excludes from net worth, shown with its real value and a
+// plain-words reason -- never silently dropped, never counted as zero.
+function ExcludedRow({ reason, children }) {
+  return (
+    <div>
+      <p className="px-1 pt-1 text-[10px] font-bold text-slate-500 dark:text-slate-400">
+        {EXCLUDED_REASON_LABELS[reason] || "Not counted"}
+      </p>
+      {children}
+    </div>
+  );
+}
+
 function accountRowDescriptor(account, onSaved, onSelectAccount, selectedAccountId) {
   return {
     key: account.id,
@@ -448,12 +502,19 @@ function accountRowDescriptor(account, onSaved, onSelectAccount, selectedAccount
     node: <BalanceRow key={account.id} account={account} onSaved={onSaved} onSelectAccount={onSelectAccount} isSelected={account.id === selectedAccountId} />,
   };
 }
-function investmentAccountRowDescriptor(account, onSelectAccount, selectedAccountId) {
-  const amountCents = account.latestValuation ? Number(account.latestValuation.amountCents) || 0 : 0;
+function investmentAccountRowDescriptor(account, contributionCents, displayCents, divergence, onSelectAccount, selectedAccountId) {
+  const row = <ReadOnlyValueRow key={account.id} id={account.id} name={account.name} amountCents={displayCents} onSelectAccount={onSelectAccount} isSelected={account.id === selectedAccountId} />;
   return {
     key: account.id,
-    amountCents,
-    node: <ReadOnlyValueRow key={account.id} id={account.id} name={account.name} amountCents={amountCents} onSelectAccount={onSelectAccount} isSelected={account.id === selectedAccountId} />,
+    amountCents: contributionCents,
+    node: divergence ? (
+      <div key={account.id}>
+        {row}
+        <p className="px-1 text-[10px] font-bold text-amber-700 dark:text-amber-400">
+          Registry value {money.format(displayCents / 100)} differs from linked account balance {money.format(divergence.mirrorCents / 100)} — counting the linked balance.
+        </p>
+      </div>
+    ) : row,
   };
 }
 // Deliberately NOT click-to-view-activity like the rows above: assets track valuation history
@@ -461,12 +522,19 @@ function investmentAccountRowDescriptor(account, onSelectAccount, selectedAccoun
 // asset's mirrored financial_accounts id (that mirror exists only so Net Worth stays accurate, not
 // because assets generate ledger activity), so filtering the Financial Activity surface by an
 // asset's id would always and correctly show zero transactions. Not a useful click.
-function assetRowDescriptor(asset, onSaved) {
-  const amountCents = asset.latestValuation ? Number(asset.latestValuation.amountCents) || 0 : 0;
+function assetRowDescriptor(asset, contributionCents, displayCents, divergence, onSaved) {
+  const row = <EditableAssetRow key={asset.id} asset={asset} onSaved={onSaved} />;
   return {
     key: asset.id,
-    amountCents,
-    node: <EditableAssetRow key={asset.id} asset={asset} onSaved={onSaved} />,
+    amountCents: contributionCents,
+    node: divergence ? (
+      <div key={asset.id}>
+        {row}
+        <p className="px-1 text-[10px] font-bold text-amber-700 dark:text-amber-400">
+          Registry value {money.format(displayCents / 100)} differs from linked account balance {money.format(divergence.mirrorCents / 100)} — counting the linked balance.
+        </p>
+      </div>
+    ) : row,
   };
 }
 
@@ -474,30 +542,137 @@ function subtotal(rows) {
   return rows.reduce((sum, row) => sum + row.amountCents, 0);
 }
 
-function buildTree({ accounts, investmentAccounts, assets }, onSaved, onSelectAccount, selectedAccountId) {
+function buildTree({ accounts, investmentAccounts, assets, position }, onSaved, onSelectAccount, selectedAccountId) {
   // The investment-accounts registry's create/update RPCs mirror themselves into financial_accounts
   // (as type "investment") so Net Worth elsewhere in the app, which is computed from
   // financial_accounts alone, stays accurate. That mirrored row reuses the SAME id as the row
   // already showing under Investments below, so it must be excluded here or every investment
   // account would be counted -- and shown -- twice.
   const investmentAccountIds = new Set(investmentAccounts.map((account) => account.id));
+  const assetIds = new Set(assets.map((asset) => asset.id));
 
-  const banking = accounts.filter((account) => account.type === "depository").map((account) => accountRowDescriptor(account, onSaved, onSelectAccount, selectedAccountId));
-  const linkedInvestments = accounts
-    .filter((account) => account.type === "investment" && !investmentAccountIds.has(account.id))
-    .map((account) => accountRowDescriptor(account, onSaved, onSelectAccount, selectedAccountId));
-  const liabilities = accounts.filter((account) => account.type === "credit" || account.type === "loan").map((account) => accountRowDescriptor(account, onSaved, onSelectAccount, selectedAccountId));
+  // The route always sends includedInPosition plus the position's superseded /
+  // missing disclosures. Payloads without them (older fixtures) render exactly as
+  // before: everything included, no excluded section, registry rows at valuation.
+  const hasPosition = position != null;
+  const supersededIds = new Set((position?.supersededBalances || []).map((entry) => entry.id));
+  const missingIds = new Set((position?.missingBalances || []).map((entry) => entry.id));
+  const accountById = new Map(accounts.map((account) => [account.id, account]));
+
+  // Only an explicit false excludes: the position drops an account exactly when
+  // it is a superseded group member or has no balance row at all.
+  function isIncluded(account) {
+    return account.includedInPosition !== false;
+  }
+
+  function exclusionReason(account) {
+    if (!account.latestBalance) return "missing";
+    if (supersededIds.has(account.id)) return "duplicate";
+    if (missingIds.has(account.id)) return "missing";
+    return "missing";
+  }
+
+  // A registry row's contribution is its mirror account's position verdict, not
+  // its valuation alone: a superseded mirror must not re-enter through the
+  // registry endpoint, and a mirror with no balance contributes nothing.
+  function registryMirrorStatus(registryId) {
+    if (!hasPosition) return { state: "contributing", mirror: null };
+    const mirror = accountById.get(registryId);
+    if (!mirror) return { state: "no-mirror", mirror: null };
+    if (!isIncluded(mirror)) {
+      return { state: supersededIds.has(registryId) ? "duplicate" : "missing", mirror };
+    }
+    return { state: "contributing", mirror };
+  }
+
+  function registryContribution(registry, mirrorStatus) {
+    const valuationCents = registry.latestValuation ? Number(registry.latestValuation.amountCents) || 0 : 0;
+    if (mirrorStatus.state !== "contributing") return { contributionCents: 0, displayCents: valuationCents, divergence: null };
+    const mirrorCents = mirrorStatus.mirror?.latestBalance ? mirrorStatus.mirror.latestBalance.currentBalanceCents : null;
+    // The position counts the mirror balance; the registry valuation is what the
+    // row displays. They agree on all current data -- when they don't, the
+    // mismatch is disclosed, never silently papered over.
+    const divergence = mirrorCents !== null && mirrorCents !== valuationCents ? { mirrorCents, valuationCents } : null;
+    return { contributionCents: mirrorCents ?? valuationCents, displayCents: valuationCents, divergence };
+  }
+
+  function excludedAccountRow(account) {
+    return {
+      key: account.id,
+      amountCents: 0,
+      node: (
+        <ExcludedRow key={account.id} reason={exclusionReason(account)}>
+          <BalanceRow account={account} onSaved={onSaved} onSelectAccount={onSelectAccount} isSelected={account.id === selectedAccountId} />
+        </ExcludedRow>
+      ),
+    };
+  }
+
+  function excludedRegistryRow(registry, kind, reason, displayCents) {
+    const row = kind === "investment"
+      ? <ReadOnlyValueRow key={registry.id} id={registry.id} name={registry.name} amountCents={displayCents} onSelectAccount={onSelectAccount} isSelected={registry.id === selectedAccountId} />
+      : <EditableAssetRow key={registry.id} asset={registry} onSaved={onSaved} />;
+    return {
+      key: registry.id,
+      amountCents: 0,
+      node: (
+        <ExcludedRow key={registry.id} reason={reason}>
+          {row}
+        </ExcludedRow>
+      ),
+    };
+  }
+
+  const excluded = [];
+  const banking = [];
+  const linkedInvestments = [];
+  const liabilities = [];
+  const otherAccounts = [];
+  for (const account of accounts) {
+    if (!isIncluded(account)) {
+      // A registry mirror's exclusion is carried by its registry row, not by a
+      // second row for the mirror itself -- the mirror never had its own row.
+      if (!investmentAccountIds.has(account.id) && !assetIds.has(account.id)) {
+        excluded.push(excludedAccountRow(account));
+      }
+      continue;
+    }
+    if (account.type === "depository") banking.push(accountRowDescriptor(account, onSaved, onSelectAccount, selectedAccountId));
+    else if (account.type === "investment" && !investmentAccountIds.has(account.id)) linkedInvestments.push(accountRowDescriptor(account, onSaved, onSelectAccount, selectedAccountId));
+    else if (account.type === "credit" || account.type === "loan") liabilities.push(accountRowDescriptor(account, onSaved, onSelectAccount, selectedAccountId));
+    else if (account.type === "other" && !assetIds.has(account.id)) otherAccounts.push(accountRowDescriptor(account, onSaved, onSelectAccount, selectedAccountId));
+    // An included type-"other" mirror of an active asset is counted once through
+    // its registry row below, never as a second row here.
+  }
 
   const investmentSubgroups = [];
   if (linkedInvestments.length > 0) investmentSubgroups.push({ key: "linked", label: "Linked Accounts", rows: linkedInvestments });
   for (const definition of INVESTMENT_SUBGROUPS) {
-    const rows = investmentAccounts.filter((account) => definition.types.includes(account.accountType)).map((account) => investmentAccountRowDescriptor(account, onSelectAccount, selectedAccountId));
+    const rows = [];
+    for (const account of investmentAccounts.filter((candidate) => definition.types.includes(candidate.accountType))) {
+      const mirrorStatus = registryMirrorStatus(account.id);
+      const { contributionCents, displayCents, divergence } = registryContribution(account, mirrorStatus);
+      if (mirrorStatus.state === "contributing") {
+        rows.push(investmentAccountRowDescriptor(account, contributionCents, displayCents, divergence, onSelectAccount, selectedAccountId));
+      } else {
+        excluded.push(excludedRegistryRow(account, "investment", mirrorStatus.state, displayCents));
+      }
+    }
     if (rows.length > 0) investmentSubgroups.push({ key: definition.key, label: definition.label, rows });
   }
 
   const assetSubgroups = [];
   for (const definition of ASSET_SUBGROUPS) {
-    const rows = assets.filter((asset) => definition.classes.includes(asset.assetClass)).map((asset) => assetRowDescriptor(asset, onSaved));
+    const rows = [];
+    for (const asset of assets.filter((candidate) => definition.classes.includes(candidate.assetClass))) {
+      const mirrorStatus = registryMirrorStatus(asset.id);
+      const { contributionCents, displayCents, divergence } = registryContribution(asset, mirrorStatus);
+      if (mirrorStatus.state === "contributing") {
+        rows.push(assetRowDescriptor(asset, contributionCents, displayCents, divergence, onSaved));
+      } else {
+        excluded.push(excludedRegistryRow(asset, "asset", mirrorStatus.state, displayCents));
+      }
+    }
     if (rows.length > 0) assetSubgroups.push({ key: definition.key, label: definition.label, rows });
   }
 
@@ -505,7 +680,9 @@ function buildTree({ accounts, investmentAccounts, assets }, onSaved, onSelectAc
   if (banking.length > 0) groups.push({ key: "banking", label: "Banking", kind: "asset", rows: banking, subgroups: null });
   if (investmentSubgroups.length > 0) groups.push({ key: "investments", label: "Investments", kind: "asset", rows: null, subgroups: investmentSubgroups });
   if (assetSubgroups.length > 0) groups.push({ key: "assets", label: "Assets", kind: "asset", rows: null, subgroups: assetSubgroups });
+  if (otherAccounts.length > 0) groups.push({ key: "other", label: "Other Accounts", kind: "asset", rows: otherAccounts, subgroups: null });
   if (liabilities.length > 0) groups.push({ key: "liabilities", label: "Liabilities", kind: "liability", rows: liabilities, subgroups: null });
+  if (excluded.length > 0) groups.push({ key: "excluded", label: "Not counted in net worth", kind: "excluded", rows: excluded, subgroups: null });
   return groups;
 }
 
@@ -583,6 +760,10 @@ async function fetchAccountBalanceTree() {
     accounts: accountBalances.accounts || [],
     assets: assets.assets || [],
     investmentAccounts: investmentAccounts.accounts || [],
+    // The position projection (superseded/missing disclosures + the inclusion
+    // verdict per account) travels with the accounts payload so the tree and
+    // the KPI compare identical captured inputs.
+    position: accountBalances.position || null,
   };
 }
 
@@ -604,7 +785,10 @@ export default function FinancialAccountBalancesPanel({ onSelectAccount, selecte
   );
 
   const netWorthCents = useMemo(() => groups.reduce(
-    (sum, group) => sum + (group.kind === "liability" ? -1 : 1) * (group.rows ? subtotal(group.rows) : group.subgroups.reduce((s, sub) => s + subtotal(sub.rows), 0)),
+    // Excluded rows contribute $0 by construction (their descriptors carry
+    // amountCents 0), and the kind guard below makes that explicit so a future
+    // descriptor change cannot silently re-count them into net worth.
+    (sum, group) => sum + (group.kind === "liability" ? -1 : group.kind === "excluded" ? 0 : 1) * (group.rows ? subtotal(group.rows) : group.subgroups.reduce((s, sub) => s + subtotal(sub.rows), 0)),
     0,
   ), [groups]);
 

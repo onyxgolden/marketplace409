@@ -14,17 +14,41 @@ export async function GET() {
 
   try {
     const suite = await authenticated.getFinancialApplicationSuite();
-    const [accounts, balances] = await Promise.all([
+
+    // The position service is the single authority on which account balances count
+    // toward net worth: it resolves duplicate-group membership (same_real_account)
+    // and drops accounts with no balance at all. The panel must never guess that
+    // itself -- and must never silently fall back to counting every row if the
+    // projection fails, so a missing/failing service is a loud 500, not a quiet
+    // double-count.
+    const positionService = suite.financialPositionQueryService;
+    if (!positionService || typeof positionService.buildPosition !== "function") {
+      throw new Error("Financial position service is unavailable.");
+    }
+
+    const [accounts, balances, position] = await Promise.all([
       suite.financialAccountRepository.findByOwnerId(authenticated.user.id),
       suite.accountBalanceRepository.findLatestByOwnerId(authenticated.user.id),
+      positionService.buildPosition(authenticated.user.id),
     ]);
 
     const balanceByAccountId = new Map(balances.map((balance) => [balance.financialAccountId, balance]));
+
+    // Projected IDs are the position's own verdicts, reused verbatim -- never
+    // re-derived here from group membership or balance freshness.
+    const positionById = new Map();
+    for (const asset of position.assets) {
+      positionById.set(asset.id, { kind: "asset", degraded: asset.degraded ?? null, sourceLabel: asset.source_label ?? null });
+    }
+    for (const liability of position.liabilities) {
+      positionById.set(liability.id, { kind: "liability", degraded: liability.degraded ?? null, sourceLabel: liability.source_label ?? null });
+    }
 
     const eligible = accounts
       .filter((account) => account.active !== false && RECOGNIZED_TYPES.has(account.type))
       .map((account) => {
         const balance = balanceByAccountId.get(account.id) || null;
+        const positionEntry = positionById.get(account.id) || null;
         return {
           id: account.id,
           name: account.name,
@@ -36,10 +60,22 @@ export async function GET() {
             provider: balance.provider,
             editable: balance.provider === MANUAL_PROVIDER,
           } : null,
+          // False exactly when the position excludes this account (superseded group
+          // member, or no balance row at all). The panel counts only included rows.
+          includedInPosition: positionEntry !== null,
+          degraded: positionEntry?.degraded ?? null,
+          sourceLabel: positionEntry?.sourceLabel ?? null,
         };
       });
 
-    return NextResponse.json({ success: true, accounts: eligible });
+    return NextResponse.json({
+      success: true,
+      accounts: eligible,
+      position: {
+        supersededBalances: position.supersededBalances,
+        missingBalances: position.missingBalances,
+      },
+    });
   } catch (error) {
     console.error("Account balances list error", error);
     const message = error?.message || "Unable to load account balances.";
