@@ -109,8 +109,58 @@ export default function ProjectsScreen() {
       )}
 
       {projects.length > 0 && (
-        <div className="mt-6 overflow-x-auto">
-          <table className="w-full min-w-[720px] table-fixed text-left text-sm">
+        <>
+          {/* Phone (Slice 3): stacked project cards below sm (640px — the
+              same compact breakpoint Slice 1 uses for the Gantt). Every card
+              shows the full name, FULL Start and Finish dates, and a direct
+              Open tap target; Created / Last Modified live in a details
+              disclosure. The desktop table below is unchanged. */}
+          <div className="mt-6 space-y-3 sm:hidden" data-projects-cards>
+            {projects.map((project) => (
+              <article key={project.id} data-project-card className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <h2 className="min-w-0 font-bold text-slate-950">
+                    <Link href={`/forge/scheduling/${project.id}`} className="break-words hover:underline">{project.name || "Untitled project"}</Link>
+                    {project.isPublic && !project.isOwner && (
+                      <span className="ml-2 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-700">SHARED EXAMPLE</span>
+                    )}
+                  </h2>
+                  {project.isOwner && (
+                    <button type="button" onClick={() => handleDelete(project)} title="Delete project" aria-label={`Delete ${project.name || "Untitled project"}`}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg font-bold text-slate-400 hover:text-red-600">✕</button>
+                  )}
+                </div>
+                <dl className="mt-3 space-y-1 text-sm">
+                  <div className="flex gap-2">
+                    <dt className="shrink-0 font-bold text-slate-500">Start</dt>
+                    <dd className="min-w-0 text-slate-600" data-project-start>{formatDate(project.startDate)}</dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="shrink-0 font-bold text-slate-500">Finish</dt>
+                    <dd className="min-w-0 text-slate-600" data-project-finish>{formatDate(project.endDate)}</dd>
+                  </div>
+                </dl>
+                <details className="mt-2 text-sm text-slate-600">
+                  <summary className="cursor-pointer font-bold text-slate-500">Details</summary>
+                  <dl className="mt-1 space-y-1">
+                    <div className="flex gap-2">
+                      <dt className="shrink-0 font-bold text-slate-500">Created</dt>
+                      <dd className="min-w-0">{formatTimestamp(project.createdAt)}</dd>
+                    </div>
+                    <div className="flex gap-2">
+                      <dt className="shrink-0 font-bold text-slate-500">Last modified</dt>
+                      <dd className="min-w-0">{formatTimestamp(project.updatedAt)}</dd>
+                    </div>
+                  </dl>
+                </details>
+                <Link href={`/forge/scheduling/${project.id}`}
+                  className="mt-3 flex min-h-11 items-center justify-center rounded-xl bg-slate-950 px-5 font-black text-white">Open</Link>
+              </article>
+            ))}
+          </div>
+
+          <div className="mt-6 hidden overflow-x-auto sm:block">
+            <table className="w-full min-w-[720px] table-fixed text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-xs font-black uppercase tracking-wide text-slate-500">
                 <th className="w-1/3 py-2">Name</th>
@@ -144,7 +194,8 @@ export default function ProjectsScreen() {
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </section>
   );

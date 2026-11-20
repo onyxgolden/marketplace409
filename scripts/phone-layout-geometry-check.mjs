@@ -2,7 +2,7 @@
 //
 // Usage:
 //   node scripts/phone-layout-geometry-check.mjs --tag before|after [--port 3100]
-//     [--widths 360,390,412,430,768,1919] [--cases designer,fccu,room-designs,work-header,app-header,forge-header,rental-23]
+//     [--widths 360,390,412,430,768,1919] [--cases designer,fccu,room-designs,work-header,app-header,forge-header,rental-23,projects-list]
 //     [--out <evidence-dir>] [--keep-server]
 //
 // Spawns the Next dev server for THIS checkout (unless --keep-server, which
@@ -36,6 +36,14 @@
 //     header controls inside the viewport
 //   - rental-23: Slice 2 regression guard (7 icons + +16, metrics line,
 //     billing Active)
+//   - projects-list: Slice 3 guard — the REAL ProjectsScreen (Scheduling
+//     Projects list) with a fixture list seeded into the SWR cache; the
+//     guard also intercepts /api/forge/scheduling (GET only) as a
+//     backstop. At phone widths (<640px) the stacked cards must show
+//     every name and FULL start/finish date with an Open link inside the
+//     viewport and the desktop table must be hidden; at 640px and up the
+//     table must show with all six columns and the cards must be hidden.
+//     September dates (longest month name) prove full-date rendering.
 //
 // Portability (fix round 1): the repository root is resolved from this
 // file's own location (import.meta.url) and validated against the
@@ -145,7 +153,7 @@ const keepServer = args.includes("--keep-server");
 const BASE = `http://localhost:${port}/phone-fixture`;
 
 const WIDTHS = widthsArg ? widthsArg.split(",").map(Number) : [360, 390, 412, 430, 768, 1919];
-const CASES = casesArg ? casesArg.split(",") : ["designer", "fccu", "room-designs", "work-header", "app-header", "forge-header", "rental-23"];
+const CASES = casesArg ? casesArg.split(",") : ["designer", "fccu", "room-designs", "work-header", "app-header", "forge-header", "rental-23", "projects-list"];
 
 // Evidence goes under the repo by default (git-ignored), or wherever
 // --out points. Never a hardcoded builder path.
@@ -408,6 +416,66 @@ async function measureRental(page) {
       billingStatus: billing ? billing.getAttribute("data-billing-status") : null,
       billingVisible: billingRect ? billingRect.left >= -1 && billingRect.right <= window.innerWidth + 1 : false,
       overviewPresent: !!overview,
+    };
+  });
+}
+
+// --- Projects-list case (Phone Slice 3) ---
+// Renders the real ProjectsScreen with the fixture list (seeded into the
+// SWR cache by the fixture page; the guard's route intercept below is the
+// backstop). Measures: at phone widths the stacked cards show every name
+// and FULL start/finish date with an Open link inside the viewport and
+// the desktop table is hidden; at 640px and up the table shows with all
+// six columns and the cards are hidden.
+async function measureProjectsList(page) {
+  return page.evaluate(() => {
+    const rect = (el) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom), width: Math.round(r.width), height: Math.round(r.height) };
+    };
+    const visible = (el) => {
+      if (!el) return false;
+      if (window.getComputedStyle(el).display === "none") return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    };
+    const cardsRoot = document.querySelector("[data-projects-cards]");
+    const cards = [...document.querySelectorAll("[data-project-card]")].map((card) => {
+      const name = card.querySelector("h2");
+      const start = card.querySelector("[data-project-start]");
+      const finish = card.querySelector("[data-project-finish]");
+      const open = [...card.querySelectorAll("a")].find((a) => (a.textContent || "").trim() === "Open");
+      const del = card.querySelector('button[title="Delete project"]');
+      const badge = [...card.querySelectorAll("span")].find((s) => (s.textContent || "").trim() === "SHARED EXAMPLE");
+      return {
+        name: name ? name.textContent.trim() : null,
+        start: start ? start.textContent.trim() : null,
+        startRect: rect(start),
+        startClipped: start ? start.scrollWidth > start.clientWidth + 1 : null,
+        finish: finish ? finish.textContent.trim() : null,
+        finishRect: rect(finish),
+        finishClipped: finish ? finish.scrollWidth > finish.clientWidth + 1 : null,
+        openRect: rect(open),
+        openHref: open ? open.getAttribute("href") : null,
+        hasDelete: !!del,
+        hasBadge: !!badge,
+        visible: visible(card),
+      };
+    });
+    const table = document.querySelector("[data-scheduling-projects] table");
+    const headers = table ? [...table.querySelectorAll("thead th")].map((th) => th.textContent.trim()) : [];
+    const rows = table ? [...table.querySelectorAll("tbody tr")].length : 0;
+    return {
+      cardsVisible: cardsRoot ? visible(cardsRoot) : false,
+      cards,
+      tablePresent: !!table,
+      tableVisible: table ? visible(table) : false,
+      tableHeaders: headers,
+      tableRows: rows,
+      pageOverflow: document.documentElement.scrollWidth > window.innerWidth + 1,
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
     };
   });
 }
@@ -774,8 +842,35 @@ async function main() {
             }
           });
         }
+        // Projects-list renders the real ProjectsScreen, which fetches
+        // /api/forge/scheduling on mount: intercept with the same canned
+        // project list the fixture page seeds into the SWR cache (GET
+        // only — the guard never submits the create form or a delete, so
+        // no production write is ever attempted).
+        if (c === "projects-list") {
+          await page.route("**/api/forge/scheduling", (route) => {
+            if (route.request().method() !== "GET") return route.continue();
+            return route.fulfill({
+              status: 200,
+              contentType: "application/json",
+              body: JSON.stringify({ projects: [
+                { id: "p-long-name", name: "FCCU Turnaround — Fall 2026 Shutdown and Revamp", startDate: "2026-09-30", endDate: "2026-12-31", createdAt: "2026-08-01T12:00:00Z", updatedAt: "2026-11-10T14:00:00Z", isPublic: true, isOwner: false },
+                { id: "p-owner", name: "Crude Unit Revamp", startDate: "2026-11-02", endDate: "2026-11-20", createdAt: "2026-09-15T12:00:00Z", updatedAt: "2026-11-12T08:00:00Z", isPublic: false, isOwner: true },
+                { id: "p-plain", name: "Hydrocracker Catalyst Change", startDate: "2026-09-15", endDate: "2026-10-02", createdAt: "2026-07-20T12:00:00Z", updatedAt: "2026-09-01T12:00:00Z", isPublic: false, isOwner: false },
+              ] }),
+            });
+          });
+        }
         await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
         await page.waitForSelector('[data-fixture-ready="true"]', { timeout: 60000 });
+        if (c === "projects-list") {
+          // The list renders after the SWR seed/fetch resolves — wait for
+          // cards (phone) or the table (desktop), not just the mount.
+          await page.waitForFunction(
+            () => document.querySelector("[data-projects-cards] article") || document.querySelector("[data-scheduling-projects] table"),
+            { timeout: 60000 },
+          );
+        }
         if (c === "fccu") {
           await page.waitForFunction(() => {
             const el = document.querySelector("[data-fccu-state]");
@@ -811,6 +906,8 @@ async function main() {
           check.header = await measureHeader(page, "Applications");
         } else if (c === "rental-23") {
           check.rental = await measureRental(page);
+        } else if (c === "projects-list") {
+          check.projectsList = await measureProjectsList(page);
         }
         const shot = path.join(OUT, `${tag}-${c}-${width}.png`);
         await page.screenshot({ path: shot });
@@ -978,6 +1075,36 @@ async function main() {
           if (!r.metricsVisible || r.metricsClipped) fail(`rental metrics not fully visible: ${JSON.stringify(r)}`);
           if (r.stripCircles !== 8 || r.overflowMarker !== "+16") fail(`rental strip wrong: circles=${r.stripCircles} marker=${r.overflowMarker}`);
           if (r.billingStatus !== "active" || !r.billingVisible) fail(`rental billing not Active/visible: ${JSON.stringify(r)}`);
+        }
+        if (c === "projects-list" && check.projectsList) {
+          const p = check.projectsList;
+          const isPhone = width < 640;
+          if (isPhone) {
+            if (!p.cardsVisible) fail("projects-list cards not visible at phone width");
+            if (p.tableVisible) fail("projects-list desktop table visible at phone width (cards should replace it)");
+            if (p.cards.length !== 3) fail(`projects-list expected 3 cards, got ${p.cards.length}`);
+            for (const card of p.cards) {
+              if (!card.name) fail("projects-list card missing name");
+              if (!card.start || !card.finish) fail(`projects-list card missing dates: ${JSON.stringify(card)}`);
+              if (card.startClipped || card.finishClipped) fail(`projects-list card date clipped: ${JSON.stringify(card)}`);
+              for (const [label, r] of [["start", card.startRect], ["finish", card.finishRect], ["open", card.openRect]]) {
+                if (!r) fail(`projects-list card ${card.name} missing ${label} rect`);
+                else if (r.left < -1 || r.right > p.innerWidth + 1) fail(`projects-list card ${card.name} ${label} outside viewport: ${JSON.stringify(r)}`);
+              }
+              if (!card.openHref) fail(`projects-list card ${card.name} missing Open link`);
+            }
+            // Full-date proof: September (longest month name) dates read in full.
+            const starts = p.cards.map((card) => card.start);
+            if (!starts.includes("Sep 30, 2026") || !starts.includes("Sep 15, 2026")) fail(`projects-list September start dates not fully rendered: ${JSON.stringify(starts)}`);
+            if (!p.cards.some((card) => card.hasBadge)) fail("projects-list SHARED EXAMPLE badge not rendered on any card");
+            if (p.cards.filter((card) => card.hasDelete).length !== 1) fail(`projects-list owner delete on wrong number of cards: ${p.cards.filter((card) => card.hasDelete).length}`);
+          } else {
+            if (p.cardsVisible) fail("projects-list cards visible at desktop width (table should show)");
+            if (!p.tableVisible) fail("projects-list desktop table not visible");
+            if (p.tableRows !== 3) fail(`projects-list desktop table expected 3 rows, got ${p.tableRows}`);
+            const wantHeaders = ["Name", "Start Date", "Finish Date", "Created", "Last Modified", "Actions"];
+            if (JSON.stringify(p.tableHeaders) !== JSON.stringify(wantHeaders)) fail(`projects-list desktop table headers changed: ${JSON.stringify(p.tableHeaders)}`);
+          }
         }
         results.checks.push(check);
         await page.close();
