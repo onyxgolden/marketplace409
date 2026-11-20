@@ -15,6 +15,7 @@ import WorkPackageManpowerCurve from "./WorkPackageManpowerCurve.jsx";
 import WorkPackageBudgetPanel from "./WorkPackageBudgetPanel.jsx";
 import WorkPackageChangeOrders from "./WorkPackageChangeOrders.jsx";
 import WorkPackageBusts from "./WorkPackageBusts.jsx";
+import WorkPackageFieldVerification, { FieldVerificationSummary } from "./WorkPackageFieldVerification.jsx";
 import { withPageQuery } from "./workspaceQuery.js";
 import { PackagePageProvider } from "./packagePageContext.jsx";
 import WorkPackageProjectLink from "./WorkPackageProjectLink.jsx";
@@ -27,12 +28,13 @@ const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
 const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`;
 
-// UI-density redesign: 10 tabs (the Milestones tab is a placeholder until
+// UI-density redesign: 11 tabs (the Milestones tab is a placeholder until
 // slice 9 builds it — see the tabset correction). Tab order: the schedule
 // spine (Work steps, then the Planning process build checklist, then
 // Milestones) follows the package overview; Budget & Change Orders sits
 // after the IFA→IFC redlines per the brief; Busts follows Budget, since a
-// bust is most often resolved by a change order.
+// bust is most often resolved by a change order; Field verification follows
+// Busts, since a verification often finds the variance a bust records.
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "steps", label: "Work steps" },
@@ -42,6 +44,7 @@ const TABS = [
   { id: "redlines", label: "IFA→IFC redlines" },
   { id: "budget", label: "Budget & Change Orders" },
   { id: "busts", label: "Busts" },
+  { id: "field-verification", label: "Field verification" },
   { id: "documents", label: "Documents" },
   { id: "activity", label: "Activity / Audit" },
 ];
@@ -192,6 +195,16 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   function navigateToIntake(drawing) {
     setPendingIntakeDrawing(drawing);
     switchTab("documents");
+  }
+
+  // Field-verification deep link: a step row or a takeoff line asks
+  // for the verifications of one target. The filter is state, not a
+  // URL param — the panel applies it on mount and offers "Show all"
+  // to clear it.
+  const [fieldVerificationFilter, setFieldVerificationFilter] = useState(null);
+  function navigateToFieldVerification(filter) {
+    setFieldVerificationFilter(filter);
+    switchTab("field-verification");
   }
 
   // D16: "Review linked records" on the Budget tab was a dead anchor
@@ -647,6 +660,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                 <button className={btnGhost} onClick={onStartEdit} disabled={busy}>Edit</button>
               )}
             </div>
+            <FieldVerificationSummary packageId={pkg.id} onNavigate={() => { setFieldVerificationFilter(null); switchTab("field-verification"); }} />
             {editing ? (
               <form onSubmit={onSaveEdit} className="mt-4 space-y-4">
                 <div>
@@ -1007,7 +1021,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
       {activeTab === "steps" && (
         <div className="mt-6 space-y-6">
-          <WorkPackageSteps packageId={pkg.id} />
+          <WorkPackageSteps packageId={pkg.id} onViewVerifications={navigateToFieldVerification} />
           <WorkPackageManpowerCurve packageId={pkg.id} />
           <WorkPackageCraftAssignments packageId={pkg.id} />
         </div>
@@ -1064,6 +1078,12 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
       {activeTab === "busts" && (
         <div className="mt-6 space-y-6">
           <WorkPackageBusts packageId={pkg.id} />
+        </div>
+      )}
+
+      {activeTab === "field-verification" && (
+        <div className="mt-6 space-y-6">
+          <WorkPackageFieldVerification packageId={pkg.id} initialFilter={fieldVerificationFilter} />
         </div>
       )}
 
