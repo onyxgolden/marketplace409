@@ -1,0 +1,12 @@
+{
+  "description": "Property Risk Radar R0 \u2014 offline source-contract pack (registry, preflight CLI, fixtures, receipts). No runtime import by the Next.js app.",
+  "name": "property-risk-radar-r0",
+  "private": true,
+  "scripts": {
+    "preflight": "node src/preflight.mjs preflight --offline",
+    "test": "node --test \"tests/*.test.mjs\"",
+    "validate": "node src/validateRegistry.mjs"
+  },
+  "type": "module",
+  "version": "1.0.0"
+}

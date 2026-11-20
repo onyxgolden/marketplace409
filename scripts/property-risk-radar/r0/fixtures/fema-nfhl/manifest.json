@@ -1,0 +1,19 @@
+{
+  "adapterId": "fema-nfhl",
+  "fixtureKind": "synthetic-contract",
+  "liveFixtureStatus": "pending-live-preflight",
+  "generatedFrom": "Contract in src/adapters/fema-nfhl.mjs; synthetic values invented 2026-11-20; no live fetch.",
+  "files": [
+    {
+      "name": "metadata.json",
+      "sha256": "4b716716023882837fe19a68d361c067617c9f10b3d05370271d28b5a7ac3064",
+      "bytes": 322
+    },
+    {
+      "name": "sample.json",
+      "sha256": "9e505458c5965a9c4f0084035dc94e3f695a8d0a52316addf11abeb03578ec36",
+      "bytes": 299
+    }
+  ],
+  "digest": "96117c9e7319103839ef2ede0d7f5bcdbe300df9d0ae44b0a33dfddd0e437739"
+}

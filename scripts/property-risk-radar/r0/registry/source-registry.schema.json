@@ -1,0 +1,461 @@
+{
+    "$defs": {
+        "rightsMode": {
+            "additionalProperties": false,
+            "properties": {
+                "mode": {
+                    "enum": [
+                        "allowed",
+                        "forbidden",
+                        "unknown",
+                        "not_applicable"
+                    ],
+                    "type": "string"
+                },
+                "receipt": {
+                    "type": "string"
+                },
+                "receiptDate": {
+                    "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "mode"
+            ],
+            "type": "object"
+        },
+        "source": {
+            "additionalProperties": false,
+            "properties": {
+                "adapterVersion": {
+                    "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+                    "type": "string"
+                },
+                "category": {
+                    "enum": [
+                        "hazard-data",
+                        "geocoder",
+                        "camera"
+                    ],
+                    "type": "string"
+                },
+                "endpoints": {
+                    "additionalProperties": false,
+                    "properties": {
+                        "metadataUrlTemplate": {
+                            "pattern": "^https://",
+                            "type": "string"
+                        },
+                        "sampleUrlTemplate": {
+                            "pattern": "^https://",
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "metadataUrlTemplate",
+                        "sampleUrlTemplate"
+                    ],
+                    "type": "object"
+                },
+                "fixtureKind": {
+                    "enum": [
+                        "synthetic-contract",
+                        "contract-only"
+                    ],
+                    "type": "string"
+                },
+                "fixtureManifest": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "id": {
+                    "pattern": "^[a-z0-9][a-z0-9-]*$",
+                    "type": "string"
+                },
+                "killSwitch": {
+                    "const": true
+                },
+                "lastPreflight": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "liveFixtureStatus": {
+                    "enum": [
+                        "pending-live-preflight",
+                        "live",
+                        "not-applicable"
+                    ],
+                    "type": "string"
+                },
+                "network": {
+                    "additionalProperties": false,
+                    "properties": {
+                        "credentialMode": {
+                            "const": "none"
+                        },
+                        "hosts": {
+                            "items": {
+                                "pattern": "^[a-z0-9][a-z0-9.-]*$",
+                                "type": "string"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                        },
+                        "maxRedirects": {
+                            "maximum": 2,
+                            "minimum": 0,
+                            "type": "integer"
+                        },
+                        "method": {
+                            "const": "GET"
+                        },
+                        "pathPrefixes": {
+                            "items": {
+                                "pattern": "^/",
+                                "type": "string"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                        }
+                    },
+                    "required": [
+                        "hosts",
+                        "pathPrefixes",
+                        "method",
+                        "maxRedirects",
+                        "credentialMode"
+                    ],
+                    "type": "object"
+                },
+                "observationTimeField": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "owner": {
+                    "minLength": 1,
+                    "type": "string"
+                },
+                "policy": {
+                    "additionalProperties": false,
+                    "properties": {
+                        "caps": {
+                            "additionalProperties": false,
+                            "properties": {
+                                "bytes": {
+                                    "maximum": 5242880,
+                                    "minimum": 0,
+                                    "type": "integer"
+                                },
+                                "pages": {
+                                    "minimum": 0,
+                                    "type": "integer"
+                                },
+                                "records": {
+                                    "minimum": 0,
+                                    "type": "integer"
+                                },
+                                "redirects": {
+                                    "maximum": 2,
+                                    "minimum": 0,
+                                    "type": "integer"
+                                },
+                                "vertices": {
+                                    "minimum": 0,
+                                    "type": "integer"
+                                }
+                            },
+                            "required": [
+                                "redirects",
+                                "pages",
+                                "records",
+                                "bytes",
+                                "vertices"
+                            ],
+                            "type": "object"
+                        },
+                        "concurrency": {
+                            "maximum": 1,
+                            "minimum": 1,
+                            "type": "integer"
+                        },
+                        "spacingMs": {
+                            "minimum": 0,
+                            "type": "integer"
+                        },
+                        "timeoutMs": {
+                            "maximum": 10000,
+                            "minimum": 1,
+                            "type": "integer"
+                        }
+                    },
+                    "required": [
+                        "spacingMs",
+                        "concurrency",
+                        "timeoutMs",
+                        "caps"
+                    ],
+                    "type": "object"
+                },
+                "product": {
+                    "minLength": 1,
+                    "type": "string"
+                },
+                "referenceMode": {
+                    "enum": [
+                        "LINK_ONLY",
+                        null
+                    ],
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "response": {
+                    "additionalProperties": false,
+                    "properties": {
+                        "crs": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        },
+                        "format": {
+                            "minLength": 1,
+                            "type": "string"
+                        },
+                        "geometryTypes": {
+                            "items": {
+                                "type": [
+                                    "string",
+                                    "null"
+                                ]
+                            },
+                            "type": "array"
+                        },
+                        "requiredFields": {
+                            "items": {
+                                "type": "string"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                        }
+                    },
+                    "required": [
+                        "format",
+                        "crs",
+                        "requiredFields",
+                        "geometryTypes"
+                    ],
+                    "type": "object"
+                },
+                "retrievalTimeField": {
+                    "minLength": 1,
+                    "type": "string"
+                },
+                "rights": {
+                    "additionalProperties": false,
+                    "properties": {
+                        "archive": {
+                            "$ref": "#/$defs/rightsMode"
+                        },
+                        "caching": {
+                            "$ref": "#/$defs/rightsMode"
+                        },
+                        "hotlinking": {
+                            "$ref": "#/$defs/rightsMode"
+                        },
+                        "iframeEmbed": {
+                            "$ref": "#/$defs/rightsMode"
+                        },
+                        "imageDisplay": {
+                            "$ref": "#/$defs/rightsMode"
+                        },
+                        "metadataListing": {
+                            "$ref": "#/$defs/rightsMode"
+                        },
+                        "proxying": {
+                            "$ref": "#/$defs/rightsMode"
+                        }
+                    },
+                    "required": [
+                        "metadataListing",
+                        "imageDisplay",
+                        "iframeEmbed",
+                        "hotlinking",
+                        "proxying",
+                        "caching",
+                        "archive"
+                    ],
+                    "type": "object"
+                },
+                "schemaDigest": {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "serviceIdentity": {
+                    "additionalProperties": true,
+                    "properties": {
+                        "item": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        },
+                        "layer": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        },
+                        "layerId": {
+                            "type": [
+                                "integer",
+                                "null"
+                            ]
+                        },
+                        "service": {
+                            "minLength": 1,
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "service"
+                    ],
+                    "type": "object"
+                },
+                "status": {
+                    "enum": [
+                        "accepted",
+                        "disabled",
+                        "blocked"
+                    ],
+                    "type": "string"
+                },
+                "statusReason": {
+                    "minLength": 1,
+                    "type": "string"
+                },
+                "terms": {
+                    "additionalProperties": false,
+                    "properties": {
+                        "attribution": {
+                            "minLength": 1,
+                            "type": "string"
+                        },
+                        "coverage": {
+                            "additionalProperties": false,
+                            "properties": {
+                                "geographic": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                },
+                                "temporal": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                }
+                            },
+                            "required": [
+                                "geographic",
+                                "temporal"
+                            ],
+                            "type": "object"
+                        },
+                        "landingUrl": {
+                            "pattern": "^https://",
+                            "type": "string"
+                        },
+                        "quota": {
+                            "type": [
+                                "string",
+                                "object"
+                            ]
+                        },
+                        "termsDate": {
+                            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+                            "type": "string"
+                        },
+                        "termsUrl": {
+                            "pattern": "^https://",
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "landingUrl",
+                        "termsUrl",
+                        "termsDate",
+                        "attribution",
+                        "coverage",
+                        "quota"
+                    ],
+                    "type": "object"
+                }
+            },
+            "required": [
+                "id",
+                "owner",
+                "product",
+                "category",
+                "adapterVersion",
+                "network",
+                "endpoints",
+                "response",
+                "terms",
+                "policy",
+                "observationTimeField",
+                "retrievalTimeField",
+                "status",
+                "statusReason",
+                "killSwitch",
+                "lastPreflight",
+                "schemaDigest",
+                "fixtureManifest",
+                "liveFixtureStatus",
+                "fixtureKind",
+                "rights"
+            ],
+            "type": "object"
+        }
+    },
+    "$id": "https://409marketplace.online/property-risk-radar/r0/source-registry.schema.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "description": "Versioned source/camera registry for the R0 contract pack. Machine-validated by scripts/property-risk-radar/r0/src/validateRegistry.mjs. HTTP 200 is never rights evidence; one rights mode never implies another.",
+    "properties": {
+        "defaultNetworkPolicy": {
+            "const": "deny"
+        },
+        "registryVersion": {
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+            "type": "string"
+        },
+        "reviewedAt": {
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "type": "string"
+        },
+        "sources": {
+            "items": {
+                "$ref": "#/$defs/source"
+            },
+            "minItems": 1,
+            "type": "array"
+        }
+    },
+    "required": [
+        "registryVersion",
+        "reviewedAt",
+        "defaultNetworkPolicy",
+        "sources"
+    ],
+    "title": "Property Risk Radar R0 source registry",
+    "type": "object"
+}

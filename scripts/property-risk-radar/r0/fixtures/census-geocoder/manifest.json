@@ -1,0 +1,19 @@
+{
+  "adapterId": "census-geocoder",
+  "fixtureKind": "live",
+  "liveFixtureStatus": "live",
+  "generatedFrom": "Live preflight 2026-11-20T19:20:44.232Z under authorization \"Jason Morgan 2026-11-20 12:44 CST — Authorize the bounded live preflight (PR #840 verdict P1 fix)\". Raw response digests are in the live record; fixture files are the sanitized live responses.",
+  "files": [
+    {
+      "name": "metadata.json",
+      "sha256": "d46fbf4593dd5f4ef85201a0e71564901427855bb34d650b81555d3dce35a3ee",
+      "bytes": 117
+    },
+    {
+      "name": "sample.json",
+      "sha256": "6396eeeaaf1247a9e0401b636deed871ef5ad4870eed5c61987b34ba4b94ce0b",
+      "bytes": 1069
+    }
+  ],
+  "digest": "8ab1c191abf12de6c978f658bdd985428b2974b4c623985c0433e90ff9649cb3"
+}

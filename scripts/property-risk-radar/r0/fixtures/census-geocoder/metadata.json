@@ -1,0 +1,6 @@
+{
+  "synthetic": false,
+  "service": "Census Geocoder",
+  "benchmark": "Public_AR_Current",
+  "interpolated": true
+}
