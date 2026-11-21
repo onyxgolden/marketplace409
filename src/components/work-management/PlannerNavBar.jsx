@@ -60,8 +60,8 @@ export default function PlannerNavBar() {
               aria-current={active ? "page" : undefined}
               className={
                 active
-                  ? "rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
-                  : "rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
+                  ? "flex min-h-11 items-center rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
+                  : "flex min-h-11 items-center rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
               }
             >
               {label}
