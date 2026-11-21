@@ -49,6 +49,7 @@ import {
   validateAttestation,
   validateEvidenceLink,
   validatePlanningStatusChange,
+  validatePlanningTemplate,
   validateReason,
 } from "@/domains/work-management/planningProcess.js";
 
@@ -422,6 +423,84 @@ export async function getPlanningSummary(db, { ownerId, packageId }) {
     // computePlanningProgress and lands here as unavailable (F4).
     return { ok: true, summary: null };
   }
+}
+
+// D2 dashboard rebuild — one bulk read of planning progress for every
+// package in a project, so the landing dashboard can show the
+// credit-weighted progress table without one getPlanningSummary call
+// per package (a 399-package project would need ~800 queries that
+// way). Reads only the tables the planning-process slice already
+// built; no new model. One template read per bound version (version 1
+// is the only version the migration's CHECK allows) plus one instance
+// read per 100-package chunk, then the same computePlanningProgress
+// the per-package summary uses, so the two paths can never disagree
+// on a package's percent.
+//
+// Fail-closed per package, like getPlanningSummary: zero instance rows
+// is "not started" at 0% (the domain's defined empty state); a partial
+// set throws inside computePlanningProgress and lands here as null for
+// that package only (unavailable — the dashboard excludes it from the
+// mean and says how many it excluded, never a guessed percent). A
+// broken template fails loud for the whole call (a deployment problem,
+// not per-package data). A missing table (migration not applied)
+// returns notApplied so the dashboard shows the honest unavailable
+// state instead of zeros.
+const PLANNING_BULK_CHUNK_SIZE = 100;
+
+export async function listPlanningProgressForPackages(db, { ownerId, packages }) {
+  const rows = Array.isArray(packages) ? packages : [];
+  if (rows.length === 0) return { ok: true, notApplied: false, byPackage: {} };
+  const versions = [...new Set(rows.map((pkg) => pkg?.planning_template_version ?? 1))];
+  const templateByVersion = new Map();
+  for (const version of versions) {
+    const { data, error } = await db.from("forge_work_planning_process_template")
+      .select("*").eq("version", version).order("sort_order", { ascending: true });
+    if (error) {
+      if (isMissingTableError(error)) return { ok: true, notApplied: true, byPackage: {} };
+      throw error;
+    }
+    const template = (data || []).map(toCamelTemplate);
+    const check = validatePlanningTemplate(template);
+    if (!check.ok) throw new Error(check.error);
+    templateByVersion.set(version, template);
+  }
+  const ids = rows.map((pkg) => pkg.id);
+  const instancesByPackage = new Map();
+  for (let offset = 0; offset < ids.length; offset += PLANNING_BULK_CHUNK_SIZE) {
+    const chunk = ids.slice(offset, offset + PLANNING_BULK_CHUNK_SIZE);
+    const { data, error } = await db.from("forge_work_planning_process_instances")
+      .select("work_package_id, template_step_id, status")
+      .eq("owner_id", ownerId)
+      .in("work_package_id", chunk);
+    if (error) {
+      if (isMissingTableError(error)) return { ok: true, notApplied: true, byPackage: {} };
+      throw error;
+    }
+    for (const row of data || []) {
+      const list = instancesByPackage.get(row.work_package_id) || [];
+      list.push({ templateStepId: row.template_step_id, status: row.status });
+      instancesByPackage.set(row.work_package_id, list);
+    }
+  }
+  const byPackage = {};
+  for (const pkg of rows) {
+    const template = templateByVersion.get(pkg.planning_template_version ?? 1);
+    const instances = instancesByPackage.get(pkg.id) || [];
+    try {
+      const progress = computePlanningProgress({
+        template,
+        instances,
+        complexity: pkg.planning_complexity || "standard",
+      });
+      byPackage[pkg.id] = { percentComplete: progress.percentComplete, initialized: progress.initialized };
+    } catch {
+      // Partial / duplicated / unknown-step set: fail closed for this
+      // package only — null, never a guessed percent. Other packages
+      // still report.
+      byPackage[pkg.id] = null;
+    }
+  }
+  return { ok: true, notApplied: false, byPackage };
 }
 
 /**

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
 import { listWorkspacesForActor } from "@/lib/supabase/resolveEffectiveOwnerId";
 import { listWorkPackages, listPackagePropertyOptions } from "@/application/work-management/workPackages";
+import { listPlanningProgressForPackages } from "@/application/work-management/planningProcess";
 import {
   parseForgeProjectParam,
   resolvePlannerProjectScope,
@@ -12,6 +13,7 @@ import { WP_STATUS, WP_MODES, inferEffectiveMode } from "@/domains/work-manageme
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 import WorkPackageWorkspaceSwitcher from "@/components/work-management/WorkPackageWorkspaceSwitcher";
 import WorkPackagePageHeader from "./page-header";
+import WorkPackageFilterForm, { GROUP_NONE, PLANNER_UNASSIGNED, UNASSIGNED } from "./WorkPackageFilterForm.jsx";
 import PlannerDashboardShell from "@/components/work-management/PlannerDashboardShell.jsx";
 import WorkPackageListGrid, { BLANK_ROWS } from "@/components/work-management/WorkPackageListGrid.jsx";
 
@@ -24,12 +26,18 @@ const STATUS_VALUES = Object.values(WP_STATUS);
 // Scope · Updated. The grid itself lives in WorkPackageListGrid —
 // Maximo-style grid edit with blank add-rows — and its columns fit one
 // desktop screen (no horizontal scroll at 1919px).
-const UNASSIGNED = "__unassigned__";
+// The filter sentinels live in WorkPackageFilterForm.jsx (single source
+// of truth — the form renders them as option values).
+const PROGRESS_DIMENSIONS = ["system", "planner", "unit"];
 
 function parseFilters(searchParams) {
   const rawStatus = typeof searchParams?.status === "string" ? searchParams.status : "";
   const rawProperty = typeof searchParams?.propertyId === "string" ? searchParams.propertyId : "";
   const rawMode = typeof searchParams?.mode === "string" ? searchParams.mode : "";
+  const rawPlanner = typeof searchParams?.planner === "string" ? searchParams.planner : "";
+  const rawUnit = typeof searchParams?.unit === "string" ? searchParams.unit : "";
+  const rawSystem = typeof searchParams?.system === "string" ? searchParams.system : "";
+  const rawProgressBy = typeof searchParams?.progressBy === "string" ? searchParams.progressBy : "";
 
   const status = rawStatus && rawStatus !== "all" && STATUS_VALUES.includes(rawStatus)
     ? rawStatus
@@ -48,25 +56,89 @@ function parseFilters(searchParams) {
   // by default (unlike status/property, which also default to "all").
   const mode = WP_MODES.includes(rawMode) ? rawMode : "all";
 
-  return { status, propertyId, mode };
+  // D2 progress drill-down: planner / unit / system narrow the grid to
+  // the group a dashboard row counts. Any non-empty value filters; the
+  // sentinel values match packages with no value in that dimension.
+  // progressBy is the dashboard tab (null = default: the active group
+  // filter's dimension, else System).
+  //
+  // Mutual exclusion (D2 fix round 1, P1): planner / unit / system are
+  // ONE group filter, not three — the first active dimension wins
+  // (planner > unit > system, the same precedence activeGroup uses
+  // below), the others are cleared. The filter form is a plain GET form
+  // that submits all three selects at once, and a bookmarked link can
+  // carry several, so without this the widget highlighted one
+  // project-wide group row ("currently filtered") while the grid showed
+  // the intersection with the other dimensions — the displayed count did
+  // not reconcile with the rows. The page also redirects a combined URL
+  // to its canonical form (see the component), so the address bar
+  // agrees with the filters; this normalization is the safety net that
+  // makes the semantics true even if a combined URL ever reaches here.
+  let planner = rawPlanner || "all";
+  let unit = rawUnit || "all";
+  let system = rawSystem || "all";
+  if (planner !== "all") {
+    unit = "all";
+    system = "all";
+  } else if (unit !== "all") {
+    system = "all";
+  }
+  const progressBy = PROGRESS_DIMENSIONS.includes(rawProgressBy) ? rawProgressBy : null;
+
+  return { status, propertyId, mode, planner, unit, system, progressBy };
 }
 
-function filterPackages(packages, { status, propertyId, mode }) {
+function filterValueMatches(rowValue, filter) {
+  // A row with no value matches only the sentinel; a row with a value
+  // matches only its exact (trimmed) value. Trimming on both sides
+  // keeps the grid consistent with the dashboard grouping, which
+  // trims display names / units / systems the same way.
+  const value = typeof rowValue === "string" ? rowValue.trim() : "";
+  if (filter === PLANNER_UNASSIGNED || filter === GROUP_NONE) return value === "";
+  return value !== "" && value === filter;
+}
+
+function filterPackages(packages, { status, propertyId, mode, planner, unit, system }) {
   return packages.filter((pkg) => {
     if (status !== "all" && pkg.status !== status) return false;
     if (mode !== "all" && inferEffectiveMode(pkg) !== mode) return false;
-    if (propertyId === UNASSIGNED) return pkg.property_id == null;
-    if (propertyId !== "all") {
+    // Guard clauses, never early returns: every active filter narrows
+    // the same row (a property filter must not swallow the planner /
+    // unit / system filters below it).
+    if (propertyId === UNASSIGNED && pkg.property_id != null) return false;
+    if (propertyId !== "all" && propertyId !== UNASSIGNED) {
       // Packages store canonical slugs already; comparing canonical forms
       // keeps alias-tagged query params working either way.
-      return canonicalPropertySlug(pkg.property_id || "") === propertyId;
+      if (canonicalPropertySlug(pkg.property_id || "") !== propertyId) return false;
     }
+    if (planner !== "all" && !filterValueMatches(pkg.responsible_party?.display_name, planner)) return false;
+    if (unit !== "all" && !filterValueMatches(pkg.unit, unit)) return false;
+    if (system !== "all" && !filterValueMatches(pkg.system, system)) return false;
     return true;
   });
 }
 
 export default async function WorkPackagesPage({ searchParams }) {
   const params = (await searchParams) || {};
+  // D2 fix round 1 (P1): a combined group-filter URL — the filter form
+  // submits all three selects at once, a bookmark can carry several — is
+  // redirected to its canonical form (the kept dimension only) so the
+  // address bar, the selects, the grid, and the highlighted widget row
+  // all describe the same filter. This runs before any read, so a
+  // combined load never pays for data it will not render.
+  const filters = parseFilters(params);
+  const droppedGroupDimensions = ["planner", "unit", "system"].filter((dim) => {
+    const raw = typeof params[dim] === "string" ? params[dim] : "";
+    return raw && raw !== "all" && filters[dim] === "all";
+  });
+  if (droppedGroupDimensions.length > 0) {
+    const canonicalParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (droppedGroupDimensions.includes(key)) continue;
+      if (typeof value === "string") canonicalParams.set(key, value);
+    }
+    redirect(`/forge/work?${canonicalParams.toString()}`);
+  }
   // UI-density redesign: ?workspace= selects a workspace the actor can act
   // within. Validated inside resolveEffectiveOwnerId (own id or an active
   // membership only); anything else falls back to the default resolution.
@@ -111,10 +183,46 @@ export default async function WorkPackagesPage({ searchParams }) {
     listPackagePropertyOptions(db, { ownerId }).catch(() => ({ ok: false, properties: [] })),
   ]);
 
-  const filters = parseFilters(params);
+  // Filters were parsed (and combined group filters redirected) at the
+  // top of the component, before any read — see above.
   const filtered = ok ? filterPackages(packages, filters) : [];
-  const hasFilters = filters.status !== "all" || filters.propertyId !== "all" || filters.mode !== "all";
+  const hasFilters = filters.status !== "all" || filters.propertyId !== "all" || filters.mode !== "all"
+    || filters.planner !== "all" || filters.unit !== "all" || filters.system !== "all";
   const properties = propertyResult.ok ? propertyResult.properties : [];
+
+  // D2 dashboard: one bulk planning-% read for the whole in-scope
+  // project (never per-package — a 399-package project would need
+  // ~800 queries). The widget describes the whole project, so it reads
+  // the unfiltered array. A failure (or the planning data not being set
+  // up yet) hides the widget's numbers behind its not-available note
+  // instead of breaking the page — the same discipline as
+  // getPlanningSummary on the detail page.
+  let planningByPackage = null;
+  if (ok && scope.kind !== SCOPE_KINDS.NONE && packages.length > 0) {
+    const planningResult = await listPlanningProgressForPackages(db, { ownerId, packages }).catch(() => null);
+    if (planningResult && !planningResult.notApplied) planningByPackage = planningResult.byPackage;
+  }
+  // The dashboard tab: the explicit progressBy param wins; otherwise
+  // the active group filter's dimension; otherwise System.
+  const activeGroup = filters.planner !== "all" ? { dimension: "planner", key: filters.planner }
+    : filters.unit !== "all" ? { dimension: "unit", key: filters.unit }
+    : filters.system !== "all" ? { dimension: "system", key: filters.system }
+    : null;
+  const activeDimension = filters.progressBy || activeGroup?.dimension || "system";
+
+  // D2 filter selects: distinct in-scope values, so the dropdowns only
+  // ever offer planners / units / systems the project actually has.
+  // The sentinel options appear only when a package actually lacks
+  // that value — no dead "No unit" choice on a fully-unit project.
+  // (packages || []) — a failed load returns no array; the selects
+  // never render then, but these consts run before the return.
+  const scopePackages = packages || [];
+  const plannerOptions = [...new Set(scopePackages.map((pkg) => (pkg.responsible_party?.display_name || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const unitOptions = [...new Set(scopePackages.map((pkg) => (pkg.unit || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const systemOptions = [...new Set(scopePackages.map((pkg) => (pkg.system || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const hasUnassignedPlanner = scopePackages.some((pkg) => !(pkg.responsible_party?.display_name || "").trim());
+  const hasNoUnit = scopePackages.some((pkg) => !(pkg.unit || "").trim());
+  const hasNoSystem = scopePackages.some((pkg) => !(pkg.system || "").trim());
   const clearHref = pageQueryString ? `/forge/work${pageQueryString}` : "/forge/work";
   // "New package" carries the active mode filter so a package created
   // while viewing Industrial defaults to Industrial (and likewise for
@@ -156,8 +264,13 @@ export default async function WorkPackagesPage({ searchParams }) {
   // D7: a blank add-row is an unsaved draft with no property yet — it must
   // follow the same filter rule as a real row with that shape, not render
   // unconditionally regardless of the active Status/Property filter.
+  // D2: the same rule extends to the group filters — a blank row has no
+  // planner / unit / system, so it matches only "all" or the sentinel.
   const blankRowsMatchFilters = (filters.status === "all" || filters.status === "draft")
-    && (filters.propertyId === "all" || filters.propertyId === UNASSIGNED);
+    && (filters.propertyId === "all" || filters.propertyId === UNASSIGNED)
+    && (filters.planner === "all" || filters.planner === PLANNER_UNASSIGNED)
+    && (filters.unit === "all" || filters.unit === GROUP_NONE)
+    && (filters.system === "all" || filters.system === GROUP_NONE);
   const blankRowCount = blankRowsMatchFilters ? BLANK_ROWS : 0;
 
   return (
@@ -172,6 +285,10 @@ export default async function WorkPackagesPage({ searchParams }) {
           status: filters.status !== "all" ? filters.status : "",
           propertyId: filters.propertyId !== "all" ? filters.propertyId : "",
           mode: filters.mode !== "all" ? filters.mode : "",
+          planner: filters.planner !== "all" ? filters.planner : "",
+          unit: filters.unit !== "all" ? filters.unit : "",
+          system: filters.system !== "all" ? filters.system : "",
+          progressBy: filters.progressBy || "",
           forgeProject: forgeProjectParam,
         }}
       />
@@ -188,6 +305,9 @@ export default async function WorkPackagesPage({ searchParams }) {
             packages={packages}
             baseHref={dashboardBaseHref}
             activeStatus={filters.status !== "all" ? filters.status : null}
+            planningByPackage={planningByPackage}
+            activeDimension={activeDimension}
+            activeGroup={activeGroup}
           />
         </div>
       )}
@@ -216,60 +336,24 @@ export default async function WorkPackagesPage({ searchParams }) {
       )}
 
       {ok && packages.length > 0 && scope.kind !== SCOPE_KINDS.NONE && (
-        <form method="get" action="/forge/work" className="mt-6 flex flex-wrap items-center gap-3">
-          {requestedWorkspace && ownerId === requestedWorkspace && (
-            <input type="hidden" name="workspace" value={requestedWorkspace} />
-          )}
-          {forgeProjectParam && (
-            <input type="hidden" name="forgeProject" value={forgeProjectParam} />
-          )}
-          {/* D11: a bare <select> has no text/background color of its own
-             in dark mode; it inherited the page's white text with the
-             browser's native (white) control background, rendering a
-             selected value as an invisible white-on-white box. Forcing
-             both colors explicitly fixes it regardless of browser. */}
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-slate-600 dark:text-slate-300" htmlFor="filter-status">Status</label>
-            <select id="filter-status" name="status" defaultValue={filters.status}
-              key={`status-${filters.status}-${filters.propertyId}`}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white">
-              <option value="all">All statuses</option>
-              {STATUS_VALUES.map((status) => (
-                <option key={status} value={status}>{status.replace(/_/g, " ")}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-slate-600 dark:text-slate-300" htmlFor="filter-property">Property</label>
-            <select id="filter-property" name="propertyId" defaultValue={filters.propertyId}
-              key={`property-${filters.status}-${filters.propertyId}`}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white">
-              <option value="all">All properties</option>
-              <option value={UNASSIGNED}>No property assigned</option>
-              {properties.map((property) => (
-                <option key={property.slug} value={property.slug}>{property.label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-slate-600" htmlFor="filter-mode">Mode</label>
-            <select id="filter-mode" name="mode" defaultValue={filters.mode}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
-              <option value="all">All modes</option>
-              {WP_MODES.map((option) => (
-                <option key={option} value={option} className="capitalize">{option}</option>
-              ))}
-            </select>
-          </div>
-          <button type="submit" className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
-            Apply filters
-          </button>
-          {hasFilters && (
-            <Link href={clearHref} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
-              Clear filters
-            </Link>
-          )}
-        </form>
+        <WorkPackageFilterForm
+          key={`filters-${filters.status}-${filters.propertyId}-${filters.mode}-${filters.planner}-${filters.unit}-${filters.system}`}
+          filters={filters}
+          statusOptions={STATUS_VALUES}
+          properties={properties}
+          modeOptions={WP_MODES}
+          plannerOptions={plannerOptions}
+          unitOptions={unitOptions}
+          systemOptions={systemOptions}
+          hasUnassignedPlanner={hasUnassignedPlanner}
+          hasNoUnit={hasNoUnit}
+          hasNoSystem={hasNoSystem}
+          requestedWorkspace={requestedWorkspace}
+          ownerId={ownerId}
+          forgeProjectParam={forgeProjectParam}
+          hasFilters={hasFilters}
+          clearHref={clearHref}
+        />
       )}
 
       {scope.kind === SCOPE_KINDS.NONE ? null : !ok ? (
