@@ -87,6 +87,15 @@ describe("PlannerNavBar", () => {
     expect(hrefs).toContain("/forge/work?forgeProject=unassigned");
   });
 
+  it("gives every link a ~44px minimum tap target (Phone Slice 4)", () => {
+    const { container } = render();
+    const links = [...container.querySelectorAll("a")];
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      expect(link.className).toContain("min-h-11");
+    }
+  });
+
   it("marks the Unassigned inbox active only when its scope is selected (PR B)", () => {
     mockSearch = "forgeProject=unassigned";
     const { container } = render();
