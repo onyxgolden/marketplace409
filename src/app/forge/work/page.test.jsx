@@ -318,3 +318,106 @@ describe("/forge/work workspace switcher (UI-density redesign)", () => {
     expect(html).toContain('name="workspace" value="owner_2"');
   });
 });
+
+describe("/forge/work dashboard shell (D1)", () => {
+  it("renders the strip and scope chart on a scoped view, slices reconciling to the strip", async () => {
+    const html = await renderPage();
+    // Strip: project, total planned cost ($1,500.00 + $250.00), total scope items.
+    expect(html).toContain("Total planned cost");
+    expect(html).toContain("$1,750.00");
+    expect(html).toContain("Total scope items");
+    expect(html).toContain("Scope by status");
+    // Donut legend: draft 2 of 3, in progress 1 of 3 — slices add up to the strip.
+    expect(html).toContain("draft: 2 of 3 packages");
+    expect(html).toContain("in progress: 1 of 3 packages");
+    // Every legend row filters the grid, preserving the scope (rendered
+    // HTML escapes & as &amp; in href attributes).
+    expect(html).toContain('href="/forge/work?forgeProject=unassigned&amp;status=draft"');
+    expect(html).toContain('href="/forge/work?forgeProject=unassigned&amp;status=in_progress"');
+    // The grid below is unchanged.
+    expect(html).toContain('role="table"');
+    expect(html).toContain("Decker turnover");
+  });
+
+  it("keeps the strip on the whole scope when the grid is filtered", async () => {
+    const html = await renderPage({ status: "draft" });
+    // The grid narrows to draft rows only...
+    expect(html).toContain("Decker turnover");
+    expect(html).not.toContain("Kent kitchen");
+    // ...but the strip still totals the whole project, and the donut
+    // still shows the in-progress slice (the rows the filter hid).
+    expect(html).toContain("$1,750.00");
+    expect(html).toContain("in progress: 1 of 3 packages");
+    // The active slice is marked and its link clears the filter.
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('href="/forge/work?forgeProject=unassigned"');
+  });
+
+  it("fix round 1: drill-down counts reconcile with rows when property/mode filters are active", async () => {
+    // Packages split across properties AND modes: two of the three draft
+    // rows live on different properties with different modes, so a drill-
+    // down link that preserved the active narrowing filters would
+    // silently drop rows the chart count advertises (the P1: "draft: 2
+    // of 2" landing on 1 row). The dashboard is project-wide: every
+    // drill-down link must clear the narrowing filters.
+    const splitPackages = [
+      { id: "wp_a", code: "WP-A", title: "North draft industrial", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: 0, unit: "Unit A", area: "Process", system: "Exchanger", property_id: "1900-w-decker", mode: "industrial", planned_cost_cents: 100000, responsible_party: null, updated_at: "2026-10-01T00:00:00Z" },
+      { id: "wp_b", code: "WP-B", title: "South draft commercial", package_type: "commercial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: 0, unit: "Unit B", area: "Utilities", system: "Pumping", property_id: "4800-kent-ave", mode: "commercial", planned_cost_cents: 200000, responsible_party: null, updated_at: "2026-10-02T00:00:00Z" },
+      { id: "wp_c", code: "WP-C", title: "North in-progress commercial", package_type: "commercial", priority: "normal", status: "in_progress", planned_start: null, planned_finish: null, percent_complete: 40, unit: "Unit A", area: "Process", system: "Piping", property_id: "1900-w-decker", mode: "commercial", planned_cost_cents: null, responsible_party: null, updated_at: "2026-10-03T00:00:00Z" },
+      { id: "wp_d", code: "WP-D", title: "South draft industrial", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: 0, unit: "Unit C", area: "Offsites", system: "Piping", property_id: "4800-kent-ave", mode: "industrial", planned_cost_cents: 300000, responsible_party: null, updated_at: "2026-10-04T00:00:00Z" },
+    ];
+    mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: splitPackages });
+
+    // Narrowing filters active: the grid narrows to the one matching row...
+    const html = await renderPage({ propertyId: "1900-w-decker", mode: "industrial" });
+    expect(html).toContain("North draft industrial");
+    expect(html).not.toContain("South draft commercial");
+    expect(html).not.toContain("South draft industrial");
+    // ...but the dashboard still describes the whole project.
+    expect(html).toContain("draft: 3 of 4 packages");
+    expect(html).toContain("in progress: 1 of 4 packages");
+    // The generated draft link must clear the narrowing filters — no
+    // propertyId=, no mode= — so its destination rows equal the count.
+    const draftLink = html.match(/href="([^"]*status=draft[^"]*)"/);
+    expect(draftLink).not.toBeNull();
+    expect(draftLink[1]).not.toContain("propertyId=");
+    expect(draftLink[1]).not.toContain("mode=");
+    // Follow the generated link exactly as rendered: the grid must show
+    // all three draft rows the count advertises, and nothing else.
+    const linkParams = Object.fromEntries(
+      new URLSearchParams(draftLink[1].replace(/&amp;/g, "&").split("?")[1] || ""),
+    );
+    const drilled = await renderPage(linkParams);
+    expect(drilled).toContain("North draft industrial");
+    expect(drilled).toContain("South draft commercial");
+    expect(drilled).toContain("South draft industrial");
+    expect(drilled).not.toContain("North in-progress commercial");
+  });
+
+  it("renders no dashboard in the chooser state", async () => {
+    const html = await renderPage({ forgeProject: undefined });
+    expect(html).toContain("Choose a project to see its work packages.");
+    expect(html).not.toContain("Total planned cost");
+    expect(html).not.toContain("Scope by status");
+  });
+
+  it("renders no dashboard when the package load fails", async () => {
+    mocks.listWorkPackages.mockResolvedValue({ ok: false });
+    const html = await renderPage();
+    expect(html).toContain("Unable to load work packages.");
+    expect(html).not.toContain("Total planned cost");
+    expect(html).not.toContain("Scope by status");
+  });
+
+  it("renders the empty face on a project with no packages yet", async () => {
+    mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: [] });
+    const html = await renderPage();
+    expect(html).toContain("Total scope items");
+    expect(html).toContain("No packages in this project yet");
+    expect(html).not.toContain("Scope by status: ");
+    // The grid still fills the page with blank add-rows.
+    expect(html).toContain('role="table"');
+    expect(html).toContain("New package title");
+  });
+});
+

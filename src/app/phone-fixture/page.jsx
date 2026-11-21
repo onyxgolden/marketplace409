@@ -61,6 +61,12 @@
  *                 (min-w-0 flex-1 + min-w-0 content div) — never a bare
  *                 full-width div, which would hide a real containment
  *                 overflow.
+ *   work-dashboard — the real PlannerDashboardShell (D1 dashboard
+ *                 rebuild: number strip + scope-by-status pivot chart),
+ *                 fed 6 wholly synthetic rows created for this test
+ *                 (fix round 1 provenance — no production data), inside
+ *                 the production page's <main> container.
+ *                 No network calls on render.
  *
  * The case comes from window.location.search after mount (no
  * useSearchParams, so no Suspense boundary is needed). The page sets
@@ -77,6 +83,7 @@ import WorkPackagePageHeader from "@/app/forge/work/page-header";
 import WorkspaceShell from "@/components/workspace-shell";
 import ForgeApplicationRail from "@/components/forge/ForgeApplicationRail";
 import ProjectsScreen from "@/components/forge/scheduling/ProjectsScreen";
+import PlannerDashboardShell from "@/components/work-management/PlannerDashboardShell.jsx";
 import RentalOverviewPanel from "@/components/forge/rental/RentalOverviewPanel";
 import RentalPropertyPerformancePanel from "@/components/forge/rental/RentalPropertyPerformancePanel";
 import { buildRentalPropertyPerformance } from "@/application/rental/buildRentalPropertyPerformance";
@@ -407,6 +414,42 @@ function SchedulingProjectsCase() {
   );
 }
 
+// D1 dashboard rebuild: the REAL PlannerDashboardShell (number strip +
+// scope-by-status pivot chart) rendered inside the production page's
+// <main> container, fed 6 wholly synthetic rows created for this test
+// (fix round 1 provenance — NO production data): deterministic synthetic
+// IDs (forge_project_synth_d1_dashboard / forge_wp_synth_d1_01..06),
+// invented codes, titles, and unit/area/system mappings, fixed synthetic
+// timestamp 2026-01-01. The rows are shaped exactly like
+// listWorkPackages output; only shape-filler fields the shell never
+// renders (planned dates, updated_at) are set to null/a fixed date.
+// All 6 are draft, all industrial, no planned cost yet (so the strip
+// shows "—", never a false $0.00). The donut is a single segment here
+// (all 6 draft); the multi-status donut is covered by the shell's unit
+// tests, which render a 2-status mix.
+const WORK_DASHBOARD_FIXTURE_PACKAGES = [
+  { id: "forge_wp_synth_d1_01", code: "SYN-01", title: "Synthetic exchanger inspection [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit A", area: "Process", system: "Exchanger", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: null, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
+  { id: "forge_wp_synth_d1_02", code: "SYN-02", title: "Synthetic pump overhaul [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit B", area: "Utilities", system: "Pumping", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: null, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
+  { id: "forge_wp_synth_d1_03", code: "SYN-03", title: "Synthetic valve replacement [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit A", area: "Process", system: "Piping", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: null, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
+  { id: "forge_wp_synth_d1_04", code: "SYN-04", title: "Synthetic spool fabrication [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit C", area: "Offsites", system: "Piping", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: null, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
+  { id: "forge_wp_synth_d1_05", code: "SYN-05", title: "Synthetic MCC maintenance [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit B", area: "Electrical", system: "Power distribution", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: null, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
+  { id: "forge_wp_synth_d1_06", code: "SYN-06", title: "Synthetic loop checkout [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit A", area: "Process", system: "Instrumentation", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: null, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
+];
+
+function WorkDashboardCase() {
+  return (
+    <main className="mx-auto w-full max-w-7xl px-4 py-8" data-testid="work-dashboard-fixture">
+      <PlannerDashboardShell
+        projectLabel="Synthetic Dashboard Test Project"
+        projectSublabel="Synthetic Client › Synthetic Site"
+        packages={WORK_DASHBOARD_FIXTURE_PACKAGES}
+        baseHref="/forge/work?forgeProject=forge_project_synth_d1_dashboard"
+        activeStatus={null}
+      />
+    </main>
+  );
+}
+
 const CASES = {
   designer: DesignerCase,
   fccu: FccuCase,
@@ -417,6 +460,7 @@ const CASES = {
   "rental-23": Rental23Case,
   "rental-performance": RentalPerformanceCase,
   "projects-list": SchedulingProjectsCase,
+  "work-dashboard": WorkDashboardCase,
   health: HealthCase,
   "health-dashboard": HealthDashboardCase,
 };
