@@ -428,13 +428,25 @@ function SchedulingProjectsCase() {
 // (all 6 draft); the multi-status donut is covered by the shell's unit
 // tests, which render a 2-status mix.
 const WORK_DASHBOARD_FIXTURE_PACKAGES = [
-  { id: "forge_wp_synth_d1_01", code: "SYN-01", title: "Synthetic exchanger inspection [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit A", area: "Process", system: "Exchanger", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: null, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
-  { id: "forge_wp_synth_d1_02", code: "SYN-02", title: "Synthetic pump overhaul [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit B", area: "Utilities", system: "Pumping", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: null, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
-  { id: "forge_wp_synth_d1_03", code: "SYN-03", title: "Synthetic valve replacement [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit A", area: "Process", system: "Piping", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: null, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
+  { id: "forge_wp_synth_d1_01", code: "SYN-01", title: "Synthetic exchanger inspection [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit A", area: "Process", system: "Exchanger", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: { domain: "contractor", type: "contractor", display_name: "Synthetic Crew Alpha" }, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
+  { id: "forge_wp_synth_d1_02", code: "SYN-02", title: "Synthetic pump overhaul [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit B", area: "Utilities", system: "Pumping", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: { domain: "contractor", type: "contractor", display_name: "Synthetic Crew Beta" }, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
+  { id: "forge_wp_synth_d1_03", code: "SYN-03", title: "Synthetic valve replacement [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit A", area: "Process", system: "Piping", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: { domain: "contractor", type: "contractor", display_name: "Synthetic Crew Alpha" }, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
   { id: "forge_wp_synth_d1_04", code: "SYN-04", title: "Synthetic spool fabrication [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit C", area: "Offsites", system: "Piping", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: null, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
   { id: "forge_wp_synth_d1_05", code: "SYN-05", title: "Synthetic MCC maintenance [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit B", area: "Electrical", system: "Power distribution", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: null, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
   { id: "forge_wp_synth_d1_06", code: "SYN-06", title: "Synthetic loop checkout [SYNTHETIC]", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: null, unit: "Unit A", area: "Process", system: "Instrumentation", property_id: null, mode: "industrial", planned_cost_cents: null, responsible_party: null, updated_at: "2026-01-01T00:00:00Z", forge_project_id: "forge_project_synth_d1_dashboard" },
 ];
+
+// D2: synthetic planning-% map for the fixture packages — 100/75/50/25/0
+// across the first five, and no entry for SYN-06 (no checklist yet, the
+// without-planning case). Total: 1 of 6 complete, mean 50.0% over the 5
+// with planning. Wholly synthetic values, same invented IDs as above.
+const WORK_DASHBOARD_FIXTURE_PLANNING = {
+  forge_wp_synth_d1_01: { percentComplete: 100, initialized: true },
+  forge_wp_synth_d1_02: { percentComplete: 75, initialized: true },
+  forge_wp_synth_d1_03: { percentComplete: 50, initialized: true },
+  forge_wp_synth_d1_04: { percentComplete: 25, initialized: true },
+  forge_wp_synth_d1_05: { percentComplete: 0, initialized: false },
+};
 
 function WorkDashboardCase() {
   return (
@@ -445,6 +457,7 @@ function WorkDashboardCase() {
         packages={WORK_DASHBOARD_FIXTURE_PACKAGES}
         baseHref="/forge/work?forgeProject=forge_project_synth_d1_dashboard"
         activeStatus={null}
+        planningByPackage={WORK_DASHBOARD_FIXTURE_PLANNING}
       />
     </main>
   );

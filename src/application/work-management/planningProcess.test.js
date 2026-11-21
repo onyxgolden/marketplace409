@@ -11,6 +11,7 @@ import {
 import {
   getPlanningChecklist,
   getPlanningSummary,
+  listPlanningProgressForPackages,
   listPlanningRevisions,
   mapPlanningProcessRpcError,
   setPlanningComplexity,
@@ -424,5 +425,117 @@ describe("setPlanningComplexity", () => {
 describe("mapPlanningProcessRpcError", () => {
   it("throws unknown errors through (route turns them into a 500)", () => {
     expect(() => mapPlanningProcessRpcError(new Error("boom"))).toThrow("boom");
+  });
+});
+
+// D2 dashboard rebuild: one bulk read of planning progress for a whole
+// project, so the landing dashboard never issues one summary call per
+// package. Same computePlanningProgress as the per-package summary, so
+// the two paths cannot disagree on a package's percent.
+describe("listPlanningProgressForPackages", () => {
+  function templateRows() {
+    return PLANNING_PROCESS_TEMPLATE.map((t) => ({
+      version: 1, step_key: t.stepKey, step_number: t.stepNumber, sort_order: t.stepNumber,
+      name: t.name, role: t.role, credit_pct: t.creditPct, mhrs_standard: t.mhrsStandard,
+      description: t.description, provenance: "pdf",
+    }));
+  }
+
+  function bulkDb({ instancesByPackage = {}, instancesError = null, templateError = null } = {}) {
+    const inCalls = [];
+    const templateChain = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn(async () => ({ data: templateError ? null : templateRows(), error: templateError })),
+    };
+    const instancesChain = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      in: vi.fn(async (_column, ids) => {
+        inCalls.push([...ids]);
+        if (instancesError) return { data: null, error: instancesError };
+        const rows = [];
+        for (const id of ids) {
+          for (const inst of instancesByPackage[id] || []) {
+            rows.push({
+              work_package_id: id, template_step_id: inst.templateStepId, status: inst.status,
+            });
+          }
+        }
+        return { data: rows, error: null };
+      }),
+    };
+    return {
+      db: {
+        from: vi.fn((table) => {
+          if (table === "forge_work_planning_process_template") return templateChain;
+          if (table === "forge_work_planning_process_instances") return instancesChain;
+          throw new Error(`unexpected table ${table}`);
+        }),
+        rpc: vi.fn(),
+      },
+      inCalls,
+    };
+  }
+
+  const PKGS = (ids) => ids.map((id) => ({ id, planning_complexity: "standard", planning_template_version: 1 }));
+
+  it("returns per-package credit-weighted % from one template read and one instance read", async () => {
+    const { db } = bulkDb({
+      instancesByPackage: {
+        pkg_1: allInstances().map((i) => (["pdf-01", "pdf-02", "pdf-03"].includes(i.templateStepId) ? { ...i, status: "Complete" } : i)),
+        pkg_2: allInstances().map((i) => ({ ...i, status: "Complete" })),
+      },
+    });
+    const result = await listPlanningProgressForPackages(db, { ownerId: "owner_1", packages: PKGS(["pkg_1", "pkg_2"]) });
+    expect(result.ok).toBe(true);
+    expect(result.notApplied).toBe(false);
+    expect(result.byPackage.pkg_1).toEqual({ percentComplete: 15, initialized: true });
+    expect(result.byPackage.pkg_2).toEqual({ percentComplete: 100, initialized: true });
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("reports 0% (not started) for a package with no instance rows", async () => {
+    const { db } = bulkDb({ instancesByPackage: {} });
+    const result = await listPlanningProgressForPackages(db, { ownerId: "owner_1", packages: PKGS(["pkg_1"]) });
+    expect(result.byPackage.pkg_1).toEqual({ percentComplete: 0, initialized: false });
+  });
+
+  it("fails closed to null for a partial instance set while other packages still report", async () => {
+    const { db } = bulkDb({
+      instancesByPackage: {
+        pkg_1: allInstances().slice(0, 5),
+        pkg_2: allInstances().map((i) => ({ ...i, status: "Complete" })),
+      },
+    });
+    const result = await listPlanningProgressForPackages(db, { ownerId: "owner_1", packages: PKGS(["pkg_1", "pkg_2"]) });
+    expect(result.byPackage.pkg_1).toBeNull();
+    expect(result.byPackage.pkg_2).toEqual({ percentComplete: 100, initialized: true });
+  });
+
+  it("chunks the instance read at 100 package ids", async () => {
+    const ids = Array.from({ length: 105 }, (_, i) => `pkg_${String(i + 1).padStart(3, "0")}`);
+    const { db, inCalls } = bulkDb({ instancesByPackage: {} });
+    const result = await listPlanningProgressForPackages(db, { ownerId: "owner_1", packages: PKGS(ids) });
+    expect(inCalls).toHaveLength(2);
+    expect(inCalls[0]).toHaveLength(100);
+    expect(inCalls[1]).toHaveLength(5);
+    expect(Object.keys(result.byPackage)).toHaveLength(105);
+    expect(result.byPackage.pkg_001).toEqual({ percentComplete: 0, initialized: false });
+  });
+
+  it("returns notApplied when the instances table is missing", async () => {
+    const { db } = bulkDb({
+      instancesError: { code: "42P01", message: 'relation "forge_work_planning_process_instances" does not exist' },
+    });
+    const result = await listPlanningProgressForPackages(db, { ownerId: "owner_1", packages: PKGS(["pkg_1"]) });
+    expect(result).toEqual({ ok: true, notApplied: true, byPackage: {} });
+  });
+
+  it("returns an empty map without querying when given no packages", async () => {
+    const { db } = bulkDb();
+    const result = await listPlanningProgressForPackages(db, { ownerId: "owner_1", packages: [] });
+    expect(result).toEqual({ ok: true, notApplied: false, byPackage: {} });
+    expect(db.from).not.toHaveBeenCalled();
   });
 });
