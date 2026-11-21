@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   redirect: vi.fn((href) => { throw new Error(`NEXT_REDIRECT:${href}`); }),
   listWorkPackages: vi.fn(),
   listPackagePropertyOptions: vi.fn(),
+  listPlanningProgressForPackages: vi.fn(),
   listWorkspacesForActor: vi.fn(),
   createAuthenticatedForgeApplication: vi.fn(),
 }));
@@ -36,6 +37,13 @@ vi.mock("@/lib/supabase/resolveEffectiveOwnerId", () => ({
 vi.mock("@/application/work-management/workPackages", () => ({
   listWorkPackages: mocks.listWorkPackages,
   listPackagePropertyOptions: mocks.listPackagePropertyOptions,
+}));
+
+// D2: the bulk planning-% read is mocked like the other service reads;
+// the default is an empty map (no package has a checklist yet), so the
+// widget shows its coverage note. D2 tests override per-test.
+vi.mock("@/application/work-management/planningProcess", () => ({
+  listPlanningProgressForPackages: mocks.listPlanningProgressForPackages,
 }));
 
 import WorkPackagesPage from "./page.jsx";
@@ -63,6 +71,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: PACKAGES });
   mocks.listPackagePropertyOptions.mockResolvedValue({ ok: true, properties: PROPERTIES });
+  mocks.listPlanningProgressForPackages.mockResolvedValue({ ok: true, notApplied: false, byPackage: {} });
   mocks.listWorkspacesForActor.mockResolvedValue([
     { ownerId: "owner_1", role: "owner", label: "My workspace" },
   ]);
@@ -418,6 +427,178 @@ describe("/forge/work dashboard shell (D1)", () => {
     // The grid still fills the page with blank add-rows.
     expect(html).toContain('role="table"');
     expect(html).toContain("New package title");
+  });
+});
+
+describe("/forge/work planning progress (D2)", () => {
+  // wp_1 100% (complete), wp_2 40%, wp_3 0% (not started) — total
+  // 1 of 3 complete, mean 46.7%. Planning % is the credit-weighted %
+  // here, never the package percent_complete (wp_1 is 0 there).
+  const PLANNING = {
+    wp_1: { percentComplete: 100, initialized: true },
+    wp_2: { percentComplete: 40, initialized: true },
+    wp_3: { percentComplete: 0, initialized: false },
+  };
+
+  it("renders the progress widget from one bulk planning read", async () => {
+    mocks.listPlanningProgressForPackages.mockResolvedValue({ ok: true, notApplied: false, byPackage: PLANNING });
+    const html = await renderPage();
+    // One bulk read for the whole project — never per-package.
+    expect(mocks.listPlanningProgressForPackages).toHaveBeenCalledTimes(1);
+    expect(mocks.listPlanningProgressForPackages).toHaveBeenCalledWith({ fakeDb: true }, { ownerId: "owner_1", packages: PACKAGES });
+    expect(html).toContain("Planning progress");
+    expect(html).toContain("All packages: 1 of 3 packages complete, 46.7% planning progress");
+    expect(html).toContain("Plumbing: 1 of 1 packages complete, 100.0% planning progress");
+  });
+
+  it("filters the grid by planner, unit, and system", async () => {
+    // Planner: Crew Alpha owns only the Decker turnover.
+    let html = await renderPage({ planner: "Crew Alpha" });
+    expect(html).toContain("Decker turnover");
+    expect(html).not.toContain("Kent kitchen");
+    expect(html).not.toContain("Unassigned repairs");
+    // Unit: only the Decker turnover has a unit.
+    html = await renderPage({ unit: "A" });
+    expect(html).toContain("Decker turnover");
+    expect(html).not.toContain("Kent kitchen");
+    // System: Plumbing is the Decker turnover; the sentinel matches the two without one.
+    html = await renderPage({ system: "Plumbing" });
+    expect(html).toContain("Decker turnover");
+    expect(html).not.toContain("Kent kitchen");
+    html = await renderPage({ system: "__none__" });
+    expect(html).toContain("Kent kitchen");
+    expect(html).toContain("Unassigned repairs");
+    expect(html).not.toContain("Decker turnover");
+    // Unassigned planner: only the Kent kitchen has no responsible party.
+    html = await renderPage({ planner: "__unassigned__" });
+    expect(html).toContain("Kent kitchen");
+    expect(html).not.toContain("Decker turnover");
+    expect(html).not.toContain("Unassigned repairs");
+  });
+
+  it("D2 regression (D1 fix round 1): following a progress drill link lands on exactly the group's rows", async () => {
+    mocks.listPlanningProgressForPackages.mockResolvedValue({ ok: true, notApplied: false, byPackage: PLANNING });
+    // A property filter is active: the grid narrows, but the widget
+    // still describes the whole project — and its drill links must
+    // clear the narrowing filter, or the count would lie.
+    const html = await renderPage({ propertyId: "4800-kent-ave" });
+    expect(html).toContain("Plumbing: 1 of 1 packages complete, 100.0% planning progress");
+    const plumbingLink = html.match(/href="([^"]*system=Plumbing[^"]*)"/);
+    expect(plumbingLink).not.toBeNull();
+    expect(plumbingLink[1]).not.toContain("propertyId=");
+    expect(plumbingLink[1]).not.toContain("mode=");
+    expect(plumbingLink[1]).toContain("progressBy=system");
+    // Follow the generated link exactly as rendered.
+    const linkParams = Object.fromEntries(
+      new URLSearchParams(plumbingLink[1].replace(/&amp;/g, "&").split("?")[1] || ""),
+    );
+    const drilled = await renderPage(linkParams);
+    expect(drilled).toContain("Decker turnover");
+    expect(drilled).not.toContain("Kent kitchen");
+    expect(drilled).not.toContain("Unassigned repairs");
+    // The widget still totals the whole project on the drill landing,
+    // and the System tab is the active grouping.
+    expect(drilled).toContain("All packages: 1 of 3 packages complete, 46.7% planning progress");
+    expect(drilled).toContain('aria-pressed="true"');
+  });
+
+  it("fix round 1 (P1): combined group filters are mutually exclusive — the highlighted row reconciles with the grid", async () => {
+    // The verdict's example: planner Crew Alpha owns two packages split
+    // across units. Submitting planner + unit together used to highlight
+    // Alpha's project-wide row ("1 of 2") while the grid showed only
+    // the unit-B row — the count did not reconcile with the rows.
+    const splitPackages = [
+      { id: "wp_a", code: "WP-A", title: "Alpha unit A piping", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: 0, unit: "A", area: "Process", system: "Piping", property_id: "1900-w-decker", planned_cost_cents: 100000, responsible_party: { domain: "contractor", type: "contractor", display_name: "Crew Alpha" }, updated_at: "2026-10-01T00:00:00Z" },
+      { id: "wp_b", code: "WP-B", title: "Alpha unit B exchanger", package_type: "industrial", priority: "normal", status: "draft", planned_start: null, planned_finish: null, percent_complete: 0, unit: "B", area: "Process", system: "Exchanger", property_id: "4800-kent-ave", planned_cost_cents: 200000, responsible_party: { domain: "contractor", type: "contractor", display_name: "Crew Alpha" }, updated_at: "2026-10-02T00:00:00Z" },
+      { id: "wp_c", code: "WP-C", title: "Beta unit A piping", package_type: "commercial", priority: "normal", status: "in_progress", planned_start: null, planned_finish: null, percent_complete: 40, unit: "A", area: "Utilities", system: "Piping", property_id: "1900-w-decker", planned_cost_cents: null, responsible_party: { domain: "contractor", type: "contractor", display_name: "Crew Beta" }, updated_at: "2026-10-03T00:00:00Z" },
+    ];
+    mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: splitPackages });
+    mocks.listPlanningProgressForPackages.mockResolvedValue({
+      ok: true,
+      notApplied: false,
+      byPackage: {
+        wp_a: { percentComplete: 100, initialized: true },
+        wp_b: { percentComplete: 50, initialized: true },
+        wp_c: { percentComplete: 0, initialized: false },
+      },
+    });
+
+    // Submit combined filters: planner + unit together. The page
+    // redirects to the canonical form — the kept dimension only — so
+    // the address bar, the selects, the grid, and the widget agree.
+    let redirectHref = null;
+    try {
+      await renderPage({ planner: "Crew Alpha", unit: "B" });
+    } catch (err) {
+      const match = /^NEXT_REDIRECT:(.+)$/.exec(err.message || "");
+      redirectHref = match ? match[1] : null;
+      if (!redirectHref) throw err;
+    }
+    expect(redirectHref).not.toBeNull();
+    expect(redirectHref).toContain("planner=Crew+Alpha");
+    expect(redirectHref).not.toContain("unit=");
+
+    // Follow the canonical link exactly as rendered: the grid must hold
+    // BOTH Crew Alpha packages — the rows the widget's 1-of-2 count
+    // advertises — and nothing else.
+    const linkParams = Object.fromEntries(
+      new URLSearchParams(redirectHref.split("?")[1] || ""),
+    );
+    const landed = await renderPage(linkParams);
+    expect(landed).toContain("Alpha unit A piping");
+    expect(landed).toContain("Alpha unit B exchanger");
+    expect(landed).not.toContain("Beta unit A piping");
+    // The highlighted row is Crew Alpha's project-wide row with the
+    // count the grid actually shows; the cleared dimension's select
+    // shows "All units" — no unit stays selected.
+    expect(landed).toContain("Crew Alpha: 1 of 2 packages complete, 75.0% planning progress");
+    expect(landed).toContain("currently filtered, activate to show all");
+    expect(landed).toContain('value="Crew Alpha" selected=""');
+    expect(landed).not.toContain('value="B" selected=""');
+    // The real next/link renders aria-pressed before href, so match the
+    // tag by its aria-label and read the href out of it.
+    const activeTag = landed.match(/<a[^>]*aria-label="Crew Alpha: 1 of 2 packages complete, 75\.0% planning progress[^"]*"[^>]*>/);
+    expect(activeTag).not.toBeNull();
+    expect(activeTag[0]).toContain('aria-pressed="true"');
+    const activeRow = activeTag[0].match(/href="([^"]+)"/);
+    expect(activeRow).not.toBeNull();
+
+    // Follow the active row's toggle link: it clears the group filter,
+    // so all three packages show — exactly what its label advertises.
+    const toggleParams = Object.fromEntries(
+      new URLSearchParams(activeRow[1].replace(/&amp;/g, "&").split("?")[1] || ""),
+    );
+    const cleared = await renderPage(toggleParams);
+    expect(cleared).toContain("Alpha unit A piping");
+    expect(cleared).toContain("Alpha unit B exchanger");
+    expect(cleared).toContain("Beta unit A piping");
+  });
+
+  it("offers the project's planners, units, and systems in the filter form", async () => {
+    const html = await renderPage();
+    expect(html).toContain('<option value="Crew Alpha">Crew Alpha</option>');
+    expect(html).toContain('<option value="Crew Beta">Crew Beta</option>');
+    expect(html).toContain('<option value="__unassigned__">Unassigned</option>');
+    expect(html).toContain('<option value="A">A</option>');
+    expect(html).toContain('<option value="__none__">No unit</option>');
+    expect(html).toContain('<option value="Plumbing">Plumbing</option>');
+    expect(html).toContain('<option value="__none__">No system</option>');
+  });
+
+  it("shows the coverage note when no package has a checklist, and the not-available note when the read fails", async () => {
+    const html = await renderPage();
+    expect(html).toContain("Planning % covers 0 of 3 packages");
+    mocks.listPlanningProgressForPackages.mockRejectedValue(new Error("db down"));
+    const failed = await renderPage();
+    expect(failed).toContain("Decker turnover");
+    expect(failed).toContain("Planning progress isn&#x27;t available yet");
+  });
+
+  it("skips the bulk planning read for an empty project", async () => {
+    mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: [] });
+    const html = await renderPage();
+    expect(mocks.listPlanningProgressForPackages).not.toHaveBeenCalled();
+    expect(html).toContain("No packages in this project yet");
   });
 });
 
