@@ -24,6 +24,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { createProgress } from "./check-progress.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -38,15 +39,41 @@ const keepServer = args.includes("--keep-server");
 const BASE = `http://localhost:${port}/phone-fixture`;
 const WIDTH = 390;
 
+// Progress heartbeat (FORGE-P-20261119-MUSE-LONG-RUN-PROGRESS-HEARTBEAT):
+// this script takes ~10 minutes, almost all of it dev-server compile,
+// and used to print nothing until it finished — twice killed as "hung"
+// while actually passing. Phase-transition lines only, no fake
+// percentages; the stated window is measured, never guessed. The
+// heartbeat never changes the 120s waitForServer timeout below and
+// never grants unlimited runtime — silent past the window is killable.
+// The wait-phase timer (startWaitHeartbeat) keeps a heartbeat landing
+// at each 60s boundary while the first fixture fetch is still pending
+// in a cold compile; it only prints, never resets or extends the timeout.
+const progress = createProgress({
+  script: "health-labs-manual-entry-phone-check",
+  expected: "~10 min",
+  measured: "prior runs Nov 18, 2026, ~10 min in this VM; 42s Nov 20, 2026 — compile time varies with VM load, so the window states the slow case",
+});
+
 async function waitForServer(timeoutMs = 120000) {
-  const start = Date.now();
-  for (;;) {
-    try {
-      const res = await fetch(`${BASE}?case=health`);
-      if (res.ok || res.status === 404) return;
-    } catch { /* not up yet */ }
-    if (Date.now() - start > timeoutMs) throw new Error(`dev server did not answer on :${port} within ${timeoutMs}ms`);
-    await new Promise((r) => setTimeout(r, 2000));
+  // The timer fires independently of the fetch below: while the first
+  // fixture request is pending in a cold compile, the loop is suspended
+  // inside await fetch(...) and no loop heartbeat can run. The finally
+  // clears the timer on success, failure, and timeout alike.
+  progress.startWaitHeartbeat("waiting for dev server");
+  try {
+    const start = Date.now();
+    for (;;) {
+      try {
+        const res = await fetch(`${BASE}?case=health`);
+        if (res.ok || res.status === 404) return;
+      } catch { /* not up yet */ }
+      if (Date.now() - start > timeoutMs) throw new Error(`dev server did not answer on :${port} within ${timeoutMs}ms`);
+      progress.heartbeat("waiting for dev server");
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  } finally {
+    progress.stopWaitHeartbeat();
   }
 }
 
@@ -69,8 +96,11 @@ async function measure(page) {
 }
 
 async function main() {
+  progress.start();
   let server = null;
+  let readyPhaseEmitted = false;
   if (!keepServer) {
+    progress.phase("dev server starting");
     // shell: true -- on Windows, npm resolves to npm.cmd, which spawn() cannot
     // exec directly without a shell. SWRIdentityBridge (a root-level provider
     // every page renders, not anything this build added) constructs a
@@ -85,10 +115,40 @@ async function main() {
       cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], shell: true,
       env: { ...process.env, NEXT_PUBLIC_SUPABASE_URL: "https://test-fixture-only.supabase.co", NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "test-fixture-publishable-key-not-real" },
     });
-    server.stdout.on("data", () => {});
-    server.stderr.on("data", () => {});
+    // Watch the dev server's own output for real phase transitions: Next
+    // prints "Ready" when it accepts connections and "Compiling" when the
+    // first request compiles the fixture route. Only the phase names are
+    // reported — server output itself is never echoed (it carries paths).
+    let compilingPhaseEmitted = false;
+    let buffer = "";
+    const scanServerOutput = (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!compilingPhaseEmitted && /Compiling/.test(line)) {
+          compilingPhaseEmitted = true;
+          progress.phase("compiling fixture route");
+        }
+        if (!readyPhaseEmitted && /Ready in/.test(line)) {
+          readyPhaseEmitted = true;
+          progress.phase("dev server accepting connections");
+        }
+      }
+    };
+    server.stdout.on("data", scanServerOutput);
+    server.stderr.on("data", scanServerOutput);
     await waitForServer();
+    if (!readyPhaseEmitted) {
+      readyPhaseEmitted = true;
+      progress.phase("dev server ready");
+    }
+  } else {
+    progress.phase("using existing dev server");
+    await waitForServer();
+    progress.phase("dev server ready");
   }
+  progress.phase("running checks");
   const browser = await chromium.launch();
   const failures = [];
   try {
@@ -116,8 +176,10 @@ async function main() {
     if (failures.length) {
       console.error(`FAIL: ${failures.length} phone-width issue(s) at ${WIDTH}px`);
       process.exitCode = 1;
+      progress.done("FAIL", { exitCode: 1 });
     } else {
       console.log(`PASS: no overflow, no out-of-viewport controls at ${WIDTH}px (edit state and review state)`);
+      progress.done("PASS", { exitCode: 0 });
     }
   } finally {
     await browser.close();
@@ -127,5 +189,6 @@ async function main() {
 
 main().catch((err) => {
   console.error(err);
+  progress.done("ERROR", { exitCode: 1 });
   process.exitCode = 1;
 });
