@@ -1,4 +1,5 @@
-// D1 dashboard rebuild — phone-width check.
+// D1 dashboard rebuild — phone-width check (D2 extends it with the
+// planning-progress widget).
 //
 // Usage: node scripts/work-dashboard-phone-check.mjs [--port 3102] [--keep-server]
 //
@@ -9,19 +10,27 @@
 //   - no page-level horizontal overflow (documentElement.scrollWidth <=
 //     innerWidth + 1)
 //   - every button/link in the fixture fully inside the viewport
-//   - the same two checks again after switching the pivot chart to Bars
-//     (pure client-side state, no network call)
+//   - the same two checks again after switching the scope pivot chart to
+//     Bars (pure client-side state, no network call)
+//   - D2: the same two checks again after switching the progress pivot
+//     to Bars, plus a progress-bars screenshot
 //   - clicking the draft legend row navigates toward the status filter:
 //     the navigation request URL must carry status=draft and the test
 //     project's forgeProject id (the real /forge/work route cannot render
 //     data with the dummy env in this VM, so the request URL — not the
 //     landing page — is the drill-down evidence here; Jason's S26+ check
 //     with live data remains the final gate)
+//   - D2: clicking the Piping progress row navigates toward the system
+//     filter: the request URL must carry system=Piping + progressBy=system
+//     and the test project's forgeProject id, and must NOT carry the
+//     property/mode narrowing filters (D1 fix-round-1 rule)
 //
 // The fixture carries 6 wholly synthetic packages created for this test
-// (fix round 1 provenance — no production data), so the check also proves
-// the single-segment donut and the "—" no-cost strip never clip at phone
-// width.
+// (fix round 1 provenance — no production data) plus a synthetic
+// planning-% map (100/75/50/25/0, one package without a checklist) and
+// invented planner names on three of them, so the check also proves the
+// single-segment donut, the "—" no-cost strip, and the progress widget
+// never clip at phone width.
 //
 // Exits non-zero on any failure, and prints a one-line summary either way.
 // This script is new and scoped to this build only — it does not modify
@@ -94,6 +103,7 @@ async function measure(page) {
       return r.right > window.innerWidth + 1 || r.left < -1;
     }).map((el) => ({ tag: el.tagName, label: el.getAttribute("aria-label") || el.textContent?.trim()?.slice(0, 40) || null }));
     const section = document.querySelector('[data-testid="planner-dashboard"]');
+    const progress = document.querySelector('[data-testid="planner-progress"]');
     return {
       innerWidth: window.innerWidth,
       scrollWidth: doc.scrollWidth,
@@ -102,6 +112,8 @@ async function measure(page) {
       outsideViewport: outside,
       sectionRendered: Boolean(section),
       stripText: section?.textContent?.slice(0, 200) || null,
+      progressRendered: Boolean(progress),
+      progressText: progress?.textContent?.slice(0, 300) || null,
     };
   });
 }
@@ -110,6 +122,34 @@ async function checkWidth(browser, width) {
   const failures = [];
   const page = await browser.newPage({ viewport: { width, height: 800 } });
   try {
+    await page.goto(`${BASE}?case=work-dashboard`, { waitUntil: "networkidle" });
+    await page.waitForSelector('[data-fixture-ready="true"]');
+    await page.waitForSelector('[data-testid="planner-dashboard"]');
+
+    // Navigation requests are the drill-down evidence (the real route
+    // cannot render data with the dummy env here). Registered once, up
+    // front, so both drill clicks below are captured.
+    const navigationUrls = [];
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.includes("/forge/work?")) navigationUrls.push(url);
+    });
+
+    // D2 progress drill first: clicking a progress row navigates away,
+    // so it runs before the layout checks, then the fixture reloads
+    // (warm — the route is already compiled). Piping has 2 fixture
+    // packages (SYN-03 at 50%, SYN-04 at 25%): 0 of 2 complete, 37.5%.
+    await page.locator('[data-testid="planner-progress"]').getByRole("link", { name: /Piping: 0 of 2 packages/ }).click();
+    await page.waitForTimeout(3000);
+    const progressDrillUrl = navigationUrls.find((url) => url.includes("system=Piping"));
+    if (!progressDrillUrl) {
+      failures.push(`${width}px: clicking the Piping progress row never requested a system=Piping URL (saw: ${JSON.stringify(navigationUrls)})`);
+    } else {
+      if (!progressDrillUrl.includes("progressBy=system")) failures.push(`${width}px: progress drill-down URL dropped the progress tab: ${progressDrillUrl}`);
+      if (!progressDrillUrl.includes(`forgeProject=${TEST_PROJECT_ID}`)) failures.push(`${width}px: progress drill-down URL dropped the project scope: ${progressDrillUrl}`);
+      if (progressDrillUrl.includes("propertyId=")) failures.push(`${width}px: progress drill-down URL carried a narrowing property filter: ${progressDrillUrl}`);
+      if (progressDrillUrl.includes("mode=")) failures.push(`${width}px: progress drill-down URL carried a narrowing mode filter: ${progressDrillUrl}`);
+    }
     await page.goto(`${BASE}?case=work-dashboard`, { waitUntil: "networkidle" });
     await page.waitForSelector('[data-fixture-ready="true"]');
     await page.waitForSelector('[data-testid="planner-dashboard"]');
@@ -123,11 +163,20 @@ async function checkWidth(browser, width) {
     // planned cost: strip shows 6 items and "—", donut is one segment.
     if (!initial.stripText?.includes("Synthetic Dashboard Test Project")) failures.push(`${width}px: strip project label missing`);
     if (!initial.stripText?.includes("Total scope items")) failures.push(`${width}px: strip items block missing`);
+    // D2: the progress widget renders with its total (1 of 6 complete,
+    // mean 50.0% over the 5 packages with planning) and its groups.
+    if (!initial.progressRendered) failures.push(`${width}px: progress widget did not render`);
+    if (!initial.progressText?.includes("Planning progress")) failures.push(`${width}px: progress heading missing`);
+    if (!initial.progressText?.includes("1 of 6")) failures.push(`${width}px: progress total missing (expected 1 of 6)`);
+    if (!initial.progressText?.includes("50.0%")) failures.push(`${width}px: progress total percent missing (expected 50.0%)`);
+    if (!initial.progressText?.includes("Piping")) failures.push(`${width}px: progress system groups missing`);
     await page.screenshot({ path: path.join(ROOT, ".phone-layout-evidence", `work-dashboard-${width}.png`) });
 
-    // Switch the pivot chart to Bars — pure client state. Same overflow
-    // and viewport checks in the switched state.
-    await page.getByRole("button", { name: "Bars", exact: true }).click();
+    // Switch the scope pivot chart to Bars — pure client state. Same
+    // overflow and viewport checks in the switched state. The Bars
+    // button is scoped to the scope card: the progress widget has its
+    // own Bars button since D2, and an unscoped lookup would match two.
+    await page.locator('[data-testid="planner-scope"]').getByRole("button", { name: "Bars", exact: true }).click();
     await page.waitForSelector('[data-testid="planner-donut"]', { state: "detached" });
     const bars = await measure(page);
     if (bars.pageOverflow) failures.push(`${width}px bars: page overflow (scrollWidth=${bars.scrollWidth})`);
@@ -135,14 +184,20 @@ async function checkWidth(browser, width) {
     await page.getByRole("button", { name: "Donut", exact: true }).click();
     await page.waitForSelector('[data-testid="planner-donut"]');
 
+    // D2: switch the progress pivot to Bars — same checks in the
+    // switched state, plus a screenshot of the progress bars.
+    await page.locator('[data-testid="planner-progress"]').getByRole("button", { name: "Bars", exact: true }).click();
+    await page.waitForTimeout(500);
+    const progressBars = await measure(page);
+    if (progressBars.pageOverflow) failures.push(`${width}px progress bars: page overflow (scrollWidth=${progressBars.scrollWidth})`);
+    if (progressBars.outsideViewport.length) failures.push(`${width}px progress bars: ${progressBars.outsideViewport.length} control(s) outside viewport: ${JSON.stringify(progressBars.outsideViewport)}`);
+    await page.screenshot({ path: path.join(ROOT, ".phone-layout-evidence", `work-dashboard-progress-bars-${width}.png`) });
+    await page.locator('[data-testid="planner-progress"]').getByRole("button", { name: "Table", exact: true }).click();
+    await page.waitForTimeout(500);
+
     // Click-to-filter: the draft legend row must navigate toward the
     // status filter. The real /forge/work route cannot render data with
     // the dummy env here, so the navigation REQUEST URL is the evidence.
-    const navigationUrls = [];
-    page.on("request", (request) => {
-      const url = request.url();
-      if (url.includes("/forge/work?")) navigationUrls.push(url);
-    });
     await page.getByRole("link", { name: /draft: 6 of 6 packages/ }).click();
     await page.waitForTimeout(3000);
     const drillUrl = navigationUrls.find((url) => url.includes("status=draft"));
@@ -152,7 +207,7 @@ async function checkWidth(browser, width) {
       failures.push(`${width}px: drill-down URL dropped the project scope: ${drillUrl}`);
     }
 
-    return { width, initial, bars, drillUrl: drillUrl || null, failures };
+    return { width, initial, bars, progressBars, drillUrl: drillUrl || null, progressDrillUrl: progressDrillUrl || null, failures };
   } finally {
     await page.close();
   }
@@ -261,7 +316,7 @@ async function main() {
       process.exitCode = 1;
       progress.done("FAIL", { exitCode: 1 });
     } else {
-      console.log("PASS: no overflow, no out-of-viewport controls at 390px and 400px (donut + bars states), draft drill-down requests the status filter; real /forge/work observed separately (see JSON)");
+      console.log("PASS: no overflow, no out-of-viewport controls at 390px and 400px (donut + scope bars + progress bars states), draft drill-down requests the status filter, Piping progress drill-down requests system=Piping + progressBy=system with no narrowing filters; real /forge/work observed separately (see JSON)");
       progress.done("PASS", { exitCode: 0 });
     }
   } finally {

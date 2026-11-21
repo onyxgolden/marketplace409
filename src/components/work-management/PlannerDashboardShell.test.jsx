@@ -57,6 +57,19 @@ function legendLinks() {
 }
 
 describe("PlannerDashboardShell", () => {
+  // D2 progress fixture: wp_1 100% (complete), wp_2 40%, wp_3 0%
+  // (not started) — total 1 of 3 complete, mean 46.7%. Planning % is
+  // the credit-weighted % here, never the package percent_complete.
+  const PLANNING = {
+    wp_1: { percentComplete: 100, initialized: true },
+    wp_2: { percentComplete: 40, initialized: true },
+    wp_3: { percentComplete: 0, initialized: false },
+  };
+
+  function progressLinks() {
+    return [...container.querySelectorAll('[data-testid="planner-progress-groups"] a')];
+  }
+
   it("renders the strip: project, total planned cost, total scope items", () => {
     renderShell();
     expect(container.textContent).toContain("Unassigned packages");
@@ -118,7 +131,91 @@ describe("PlannerDashboardShell", () => {
     expect(container.textContent).toContain("No packages in this project yet");
     expect(container.querySelector('[data-testid="planner-donut"]')).toBeNull();
     expect(container.querySelector('[data-testid="planner-status-legend"]')).toBeNull();
+    expect(container.querySelector('[data-testid="planner-progress"]')).toBeNull();
     const itemsBlock = container.querySelector('a[aria-label^="Total scope items"]');
     expect(itemsBlock.textContent).toContain("0");
+  });
+
+  it("D2: renders the progress widget — total + system groups reconciling to the strip", () => {
+    renderShell({ planningByPackage: PLANNING });
+    expect(container.textContent).toContain("Planning progress");
+    expect(container.textContent).toContain("Credit-weighted % from the 22-step planning checklist");
+    // Total: 1 of 3 complete (only wp_1 at 100%), mean (100+40+0)/3 = 46.7%.
+    const total = container.querySelector('[data-testid="planner-progress-total"] a');
+    expect(total.getAttribute("aria-label")).toContain("All packages: 1 of 3 packages complete, 46.7% planning progress");
+    expect(total.getAttribute("href")).toBe(BASE_HREF);
+    // Default tab is System: Plumbing 1 of 1 at 100%, No system 2 at 20%.
+    // The named group sorts before the missing-value bucket.
+    const links = progressLinks();
+    expect(links).toHaveLength(2);
+    expect(links[0].getAttribute("aria-label")).toContain("Plumbing: 1 of 1 packages complete, 100.0% planning progress");
+    expect(links[1].getAttribute("aria-label")).toContain("No system: 0 of 2 packages complete, 20.0% planning progress");
+    // Group counts add up to the total: 1 + 2 = 3 packages, 1 complete.
+    expect(container.textContent).toContain("draft 2 · in progress 1");
+  });
+
+  it("D2: progress drill-down links carry the group filter + tab, never narrowing filters", () => {
+    renderShell({ planningByPackage: PLANNING });
+    const links = progressLinks();
+    expect(links[0].getAttribute("href")).toBe(`${BASE_HREF}&progressBy=system&system=Plumbing`);
+    expect(links[1].getAttribute("href")).toBe(`${BASE_HREF}&progressBy=system&system=__none__`);
+    for (const link of links) {
+      expect(link.getAttribute("href")).not.toContain("status=");
+      expect(link.getAttribute("href")).not.toContain("propertyId=");
+      expect(link.getAttribute("href")).not.toContain("mode=");
+    }
+  });
+
+  it("D2: marks the active group row and clears it on click", () => {
+    renderShell({
+      planningByPackage: PLANNING,
+      activeDimension: "system",
+      activeGroup: { dimension: "system", key: "Plumbing" },
+    });
+    const links = progressLinks();
+    expect(links[0].getAttribute("aria-pressed")).toBe("true");
+    // Clearing keeps the tab (progressBy=system) but drops the group.
+    expect(links[0].getAttribute("href")).toBe(`${BASE_HREF}&progressBy=system`);
+    expect(links[1].getAttribute("aria-pressed")).toBe("false");
+    // The total row is not the active one while a group is filtered.
+    expect(container.querySelector('[data-testid="planner-progress-total"] a').getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("D2: grouping tabs follow the active dimension and carry the tab in their href", () => {
+    renderShell({ planningByPackage: PLANNING, activeDimension: "planner" });
+    const tabs = [...container.querySelectorAll('[aria-label="Group progress by"] a')];
+    expect(tabs).toHaveLength(3);
+    expect(tabs.map((t) => t.textContent)).toEqual(["System", "Planner", "Unit"]);
+    expect(tabs[1].getAttribute("aria-pressed")).toBe("true");
+    expect(tabs[0].getAttribute("href")).toBe(`${BASE_HREF}&progressBy=system`);
+    expect(tabs[2].getAttribute("href")).toBe(`${BASE_HREF}&progressBy=unit`);
+    // Planner tab: all three packages are unassigned (no responsible_party).
+    const links = progressLinks();
+    expect(links).toHaveLength(1);
+    expect(links[0].getAttribute("aria-label")).toContain("Unassigned: 1 of 3 packages complete, 46.7% planning progress");
+    expect(links[0].getAttribute("href")).toBe(`${BASE_HREF}&progressBy=planner&planner=__unassigned__`);
+  });
+
+  it("D2: switches the progress pivot from table to bars and back", () => {
+    renderShell({ planningByPackage: PLANNING });
+    const widget = container.querySelector('[data-testid="planner-progress"]');
+    expect(widget.querySelector('span[style*="width: 46.7%"]')).toBeNull();
+    const barsButton = [...widget.querySelectorAll('[aria-label="Progress view"] button')].find((b) => b.textContent === "Bars");
+    act(() => { barsButton.click(); });
+    expect(barsButton.getAttribute("aria-pressed")).toBe("true");
+    expect(widget.querySelector('span[style*="width: 46.7%"]')).not.toBeNull();
+    const tableButton = [...widget.querySelectorAll('[aria-label="Progress view"] button')].find((b) => b.textContent === "Table");
+    act(() => { tableButton.click(); });
+    expect(widget.querySelector('span[style*="width: 46.7%"]')).toBeNull();
+  });
+
+  it("D2: shows the not-available note when planning data is missing, and the coverage note when rows lack a checklist", () => {
+    renderShell();
+    expect(container.textContent).toContain("Planning progress isn't available yet");
+    renderShell({ planningByPackage: {} });
+    expect(container.textContent).toContain("Planning % covers 0 of 3 packages");
+    expect(container.textContent).toContain("3 have no checklist yet");
+    const total = container.querySelector('[data-testid="planner-progress-total"] a');
+    expect(total.getAttribute("aria-label")).toContain("0 of 3 packages complete, — planning progress");
   });
 });

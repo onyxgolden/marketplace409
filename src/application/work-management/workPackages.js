@@ -893,8 +893,11 @@ export async function listWorkPackages(db, { ownerId, status, packageType, prope
   // UI-density redesign: the dense grid also shows the estimate (Budget /
   // Actual column reads planned_cost_cents pre-slice-8, Actual blank) and
   // the Owner team (responsible_party.display_name, written by the create
-  // form as { domain, type, display_name }).
-  let q = db.from(TABLES.packages).select("id,code,title,package_type,priority,status,planned_start,planned_finish,percent_complete,unit,area,system,property_id,mode,planned_cost_cents,responsible_party,updated_at,forge_project_id")
+  // form as { domain, type, display_name }). D2 dashboard: the planning
+  // columns ride the same read so the bulk planning-progress lookup can
+  // bind each package to its template version and complexity without a
+  // second query per package.
+  let q = db.from(TABLES.packages).select("id,code,title,package_type,priority,status,planned_start,planned_finish,percent_complete,unit,area,system,property_id,mode,planned_cost_cents,responsible_party,planning_complexity,planning_template_version,updated_at,forge_project_id")
     .eq("owner_id", ownerId).order("updated_at", { ascending: false });
   q = constrainPackageQuery(q, scope);
   if (status) q = q.eq("status", status);
