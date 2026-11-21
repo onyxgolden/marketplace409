@@ -58,3 +58,64 @@ Short checks (measured seconds — no heartbeat needed): `check-imports.sh`
 (~5s), `doc-drift/checkDocDrift.mjs` (~2s),
 `governance/verifyShadowGovernance.mjs` (<1s). The full vitest suite
 streams per-file progress natively, so the convention does not apply to it.
+
+## Fixture provenance guard (FORGE-P-20261120-CHATGPT-PUBLIC-FIXTURE-PROVENANCE)
+
+`check-fixture-provenance.mjs` is a small repo-local, read-only checker
+for the **changed tree only**. It never deletes, rewrites, uploads,
+approves, or certifies a fixture; human review remains authoritative.
+It exists because PR #838 committed a 1,829-line live-derived financial
+fixture to this public repo (real account names, exact balances,
+financial-account IDs, Stripe Financial Connections identifiers), and
+repair needed a synthetic replacement plus a branch-history rewrite.
+
+Usage (run from the repo root):
+
+```sh
+# Working-tree changes vs HEAD (default)
+node scripts/check-fixture-provenance.mjs
+# A PR range, e.g. against main
+node scripts/check-fixture-provenance.mjs --diff main...HEAD
+# Staged changes, or an explicit list
+node scripts/check-fixture-provenance.mjs --staged
+node scripts/check-fixture-provenance.mjs --files path/to/a.fixture.json
+```
+
+Exit 0 = PASS, 1 = REFUSE or UNKNOWN findings, 2 = usage/git error.
+`--json` prints a machine-readable report instead of lines.
+
+What it checks, per changed fixture/report artifact (files under a
+`fixtures/`-style directory, `*.fixture.*`, `*.baseline.json`,
+`*.snapshot.json`, `*.golden.json`, `*.test-data.*`, or any file with a
+sidecar manifest — source code is out of scope, so a legacy fixture
+elsewhere never blocks an unrelated PR):
+
+1. **Provenance manifest.** Every in-scope fixture needs a sidecar
+   `<fixture path with its last extension replaced by
+   .provenance.json>`, e.g. `accounts.fixture.json` →
+   `accounts.fixture.provenance.json`, carrying class, source, review
+   date, and a sha256 digest of the fixture — class, source, date, and
+   digest ONLY, never secrets or live identifiers. Classes:
+   `synthetic`, `authorized-public-source-live`, `private` (private is
+   always a refusal). Missing, malformed, or digest-mismatched
+   manifests are refusals.
+2. **Content scan (value-based, never field-name based).** Secrets
+   (`sk_live_`, GitHub/AWS/Slack keys, private-key blocks), operational
+   IDs (Stripe `acct_`/`fca_`/`cs_live_`/`pi_`/`ch_`/`cus_`/`sub_`/
+   `in_`/`evt_`/`pm_`/`price_`/`prod_`/`seti_`/`txn_`, `sess_`),
+   non-allowlisted emails, and private filesystem paths (`/Users/`,
+   `/home/`, `C:\Users\`) are refusals. Anything unclassifiable — bare
+   UUIDs, production-shaped hex-suffixed forge IDs, JWT shapes, long
+   token-like strings, real-looking name+money pairs in a synthetic
+   fixture — is UNKNOWN, never silently passed. Renaming a field does
+   not evade the scan.
+3. **Legitimate public-source fixtures pass** with an
+   `authorized-public-source-live` manifest naming the public source
+   (the Risk Radar R0 pattern: public NWS/USGS/Census data).
+
+Synthetic-fixture conventions (so a synthetic fixture passes cleanly):
+SYN- / synth- prefixed IDs (`SYN-01`, `forge_project_synth_demo`),
+`example.com` / `.test` / `.invalid` emails, placeholder names
+("Test Tenant", "Synthetic Bank"), test-mode keys only (`sk_test_`).
+An example pair lives in `scripts/fixture-provenance-examples/`.
+
