@@ -101,31 +101,139 @@ describe("createProgress", () => {
     expect(lines[1]).toContain("done — PASS in 2m 5s (exit 0)");
   });
 
-  it("requires start() before phase() or heartbeat()", () => {
+  it("requires start() before phase(), heartbeat(), or startWaitHeartbeat()", () => {
     const { stream } = collector();
     const progress = createProgress({ script: "test-check", expected: "~10 min", stream });
     expect(() => progress.phase("x")).toThrow("start() must be called");
     expect(() => progress.heartbeat("x")).toThrow("start() must be called");
+    expect(() => progress.startWaitHeartbeat("x")).toThrow("start() must be called");
   });
 
-  it("never prints environment values, paths, or tokens", () => {
+  it("prints exactly the caller-supplied labels and never inspects process.env", () => {
+    // Contract (P2): the helper is a pass-through printer — it prints
+    // exactly the labels the caller supplies, with no filtering, and it
+    // never reads process.env or child-process output. Label safety is
+    // therefore the CALLER's job. This test proves both halves of that
+    // boundary non-vacuously: the env value never appears, AND a
+    // caller-supplied marker DOES appear — so the test would fail if the
+    // helper either leaked the environment or silently dropped labels.
     process.env.CHECK_PROGRESS_SECRET_MARKER = "marker-secret-value-12345";
+    try {
+      const { lines, stream } = collector();
+      const progress = createProgress({
+        script: "test-check",
+        expected: "~10 min",
+        measured: "test run",
+        stream,
+      });
+      progress.start();
+      progress.phase("phase-label-marker-67890");
+      progress.heartbeat("heartbeat-label-marker-67890");
+      progress.done("PASS", { exitCode: 0 });
+
+      const out = lines.join("");
+      expect(out).not.toContain("CHECK_PROGRESS_SECRET_MARKER");
+      expect(out).not.toContain("marker-secret-value-12345");
+      expect(out).toContain("phase-label-marker-67890");
+      expect(out).toContain("heartbeat-label-marker-67890");
+    } finally {
+      delete process.env.CHECK_PROGRESS_SECRET_MARKER;
+    }
+  });
+});
+
+// Fake timers for the wait-phase heartbeat regression (P1): the injected
+// clock + timer registry let the test hold a readiness operation pending
+// across simulated 60-second boundaries without waiting real minutes.
+function fakeTimers() {
+  const timers = new Map();
+  let nextId = 1;
+  return {
+    timers,
+    setIntervalFn(cb, ms) {
+      const id = nextId++;
+      timers.set(id, { cb, ms });
+      return id;
+    },
+    clearIntervalFn(id) {
+      timers.delete(id);
+    },
+    fireAll() {
+      for (const { cb } of [...timers.values()]) cb();
+    },
+  };
+}
+
+describe("createProgress wait-phase heartbeat", () => {
+  it("emits a timestamped heartbeat while the readiness operation is still pending across a 60s boundary", () => {
     const { lines, stream } = collector();
+    const fake = fakeTimers();
+    let t = 0;
     const progress = createProgress({
       script: "test-check",
       expected: "~10 min",
       measured: "test run",
       stream,
+      now: () => t,
+      setIntervalFn: fake.setIntervalFn,
+      clearIntervalFn: fake.clearIntervalFn,
     });
     progress.start();
-    progress.phase("running checks");
-    progress.done("PASS", { exitCode: 0 });
+    progress.startWaitHeartbeat("waiting for dev server");
 
-    const out = lines.join("");
-    expect(out).not.toContain("marker-secret-value-12345");
-    expect(out).not.toContain("CHECK_PROGRESS_SECRET_MARKER");
-    expect(out).not.toContain("/home/");
-    expect(out).not.toContain("node_modules");
-    delete process.env.CHECK_PROGRESS_SECRET_MARKER;
+    // The timer is scheduled at the 60s heartbeat interval.
+    expect(fake.timers.size).toBe(1);
+    expect([...fake.timers.values()][0].ms).toBe(60_000);
+
+    // The readiness operation stays pending — nothing resolves, nothing
+    // fails. Advance the clock across one 60-second boundary and fire.
+    t = 60_001;
+    fake.fireAll();
+
+    // start line + exactly one timestamped heartbeat, emitted BEFORE the
+    // operation resolves.
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toMatch(LINE);
+    expect(lines[1]).toContain("waiting for dev server");
+
+    // Resolving the operation stops the timer: later ticks emit nothing.
+    progress.stopWaitHeartbeat();
+    expect(fake.timers.size).toBe(0);
+    t = 180_000;
+    fake.fireAll();
+    expect(lines).toHaveLength(2);
+  });
+
+  it("clears the wait-phase timer on stop, on done, and on restart (no leak)", () => {
+    const { lines, stream } = collector();
+    const fake = fakeTimers();
+    let t = 0;
+    const progress = createProgress({
+      script: "test-check",
+      expected: "~10 min",
+      measured: "test run",
+      stream,
+      now: () => t,
+      setIntervalFn: fake.setIntervalFn,
+      clearIntervalFn: fake.clearIntervalFn,
+    });
+    progress.start();
+
+    // Stopping with no timer running is a no-op, not an error.
+    progress.stopWaitHeartbeat();
+
+    progress.startWaitHeartbeat("waiting for dev server");
+    expect(fake.timers.size).toBe(1);
+    // Restarting replaces the timer instead of adding a second one — a
+    // leaked interval would keep the process alive after the script ends.
+    progress.startWaitHeartbeat("waiting for dev server");
+    expect(fake.timers.size).toBe(1);
+
+    // done() is the teardown backstop: it clears the timer too.
+    progress.done("PASS", { exitCode: 0 });
+    expect(fake.timers.size).toBe(0);
+    t = 120_000;
+    fake.fireAll();
+    expect(lines.filter((l) => l.includes("waiting for dev server"))).toHaveLength(0);
   });
 });

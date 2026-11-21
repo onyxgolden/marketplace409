@@ -46,6 +46,9 @@ const WIDTH = 390;
 // percentages; the stated window is measured, never guessed. The
 // heartbeat never changes the 120s waitForServer timeout below and
 // never grants unlimited runtime — silent past the window is killable.
+// The wait-phase timer (startWaitHeartbeat) keeps a heartbeat landing
+// at each 60s boundary while the first fixture fetch is still pending
+// in a cold compile; it only prints, never resets or extends the timeout.
 const progress = createProgress({
   script: "health-labs-manual-entry-phone-check",
   expected: "~10 min",
@@ -53,15 +56,24 @@ const progress = createProgress({
 });
 
 async function waitForServer(timeoutMs = 120000) {
-  const start = Date.now();
-  for (;;) {
-    try {
-      const res = await fetch(`${BASE}?case=health`);
-      if (res.ok || res.status === 404) return;
-    } catch { /* not up yet */ }
-    if (Date.now() - start > timeoutMs) throw new Error(`dev server did not answer on :${port} within ${timeoutMs}ms`);
-    progress.heartbeat("waiting for dev server");
-    await new Promise((r) => setTimeout(r, 2000));
+  // The timer fires independently of the fetch below: while the first
+  // fixture request is pending in a cold compile, the loop is suspended
+  // inside await fetch(...) and no loop heartbeat can run. The finally
+  // clears the timer on success, failure, and timeout alike.
+  progress.startWaitHeartbeat("waiting for dev server");
+  try {
+    const start = Date.now();
+    for (;;) {
+      try {
+        const res = await fetch(`${BASE}?case=health`);
+        if (res.ok || res.status === 404) return;
+      } catch { /* not up yet */ }
+      if (Date.now() - start > timeoutMs) throw new Error(`dev server did not answer on :${port} within ${timeoutMs}ms`);
+      progress.heartbeat("waiting for dev server");
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  } finally {
+    progress.stopWaitHeartbeat();
   }
 }
 

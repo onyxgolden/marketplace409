@@ -26,13 +26,23 @@ progress.heartbeat("waiting for dev server"); // at most once per 60s
 progress.done("PASS", { exitCode: 0 });
 ```
 
+While waiting on a blocking readiness probe (e.g. a fetch that may stay
+pending for minutes in a cold compile), wrap the wait with
+`startWaitHeartbeat(note)` / `stopWaitHeartbeat()` (in a `finally`, so
+the timer clears on success, failure, and timeout; `done()` clears it
+too as the teardown backstop). The timer only prints — it never resets
+or extends the caller's independent wait timeout.
+
 Rules: the stated window comes from a MEASURED run, never a guess. No
-fake percentage progress — only real phase transitions. Never print
-environment values, filesystem paths, tokens, or customer data. A
-heartbeat never resets an independent hard timeout and never grants
-unlimited runtime — a script silent past its stated window is still
-killable; do not change or add any timeout when adopting this. Advisory
-discipline only, never a CI gate.
+fake percentage progress — only real phase transitions. Labels are the
+caller's responsibility: the helper prints exactly the labels it is
+given, with no filtering — pass static non-sensitive labels only, never
+environment values, filesystem paths, tokens, or customer data. The
+helper itself never reads process.env and never echoes child-process
+output. A heartbeat never resets an independent hard timeout and never
+grants unlimited runtime — a script silent past its stated window is
+still killable; do not change or add any timeout when adopting this.
+Advisory discipline only, never a CI gate.
 
 ## Long checks (measured over 2 minutes — heartbeat applies)
 
