@@ -12,6 +12,7 @@ import { WP_STATUS, WP_MODES, inferEffectiveMode } from "@/domains/work-manageme
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 import WorkPackageWorkspaceSwitcher from "@/components/work-management/WorkPackageWorkspaceSwitcher";
 import WorkPackagePageHeader from "./page-header";
+import PlannerDashboardShell from "@/components/work-management/PlannerDashboardShell.jsx";
 import WorkPackageListGrid, { BLANK_ROWS } from "@/components/work-management/WorkPackageListGrid.jsx";
 
 export const dynamic = "force-dynamic";
@@ -130,8 +131,27 @@ export default async function WorkPackagesPage({ searchParams }) {
     ? "Packages not assigned to a project yet — assign one from its detail page."
     : scope.kind === SCOPE_KINDS.PROJECT
       ? [selection?.client?.name, selection?.site?.name].filter(Boolean).join(" › ")
-        || "Rung 1: the authoritative Work Package core domain. Typed links, readiness, and dashboards arrive in later rungs."
-      : "Rung 1: the authoritative Work Package core domain. Typed links, readiness, and dashboards arrive in later rungs.";
+        || "Rung 1: the authoritative Work Package core domain. Typed links and readiness arrive in later rungs."
+      : "Rung 1: the authoritative Work Package core domain. Typed links and readiness arrive in later rungs.";
+
+  // D1 dashboard: the strip's Project block shows the client › site
+  // context when the scope has one; the unassigned inbox gets a plain
+  // one-line explanation instead.
+  const projectContext = scope.kind === SCOPE_KINDS.PROJECT
+    ? [selection?.client?.name, selection?.site?.name].filter(Boolean).join(" › ") || null
+    : scope.kind === SCOPE_KINDS.UNASSIGNED
+      ? "Packages not assigned to a project yet"
+      : null;
+
+  // D1 dashboard (fix round 1 — project-wide semantic): the strip +
+  // scope chart describe the whole in-scope project, and every drill-down
+  // link must land on exactly the rows the displayed count describes.
+  // The base href therefore carries ONLY the scope (workspace + project)
+  // — never the property/mode narrowing filters and never the status
+  // (the chart appends ?status= / &status= itself). Preserving
+  // property/mode here used to advertise a project-wide count ("draft:
+  // 2 of 2") while the link landed on the filtered intersection (1 row).
+  const dashboardBaseHref = pageQueryString ? `/forge/work${pageQueryString}` : "/forge/work";
 
   // D7: a blank add-row is an unsaved draft with no property yet — it must
   // follow the same filter rule as a real row with that shape, not render
@@ -155,6 +175,22 @@ export default async function WorkPackagesPage({ searchParams }) {
           forgeProject: forgeProjectParam,
         }}
       />
+
+      {/* D1 dashboard shell — number strip + scope-by-status chart. It
+         describes the whole in-scope project (the unfiltered package
+         array), never the chooser state and never a failed load; the grid
+         below is the filtered view it drills into. */}
+      {ok && scope.kind !== SCOPE_KINDS.NONE && (
+        <div className="mt-6">
+          <PlannerDashboardShell
+            projectLabel={heading}
+            projectSublabel={projectContext}
+            packages={packages}
+            baseHref={dashboardBaseHref}
+            activeStatus={filters.status !== "all" ? filters.status : null}
+          />
+        </div>
+      )}
 
       {scope.kind === SCOPE_KINDS.NONE && (
         <div className="mt-8 rounded-lg border border-dashed border-slate-300 p-6">
