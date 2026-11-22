@@ -461,6 +461,21 @@ export function pipeDescriptors(design) {
     return supportIn ?? PIPE_GRADE_ELEVATION_IN;
   };
 
+  // Connection flanges for every run, computed ONCE up front and grouped
+  // by runId. connectionFlanges(design) itself scans every pipe run (and,
+  // for each, re-derives vertex elevations over every rack/symbol), so
+  // calling it once per run below -- as this used to -- made the whole
+  // function O(runs^2) in design-wide work instead of O(runs). On a
+  // plot plan with ~90 runs and a few hundred symbols that quadratic
+  // blowup is the dominant cost of loading the 3D view (observed: FCCU
+  // sample, several minutes to build before this fix).
+  const flangesByRunId = new Map();
+  for (const f of connectionFlanges(design)) {
+    const list = flangesByRunId.get(f.runId);
+    if (list) list.push(f);
+    else flangesByRunId.set(f.runId, [f]);
+  }
+
   const out = [];
   for (const run of design.pipes || []) {
     const points = run.points || [];
@@ -562,7 +577,7 @@ export function pipeDescriptors(design) {
     };
     // Flanged connections (equipment nozzles + pipe-to-pipe junctions),
     // present only when this run actually connects somewhere.
-    const flanges = connectionFlanges(design).filter((f) => f.runId === run.id);
+    const flanges = flangesByRunId.get(run.id) || [];
     if (flanges.length > 0) {
       descriptor.flanges = flanges.map((f) => ({
         x: f.x,
