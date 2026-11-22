@@ -22,8 +22,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { withWorkspaceQuery } from "./workspaceQuery.js";
-import { buildCreateBody, emptyDraft, newRequestId, validateDraft } from "./hierarchyFormShared.js";
+import { newRequestId } from "./hierarchyFormShared.js";
 import HierarchyRecordFields, { statusLabel } from "./HierarchyRecordFields.jsx";
+import { useHierarchyRecordForm } from "./useHierarchyRecordForm.js";
 
 const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
@@ -44,14 +45,6 @@ const DELETE_BLOCK_MESSAGE = {
   project: "Unassign or explicitly move packages first.",
 };
 
-function blank(value) {
-  return value === null || value === undefined ? "" : String(value);
-}
-
-function sameText(a, b) {
-  return blank(a).trim() === blank(b).trim();
-}
-
 async function callJson(path, { method = "GET", body } = {}) {
   const response = await fetch(withWorkspaceQuery(path), {
     method,
@@ -60,60 +53,6 @@ async function callJson(path, { method = "GET", body } = {}) {
   });
   const data = await response.json().catch(() => ({}));
   return { response, data };
-}
-
-function draftFromRecord(entity, record) {
-  if (entity === "client") {
-    return {
-      name: blank(record.name),
-      externalReference: blank(record.externalReference),
-      notes: blank(record.notes),
-      status: record.status,
-    };
-  }
-  if (entity === "site") {
-    return {
-      parentId: blank(record.clientId),
-      name: blank(record.name),
-      siteType: blank(record.siteType),
-      addressLine1: blank(record.addressLine1),
-      addressLine2: blank(record.addressLine2),
-      city: blank(record.city),
-      region: blank(record.region),
-      postalCode: blank(record.postalCode),
-      countryCode: blank(record.countryCode),
-      status: record.status,
-    };
-  }
-  return {
-    parentId: blank(record.siteId),
-    name: blank(record.name),
-    projectCode: blank(record.projectCode),
-    description: blank(record.description),
-    projectType: blank(record.projectType),
-    plannedStart: blank(record.plannedStart),
-    plannedFinish: blank(record.plannedFinish),
-    status: record.status,
-  };
-}
-
-/** True when the draft matches the record on every field — a save
- *  with no changes writes nothing and confirms truthfully instead. */
-/** True when the draft matches the record on every field — a save
- *  with no changes writes nothing and confirms truthfully instead. */
-function draftIsUnchanged(entity, draft, record) {
-  if (!record) return false;
-  const fields =
-    entity === "client"
-      ? ["name", "externalReference", "notes", "status"]
-      : entity === "site"
-        ? ["name", "siteType", "addressLine1", "addressLine2", "city", "region", "postalCode", "countryCode", "status"]
-        : ["name", "projectCode", "description", "projectType", "plannedStart", "plannedFinish", "status"];
-  const recordFields = draftFromRecord(entity, record);
-  if (!fields.every((field) => sameText(draft[field], recordFields[field]))) return false;
-  if (entity === "site") return draft.parentId === blank(record.clientId);
-  if (entity === "project") return draft.parentId === blank(record.siteId);
-  return true;
 }
 
 export default function PlannerHierarchyManager() {
@@ -139,15 +78,26 @@ export default function PlannerHierarchyManager() {
   const [loadError, setLoadError] = useState("");
   const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  // openForm: null | { mode: "create"|"edit", entity, id, version,
-  //   parentId, draft, record } — every form starts closed.
-  const [openForm, setOpenForm] = useState(null);
-  const [formError, setFormError] = useState("");
-  const [formNotice, setFormNotice] = useState("");
-  const [staleInfo, setStaleInfo] = useState(null);
   const [sectionNotice, setSectionNotice] = useState("");
   const [sectionError, setSectionError] = useState("");
-  const [busy, setBusy] = useState(false);
+  // Row actions (archive/restore/delete/purge) own this busy flag; the
+  // create/edit form's own busy lives in useHierarchyRecordForm. `busy`
+  // below combines both, unchanged at every call site that already
+  // checked/rendered it before this flag was split across the two.
+  const [rowBusy, setRowBusy] = useState(false);
+  const {
+    openForm,
+    formError,
+    formNotice,
+    staleInfo,
+    busy: formBusy,
+    openCreateForm,
+    openEditForm: openEditFormByRecord,
+    closeForm,
+    updateDraft,
+    saveForm,
+  } = useHierarchyRecordForm({ reload: reloadCurrent });
+  const busy = rowBusy || formBusy;
   const [confirm, setConfirm] = useState(null); // { title, body, onConfirm }
   const confirmTriggerRef = useRef(null);
 
@@ -363,169 +313,9 @@ export default function PlannerHierarchyManager() {
     return loadInventory(silent);
   }
 
-  function openCreateForm(entity, parentId, options) {
-    setFormError("");
-    setFormNotice("");
-    setStaleInfo(null);
-    setOpenForm({ mode: "create", entity, id: null, version: null, parentId: parentId || "", isTest: options?.isTest === true, draft: emptyDraft(entity, parentId), record: null });
-  }
-
   function openEditForm(entity, id) {
     const { record } = findRecord(entity, id);
-    if (!record) return;
-    setFormError("");
-    setFormNotice("");
-    setStaleInfo(null);
-    setOpenForm({
-      mode: "edit",
-      entity,
-      id,
-      version: record.version,
-      parentId: entity === "site" ? record.clientId : entity === "project" ? record.siteId : "",
-      draft: draftFromRecord(entity, record),
-      record,
-    });
-  }
-
-  function closeForm() {
-    setOpenForm(null);
-    setFormError("");
-    setFormNotice("");
-    setStaleInfo(null);
-  }
-
-  function updateDraft(field, value) {
-    setOpenForm((form) => (form ? { ...form, draft: { ...form.draft, [field]: value } } : form));
-    setFormNotice("");
-  }
-
-  async function saveForm() {
-    if (!openForm || busy) return;
-    const { mode, entity, id, draft } = openForm;
-    const validation = validateDraft(entity, draft);
-    if (validation) {
-      setFormError(validation.message);
-      return;
-    }
-    const displayName = draft.name.trim();
-    if (mode === "edit" && draftIsUnchanged(entity, draft, openForm.record)) {
-      // Client-detected no-op: no write, truthful confirmation.
-      setFormError("");
-      setStaleInfo(null);
-      setFormNotice(`No changes to ${displayName} — nothing needed saving.`);
-      return;
-    }
-    setBusy(true);
-    setFormError("");
-    setFormNotice("");
-    setStaleInfo(null);
-    const requestId = newRequestId();
-    let result;
-    try {
-      if (mode === "create") {
-        // A test-mode client create sends isTest: true so the route
-        // selects the test-create RPC (the only way to mint a test
-        // client). The regular create takes no test flag.
-        const body = buildCreateBody(entity, draft, { isTest: openForm.isTest === true, requestId });
-        result = await callJson("/api/forge/hierarchy", { method: "POST", body });
-      } else {
-        // PATCH: send the draft strings verbatim, including "" for a
-        // cleared optional field. The RPC contract is null = unchanged,
-        // "" = clear — coercing "" to null here silently kept the old
-        // value while the UI still said "saved" (P1, PR #811 review).
-        // The POST branch below keeps its `|| null` creation defaults.
-        const body =
-          entity === "client"
-            ? { entity, id, name: draft.name, externalReference: draft.externalReference, notes: draft.notes, status: draft.status, expectedVersion: openForm.version, requestId }
-            : entity === "site"
-              ? {
-                  entity,
-                  id,
-                  clientId: draft.parentId,
-                  name: draft.name,
-                  siteType: draft.siteType,
-                  addressLine1: draft.addressLine1,
-                  addressLine2: draft.addressLine2,
-                  city: draft.city,
-                  region: draft.region,
-                  postalCode: draft.postalCode,
-                  countryCode: draft.countryCode,
-                  status: draft.status,
-                  expectedVersion: openForm.version,
-                  requestId,
-                }
-              : {
-                  entity,
-                  id,
-                  siteId: draft.parentId,
-                  name: draft.name,
-                  projectCode: draft.projectCode,
-                  description: draft.description,
-                  projectType: draft.projectType,
-                  plannedStart: draft.plannedStart,
-                  plannedFinish: draft.plannedFinish,
-                  status: draft.status,
-                  expectedVersion: openForm.version,
-                  requestId,
-                };
-        result = await callJson("/api/forge/hierarchy", { method: "PATCH", body });
-      }
-    } catch {
-      setBusy(false);
-      setFormError("Request failed.");
-      return;
-    }
-    setBusy(false);
-    const { response, data } = result;
-    if (!response.ok) {
-      if (response.status === 409 && (data.error || "").includes("changed by someone else")) {
-        // Stale version: reload the fresh record, keep the user's
-        // draft for reconciliation, never blind overwrite.
-        const reloaded = await reloadCurrent(true);
-        const fresh = reloaded ? findRecordIn(reloaded, entity, id) : null;
-        if (fresh) {
-          setOpenForm((form) =>
-            form ? { ...form, version: fresh.version, record: fresh } : form,
-          );
-          setStaleInfo({ name: fresh.name, version: fresh.version, status: fresh.status });
-        }
-        setFormError(
-          `This record was changed by someone else${fresh ? ` (now version ${fresh.version}, ${statusLabel(fresh.status)})` : ""}. Your changes are kept below — review them and save again.`,
-        );
-        return;
-      }
-      setFormError(data.error || "Request failed.");
-      return;
-    }
-    const saved = data.client || data.site || data.project || null;
-    const savedName = saved?.name || displayName;
-    // Reload for fresh versions, then re-point the form at the saved
-    // record so a second save carries the new version.
-    const reloaded = await reloadCurrent(true);
-    if (mode === "create") {
-      setOpenForm((form) => (form ? { ...form, draft: emptyDraft(entity, form.parentId) } : form));
-    } else if (saved && reloaded) {
-      const fresh = findRecordIn(reloaded, entity, id);
-      if (fresh) {
-        setOpenForm((form) =>
-          form ? { ...form, version: fresh.version, record: fresh, draft: draftFromRecord(entity, fresh) } : form,
-        );
-      }
-    }
-    setFormNotice(`${savedName} saved.`);
-  }
-
-  function findRecordIn(loaded, entity, id) {
-    for (const client of loaded.clients ?? []) {
-      if (entity === "client" && client.id === id) return client;
-      for (const site of client.sites ?? []) {
-        if (entity === "site" && site.id === id) return site;
-        for (const project of site.projects ?? []) {
-          if (entity === "project" && project.id === id) return project;
-        }
-      }
-    }
-    return null;
+    openEditFormByRecord(entity, record);
   }
 
   // --- Row actions: archive / restore / delete ------------------------
@@ -533,7 +323,7 @@ export default function PlannerHierarchyManager() {
     if (busy) return;
     const { record } = findRecord(entity, id);
     if (!record) return;
-    setBusy(true);
+    setRowBusy(true);
     setSectionNotice("");
     setSectionError("");
     let result;
@@ -543,11 +333,11 @@ export default function PlannerHierarchyManager() {
         body: { entity, id, status, expectedVersion: record.version, requestId: newRequestId() },
       });
     } catch {
-      setBusy(false);
+      setRowBusy(false);
       setSectionError("Request failed.");
       return;
     }
-    setBusy(false);
+    setRowBusy(false);
     const { response, data } = result;
     if (!response.ok) {
       if (response.status === 409 && (data.error || "").includes("changed by someone else")) {
@@ -571,7 +361,7 @@ export default function PlannerHierarchyManager() {
         title: `Permanently delete this ${label}?`,
         body: `This permanently deletes the ${label} "${record.name}". This cannot be undone. Nothing else is deleted — its parent stays exactly as it is.`,
         onConfirm: async () => {
-          setBusy(true);
+          setRowBusy(true);
           setSectionNotice("");
           setSectionError("");
           let result;
@@ -581,12 +371,12 @@ export default function PlannerHierarchyManager() {
               body: { entity, id, expectedVersion: record.version, requestId: newRequestId() },
             });
           } catch {
-            setBusy(false);
+            setRowBusy(false);
             closeConfirm();
             setSectionError("Request failed.");
             return;
           }
-          setBusy(false);
+          setRowBusy(false);
           closeConfirm();
           const { response, data } = result;
           if (!response.ok) {
@@ -624,7 +414,7 @@ export default function PlannerHierarchyManager() {
   // plain words (names, not raw IDs).
   async function loadSamples(project) {
     if (busy) return;
-    setBusy(true);
+    setRowBusy(true);
     setTestNotice("");
     setTestError("");
     let result;
@@ -634,11 +424,11 @@ export default function PlannerHierarchyManager() {
         body: { projectId: project.id, requestId: newRequestId() },
       });
     } catch {
-      setBusy(false);
+      setRowBusy(false);
       setTestError("Request failed.");
       return;
     }
-    setBusy(false);
+    setRowBusy(false);
     const { response, data } = result;
     if (!response.ok) {
       setTestError(data.error || "Request failed.");
@@ -650,7 +440,7 @@ export default function PlannerHierarchyManager() {
 
   async function previewPurge(client) {
     if (busy) return;
-    setBusy(true);
+    setRowBusy(true);
     setTestNotice("");
     setTestError("");
     let result;
@@ -660,11 +450,11 @@ export default function PlannerHierarchyManager() {
         body: { clientId: client.id },
       });
     } catch {
-      setBusy(false);
+      setRowBusy(false);
       setTestError("Request failed.");
       return;
     }
-    setBusy(false);
+    setRowBusy(false);
     const { response, data } = result;
     if (!response.ok) {
       setTestError(data.error || "Request failed.");
@@ -681,7 +471,7 @@ export default function PlannerHierarchyManager() {
       setTestError("Type the test client name exactly to confirm the delete.");
       return;
     }
-    setBusy(true);
+    setRowBusy(true);
     setTestNotice("");
     setTestError("");
     let result;
@@ -691,11 +481,11 @@ export default function PlannerHierarchyManager() {
         body: { clientId, digest: preview.digest, requestId: newRequestId(), confirmName: confirmName.trim() },
       });
     } catch {
-      setBusy(false);
+      setRowBusy(false);
       setTestError("Request failed.");
       return;
     }
-    setBusy(false);
+    setRowBusy(false);
     const { response, data } = result;
     if (!response.ok) {
       setTestError(data.error || "Request failed.");

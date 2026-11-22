@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 // New client / New site / New project controls on the Planner's
-// project-scope bar (/forge/work). Covers: canManage gating, the
-// create -> auto-advance-to-next-level flow (client -> site -> project),
-// project create navigating via onProjectCreated, validation surfacing,
-// and the shared tap-target sizing.
+// project-scope bar (/forge/work). PR #848 review (2026-11-21, NEEDS
+// CHANGES) findings covered here: canManage gating; the create flow is
+// the SAME useHierarchyRecordForm hook Admin uses (P1 -- not a second,
+// independently-coded create flow); the "<name> created." confirmation
+// stays visible through the client -> site -> project auto-advance
+// instead of being erased by the next form opening (P1); an inventory
+// load failure shows a reason + retry, distinct from a proven
+// canManage=false (P2); project create still navigates via
+// onProjectCreated; client/site create reports onCreated so the scope
+// bar can preselect the new record (tested in PlannerProjectScopeBar
+// coverage / HierarchyProjectSelector's own pendingSelection tests).
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +26,7 @@ function fail(status, error) {
   return { ok: false, status, json: async () => ({ error }) };
 }
 
-function stubFetch({ canManage = true, clients = [] } = {}) {
+function stubFetch({ canManage = true, clients = [], failInventory = false } = {}) {
   const calls = [];
   const server = { canManage, clients: structuredClone(clients) };
   let seq = 100;
@@ -28,7 +35,10 @@ function stubFetch({ canManage = true, clients = [] } = {}) {
     const body = options.body ? JSON.parse(options.body) : undefined;
     calls.push({ url: String(url), method, body });
     if (!String(url).startsWith("/api/forge/hierarchy")) throw new Error(`unexpected fetch ${url}`);
-    if (method === "GET") return ok({ inventory: server });
+    if (method === "GET") {
+      if (failInventory) return fail(500, "Database unavailable.");
+      return ok({ inventory: server });
+    }
     if (method === "POST") {
       if (body.entity === "client") {
         const created = { id: `forge_cli_new${seq++}`, name: body.name, sites: [] };
@@ -38,7 +48,7 @@ function stubFetch({ canManage = true, clients = [] } = {}) {
       if (body.entity === "site") {
         const client = server.clients.find((c) => c.id === body.clientId);
         if (!client) return fail(404, "That client could not be found.");
-        const created = { id: `forge_site_new${seq++}`, name: body.name, projects: [] };
+        const created = { id: `forge_site_new${seq++}`, name: body.name, clientId: body.clientId, projects: [] };
         client.sites = client.sites || [];
         client.sites.push(created);
         return ok({ site: created }, 201);
@@ -101,6 +111,18 @@ describe("PlannerAddHierarchyButtons", () => {
     const { container } = render();
     await flush();
     expect(container.querySelector('[data-testid="planner-add-hierarchy-buttons"]')).toBeNull();
+    expect(container.querySelector('[data-testid="planner-add-hierarchy-error"]')).toBeNull();
+  });
+
+  it("shows a reason and a retry control when the inventory load fails, distinct from a proven lack of permission", async () => {
+    stubFetch({ failInventory: true });
+    const { container } = render();
+    await flush();
+    const errorBox = container.querySelector('[data-testid="planner-add-hierarchy-error"]');
+    expect(errorBox).not.toBeNull();
+    expect(errorBox.textContent).toContain("Database unavailable.");
+    const retryBtn = [...container.querySelectorAll("button")].find((b) => b.textContent === "Try again");
+    expect(retryBtn).not.toBeNull();
   });
 
   it("renders all three buttons, each meeting the ~44px tap target, when canManage is true", async () => {
@@ -112,25 +134,26 @@ describe("PlannerAddHierarchyButtons", () => {
     expect(labels).toContain("New client");
     expect(labels).toContain("New site");
     expect(labels).toContain("New project");
+    expect(labels).not.toContain("New test client");
     for (const b of buttons) expect(b.className).toContain("min-h-11");
   });
 
-  it("creating a client auto-opens New site pre-filled to that client, and creating the site auto-opens New project pre-filled to it", async () => {
+  it("creating a client shows its confirmation, which stays visible through the auto-advance into New site, and the site create stays visible into New project", async () => {
     stubFetch({ canManage: true });
     const { container } = render();
     await flush();
 
     click([...container.querySelectorAll("button")].find((b) => b.textContent === "New client"));
     await flush();
-
-    const nameInput = container.querySelector("#planner-add-hierarchy-form-name");
-    expect(nameInput).not.toBeNull();
-    setInputValue(nameInput, "Acme");
+    setInputValue(container.querySelector("#planner-add-hierarchy-form-name"), "Acme");
     click([...container.querySelectorAll("button")].find((b) => b.textContent === "Save"));
     await flush();
 
-    // Auto-advanced to "New site" with the new client as parent.
+    // Auto-advanced to "New site" with the new client as parent, AND the
+    // "Acme created." confirmation is still on screen (PR #848 review P1 --
+    // this used to be erased by the form opening underneath it).
     expect(container.querySelector('[data-testid="planner-add-hierarchy-form"]').textContent).toContain("New site");
+    expect(container.textContent).toContain("Acme created.");
     const parentSelect = container.querySelector("#planner-add-hierarchy-form-parent");
     expect(parentSelect.value).toMatch(/^forge_cli_new/);
 
@@ -138,13 +161,32 @@ describe("PlannerAddHierarchyButtons", () => {
     click([...container.querySelectorAll("button")].find((b) => b.textContent === "Save"));
     await flush();
 
-    // Auto-advanced to "New project" with the new site as parent.
     expect(container.querySelector('[data-testid="planner-add-hierarchy-form"]').textContent).toContain("New project");
+    expect(container.textContent).toContain("Plant 1 created.");
     const projectParentSelect = container.querySelector("#planner-add-hierarchy-form-parent");
     expect(projectParentSelect.value).toMatch(/^forge_site_new/);
   });
 
-  it("creating a project calls onProjectCreated with the new project id, so the planner lands on it", async () => {
+  it("reports client and site creates via onCreated, with the site's clientId so the scope bar can preselect the right chain", async () => {
+    stubFetch({ canManage: true, clients: [{ id: "forge_cli_1", name: "Acme", sites: [] }] });
+    const onCreated = vi.fn();
+    const { container } = render({ onCreated });
+    await flush();
+
+    click([...container.querySelectorAll("button")].find((b) => b.textContent === "New site"));
+    await flush();
+    setInputValue(container.querySelector("#planner-add-hierarchy-form-parent"), "forge_cli_1");
+    setInputValue(container.querySelector("#planner-add-hierarchy-form-name"), "Plant 1");
+    click([...container.querySelectorAll("button")].find((b) => b.textContent === "Save"));
+    await flush();
+
+    expect(onCreated).toHaveBeenCalledTimes(1);
+    const [entity, saved] = onCreated.mock.calls[0];
+    expect(entity).toBe("site");
+    expect(saved.clientId).toBe("forge_cli_1");
+  });
+
+  it("creating a project calls onProjectCreated with the new project id and closes the form, so the planner lands on it", async () => {
     stubFetch({ canManage: true, clients: [{ id: "forge_cli_1", name: "Acme", sites: [{ id: "forge_site_1", name: "Plant 1", projects: [] }] }] });
     const onProjectCreated = vi.fn();
     const { container } = render({ onProjectCreated });
@@ -152,7 +194,6 @@ describe("PlannerAddHierarchyButtons", () => {
 
     click([...container.querySelectorAll("button")].find((b) => b.textContent === "New project"));
     await flush();
-
     setInputValue(container.querySelector("#planner-add-hierarchy-form-parent"), "forge_site_1");
     setInputValue(container.querySelector("#planner-add-hierarchy-form-name"), "Turnaround");
     click([...container.querySelectorAll("button")].find((b) => b.textContent === "Save"));
@@ -160,8 +201,8 @@ describe("PlannerAddHierarchyButtons", () => {
 
     expect(onProjectCreated).toHaveBeenCalledTimes(1);
     expect(onProjectCreated.mock.calls[0][0]).toMatch(/^forge_prj_new/);
-    // The form closes after a project create (there's nowhere further to auto-advance to).
     expect(container.querySelector('[data-testid="planner-add-hierarchy-form"]')).toBeNull();
+    expect(container.textContent).toContain("Turnaround created.");
   });
 
   it("surfaces a validation error and never calls the API when the name is blank", async () => {
@@ -178,7 +219,7 @@ describe("PlannerAddHierarchyButtons", () => {
 
     expect(container.querySelector('[role="alert"]')).not.toBeNull();
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
-    expect(calls.length).toBe(callsBeforeSave); // no new fetch at all on a client-side validation failure
+    expect(calls.length).toBe(callsBeforeSave);
   });
 
   it("New site and New project parent dropdowns offer only real (non-test) clients and sites", async () => {
@@ -198,5 +239,23 @@ describe("PlannerAddHierarchyButtons", () => {
     const parentOptions = [...container.querySelectorAll("#planner-add-hierarchy-form-parent option")].map((o) => o.textContent);
     expect(parentOptions).toContain("Acme");
     expect(parentOptions.join(" ")).not.toContain("Fictional Test Client");
+  });
+
+  it("Cancel closes the form and clears the notice", async () => {
+    stubFetch({ canManage: true });
+    const { container } = render();
+    await flush();
+
+    click([...container.querySelectorAll("button")].find((b) => b.textContent === "New client"));
+    await flush();
+    setInputValue(container.querySelector("#planner-add-hierarchy-form-name"), "Acme");
+    click([...container.querySelectorAll("button")].find((b) => b.textContent === "Save"));
+    await flush();
+    expect(container.textContent).toContain("Acme created.");
+
+    click([...container.querySelectorAll("button")].find((b) => b.textContent === "Cancel"));
+    await flush();
+    expect(container.querySelector('[data-testid="planner-add-hierarchy-form"]')).toBeNull();
+    expect(container.textContent).not.toContain("Acme created.");
   });
 });

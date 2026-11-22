@@ -169,6 +169,58 @@ describe("HierarchyProjectSelector", () => {
     expect(project.value).toBe("forge_prj_3");
   });
 
+  it("pendingSelection preselects a just-created client/site that has no project yet (PR #848 review, P1)", async () => {
+    mockFetchSuccess();
+    const { container } = renderSelector({ pendingSelection: { clientId: "forge_cli_2", siteId: "" } });
+    await flush();
+    const { client, site, project } = selects(container);
+    expect(client.value).toBe("forge_cli_2");
+    expect(site.value).toBe("");
+    expect(project.value).toBe("");
+  });
+
+  it("pendingSelection with a site preselects both client and site", async () => {
+    mockFetchSuccess();
+    const { container } = renderSelector({ pendingSelection: { clientId: "forge_cli_2", siteId: "forge_site_3" } });
+    await flush();
+    const { client, site, project } = selects(container);
+    expect(client.value).toBe("forge_cli_2");
+    expect(site.value).toBe("forge_site_3");
+    expect(project.value).toBe("");
+  });
+
+  it("a real value's chain takes priority over a stale pendingSelection", async () => {
+    mockFetchSuccess();
+    const { container } = renderSelector({ value: "forge_prj_1", pendingSelection: { clientId: "forge_cli_2", siteId: "" } });
+    await flush();
+    const { client, site, project } = selects(container);
+    expect(client.value).toBe("forge_cli_1");
+    expect(site.value).toBe("forge_site_1");
+    expect(project.value).toBe("forge_prj_1");
+  });
+
+  it("refreshKey re-fetches the tree, so a just-created client is actually there to preselect", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ selector: TREE }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ selector: { ...TREE, clients: [...TREE.clients, { id: "forge_cli_new1", name: "Gamma", sites: [] }] } }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container, root } = renderSelector({ refreshKey: 0 });
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      root.render(<HierarchyProjectSelector value="" onSelect={() => {}} refreshKey={1} pendingSelection={{ clientId: "forge_cli_new1", siteId: "" }} />);
+    });
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const { client } = selects(container);
+    expect(client.value).toBe("forge_cli_new1");
+    expect([...client.querySelectorAll("option")].some((o) => o.textContent === "Gamma")).toBe(true);
+  });
+
   it("a value the tree does not contain leaves the selects empty (never a substitute)", async () => {
     mockFetchSuccess();
     const { container } = renderSelector({ value: "forge_prj_gone" });
