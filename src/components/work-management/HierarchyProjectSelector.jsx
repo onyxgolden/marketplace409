@@ -63,7 +63,13 @@ export default function HierarchyProjectSelector({
         if (!response.ok) throw new Error(body.error || "Could not load the project list.");
         return body.selector;
       })
-      .then((loaded) => { if (!cancelled) setSelector(loaded); })
+      // Clear any prior load error on a successful refresh: a first failed
+      // read must not leave the selector disabled and still showing the
+      // stale error after a later successful refresh (PR #848 fix round 2).
+      // (Cleared here, in the async success path, rather than when the
+      // refresh begins — a synchronous setState in the effect body trips
+      // react-hooks/set-state-in-effect.)
+      .then((loaded) => { if (!cancelled) { setSelector(loaded); setLoadError(""); } })
       .catch((caught) => { if (!cancelled) setLoadError(caught?.message || "Could not load the project list."); });
     return () => { cancelled = true; };
   }, [refreshKey]);

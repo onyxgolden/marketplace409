@@ -240,6 +240,30 @@ describe("HierarchyProjectSelector", () => {
     expect(client.disabled).toBe(true);
   });
 
+  it("a failed load recovers on refresh: the stale error clears and the selector becomes usable (PR #848 fix round 2)", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, json: async () => ({ error: "Could not load." }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ selector: TREE }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container, root } = renderSelector({ refreshKey: 0 });
+    await flush();
+    expect(container.querySelector("[role='alert']").textContent).toMatch(/Could not load/);
+    expect(selects(container).client.disabled).toBe(true);
+
+    // Post-create refresh path: same component, refreshKey bump, fetch succeeds.
+    act(() => {
+      root.render(<HierarchyProjectSelector value="" onSelect={() => {}} refreshKey={1} />);
+    });
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(container.querySelector("[role='alert']")).toBeNull();
+    const { client, site } = selects(container);
+    expect(client.disabled).toBe(false);
+    expect([...client.querySelectorAll("option")].map((o) => o.textContent)).toContain("Acme");
+    pick(client, "forge_cli_1");
+    expect(site.disabled).toBe(false);
+  });
+
   it("links the empty state to the Clients, sites & projects manager", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ selector: { ownerId: "owner_1", clients: [] } }) })));
     const { container } = renderSelector();
