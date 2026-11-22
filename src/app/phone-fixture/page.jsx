@@ -67,6 +67,20 @@
  *                 (fix round 1 provenance — no production data), inside
  *                 the production page's <main> container.
  *                 No network calls on render.
+ *                 D2b: ?cost=complete feeds a synthetic reconciled
+ *                 cost-split snapshot (3 estimated packages, all five
+ *                 categories, $3,000.00 strip); ?cost=incomplete feeds
+ *                 the same snapshot with one package's allocation stale
+ *                 ($1,000.00 unallocated); no ?cost feeds no snapshot,
+ *                 so the strip shows "—" and the widget its
+ *                 not-available note. ?costCategory=labor (with
+ *                 ?cost=complete) marks the labor row active.
+ *   work-budget-editor — the real WorkPackageBudgetAllocation editor
+ *                 (D2b package entry surface), fed by the guard's
+ *                 intercepted /api/work-packages/.../budget-allocation
+ *                 responses (canned snapshot + canned save, no
+ *                 production writes). The guard exercises the
+ *                 add-line + save flow at phone width.
  *
  * The case comes from window.location.search after mount (no
  * useSearchParams, so no Suspense boundary is needed). The page sets
@@ -84,6 +98,8 @@ import WorkspaceShell from "@/components/workspace-shell";
 import ForgeApplicationRail from "@/components/forge/ForgeApplicationRail";
 import ProjectsScreen from "@/components/forge/scheduling/ProjectsScreen";
 import PlannerDashboardShell from "@/components/work-management/PlannerDashboardShell.jsx";
+import WorkPackageBudgetAllocation from "@/components/work-management/WorkPackageBudgetAllocation.jsx";
+import { summarizeCostSplit } from "@/domains/work-management/budgetAllocations";
 import RentalOverviewPanel from "@/components/forge/rental/RentalOverviewPanel";
 import RentalPropertyPerformancePanel from "@/components/forge/rental/RentalPropertyPerformancePanel";
 import { buildRentalPropertyPerformance } from "@/application/rental/buildRentalPropertyPerformance";
@@ -448,7 +464,41 @@ const WORK_DASHBOARD_FIXTURE_PLANNING = {
   forge_wp_synth_d1_05: { percentComplete: 0, initialized: false },
 };
 
-function WorkDashboardCase() {
+function WorkDashboardCase({ cost = null, costCategory = null }) {
+  // D2b synthetic cost snapshot, built by the REAL summarizeCostSplit
+  // from the fixture rows' invented estimates — no production data.
+  // Complete: SYN-01 $1,500.00 + SYN-02 $1,000.00 + SYN-03 $500.00,
+  // all reconciled across all five categories (labor $1,300.00,
+  // material $750.00, equipment $550.00, external services $250.00,
+  // rental $150.00 = $3,000.00 strip); SYN-04..06 have no estimate.
+  // Incomplete: the same snapshot with SYN-02's allocation stale, so
+  // its $1,000.00 reads as unallocated and the five-way totals drop
+  // to SYN-01 + SYN-03 only ($2,000.00).
+  const costSummary = (() => {
+    if (cost !== "complete" && cost !== "incomplete") return null;
+    const stale = cost === "incomplete";
+    const byPackage = {
+      forge_wp_synth_d1_01: {
+        estimate: { id: "est_synth_01", version: 1, currentEstimateCents: 150000 },
+        allocation: { id: "alloc_synth_01", version: 1, estimateId: "est_synth_01", estimateVersion: 1, categoryTotals: { labor: 60000, material: 40000, equipment: 30000, external_services: 15000, rental: 5000 } },
+        reconciled: true, reason: null,
+      },
+      forge_wp_synth_d1_02: {
+        estimate: { id: "est_synth_02", version: stale ? 2 : 1, currentEstimateCents: 100000 },
+        allocation: { id: "alloc_synth_02", version: 1, estimateId: "est_synth_02", estimateVersion: 1, categoryTotals: { labor: 50000, material: 25000, equipment: 15000, external_services: 5000, rental: 5000 } },
+        reconciled: !stale, reason: stale ? "stale" : null,
+      },
+      forge_wp_synth_d1_03: {
+        estimate: { id: "est_synth_03", version: 1, currentEstimateCents: 50000 },
+        allocation: { id: "alloc_synth_03", version: 1, estimateId: "est_synth_03", estimateVersion: 1, categoryTotals: { labor: 20000, material: 10000, equipment: 10000, external_services: 5000, rental: 5000 } },
+        reconciled: true, reason: null,
+      },
+      forge_wp_synth_d1_04: { estimate: null, allocation: null, reconciled: false, reason: "no_estimate" },
+      forge_wp_synth_d1_05: { estimate: null, allocation: null, reconciled: false, reason: "no_estimate" },
+      forge_wp_synth_d1_06: { estimate: null, allocation: null, reconciled: false, reason: "no_estimate" },
+    };
+    return summarizeCostSplit({ packages: WORK_DASHBOARD_FIXTURE_PACKAGES, costByPackage: byPackage });
+  })();
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-8" data-testid="work-dashboard-fixture">
       <PlannerDashboardShell
@@ -458,7 +508,22 @@ function WorkDashboardCase() {
         baseHref="/forge/work?forgeProject=forge_project_synth_d1_dashboard"
         activeStatus={null}
         planningByPackage={WORK_DASHBOARD_FIXTURE_PLANNING}
+        costSummary={costSummary}
+        activeCostCategory={costCategory}
       />
+    </main>
+  );
+}
+
+// D2b budget-editor case — the REAL WorkPackageBudgetAllocation editor
+// for the synthetic SYN-01 package. Its GET/POST/retire calls are
+// intercepted by the guard (canned snapshot + canned save, no
+// production writes); the component itself is unmodified. The wrapper
+// mirrors the detail page's <main> container.
+function WorkBudgetEditorCase() {
+  return (
+    <main className="mx-auto w-full max-w-7xl px-4 py-8" data-testid="work-budget-editor-fixture">
+      <WorkPackageBudgetAllocation packageId="forge_wp_synth_d1_01" />
     </main>
   );
 }
@@ -474,6 +539,7 @@ const CASES = {
   "rental-performance": RentalPerformanceCase,
   "projects-list": SchedulingProjectsCase,
   "work-dashboard": WorkDashboardCase,
+  "work-budget-editor": WorkBudgetEditorCase,
   health: HealthCase,
   "health-dashboard": HealthDashboardCase,
 };
@@ -488,18 +554,23 @@ export default function PhoneFixturePage() {
   // "not ready" main on server and client first render, then setting the
   // case after mount, keeps the shell hydration-clean so the case's own
   // hydration is genuinely exercised.
-  const [fixtureCase, setFixtureCase] = useState(null);
+  const [fixtureParams, setFixtureParams] = useState(null);
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- deliberate mount-only read of client-only data (window.location.search); the first render intentionally matches the server.
-    setFixtureCase(new URLSearchParams(window.location.search).get("case") || "designer");
+    setFixtureParams({
+      case: params.get("case") || "designer",
+      cost: params.get("cost"),
+      costCategory: params.get("costCategory"),
+    });
   }, []);
   if (process.env.NODE_ENV === "production") notFound();
-  if (!fixtureCase) return <main data-fixture-ready="false" />;
-  const Case = CASES[fixtureCase];
-  if (!Case) return <main data-fixture-ready="missing">Unknown case: {fixtureCase}</main>;
+  if (!fixtureParams) return <main data-fixture-ready="false" />;
+  const Case = CASES[fixtureParams.case];
+  if (!Case) return <main data-fixture-ready="missing">Unknown case: {fixtureParams.case}</main>;
   return (
-    <div data-fixture-ready="true" data-fixture-case={fixtureCase}>
-      <Case />
+    <div data-fixture-ready="true" data-fixture-case={fixtureParams.case}>
+      <Case cost={fixtureParams.cost} costCategory={fixtureParams.costCategory} />
     </div>
   );
 }

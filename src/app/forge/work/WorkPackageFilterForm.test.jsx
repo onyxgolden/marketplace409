@@ -155,6 +155,25 @@ function selectBlock(html, selectId) {
   return match[1];
 }
 
+describe("D2b: the filter form carries the cost filters as hidden inputs", () => {
+  it("submits costCategory and allocation alongside the visible selects", async () => {
+    const container = await mountForm({ costCategory: "labor", allocation: "unallocated" });
+    const form = container.querySelector("form");
+    const submitted = await submitAndCapture(form);
+    expect(submitted.get("costCategory")).toBe("labor");
+    expect(submitted.get("allocation")).toBe("unallocated");
+    expect(submitted.get("status")).toBe("all");
+  });
+
+  it("omits the hidden inputs when no cost filter is active", async () => {
+    const container = await mountForm({});
+    const form = container.querySelector("form");
+    const submitted = await submitAndCapture(form);
+    expect(submitted.has("costCategory")).toBe(false);
+    expect(submitted.has("allocation")).toBe(false);
+  });
+});
+
 describe("D2 fix round 2 (P1): the filter form enforces mutual exclusion on change", () => {
   it("Planner -> Unit: picking a Unit while a Planner is active clears the Planner in the form and the submission", async () => {
     const container = await mountForm({ planner: "Crew Alpha" });

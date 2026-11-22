@@ -20,6 +20,7 @@ import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
 import { scopedSWRKey } from "./workspaceQuery.js";
 import EditableGridCell from "./EditableGridCell.jsx";
+import WorkPackageBudgetAllocation from "./WorkPackageBudgetAllocation.jsx";
 import {
   ALLOWED_TRANSITIONS,
   CHANGE_ORDER_STATUSES,
@@ -1173,6 +1174,17 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
           )}
         </>
       )}
+      {/* D2b: the five-way budget split of the control estimate, below
+          the control-estimate controls. It fetches its own endpoint
+          and carries its own loading/not-applied states, so it renders
+          even when this log's summary is still loading. */}
+      <WorkPackageBudgetAllocation
+        packageId={packageId}
+        isTerminal={isTerminal}
+        refreshKey={refreshKey}
+        onChanged={onChanged}
+        onRequestEstimateEdit={startEstimateEdit}
+      />
     </section>
   );
 }

@@ -4,6 +4,8 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 import { listWorkspacesForActor } from "@/lib/supabase/resolveEffectiveOwnerId";
 import { listWorkPackages, listPackagePropertyOptions } from "@/application/work-management/workPackages";
 import { listPlanningProgressForPackages } from "@/application/work-management/planningProcess";
+import { listCostSplitForPackages } from "@/application/work-management/budgetAllocations";
+import { BUDGET_CATEGORY_VALUES } from "@/domains/work-management/budgetAllocations";
 import {
   parseForgeProjectParam,
   resolvePlannerProjectScope,
@@ -38,6 +40,8 @@ function parseFilters(searchParams) {
   const rawUnit = typeof searchParams?.unit === "string" ? searchParams.unit : "";
   const rawSystem = typeof searchParams?.system === "string" ? searchParams.system : "";
   const rawProgressBy = typeof searchParams?.progressBy === "string" ? searchParams.progressBy : "";
+  const rawCostCategory = typeof searchParams?.costCategory === "string" ? searchParams.costCategory : "";
+  const rawAllocation = typeof searchParams?.allocation === "string" ? searchParams.allocation : "";
 
   const status = rawStatus && rawStatus !== "all" && STATUS_VALUES.includes(rawStatus)
     ? rawStatus
@@ -84,8 +88,14 @@ function parseFilters(searchParams) {
     system = "all";
   }
   const progressBy = PROGRESS_DIMENSIONS.includes(rawProgressBy) ? rawProgressBy : null;
+  // D2b cost drill-down: costCategory is one of the five fixed
+  // categories (allowlisted — anything else is ignored, never widened
+  // into a filter); allocation=unallocated narrows to estimated
+  // packages with no reconciled allocation.
+  const costCategory = BUDGET_CATEGORY_VALUES.includes(rawCostCategory) ? rawCostCategory : null;
+  const allocation = rawAllocation === "unallocated" ? "unallocated" : null;
 
-  return { status, propertyId, mode, planner, unit, system, progressBy };
+  return { status, propertyId, mode, planner, unit, system, progressBy, costCategory, allocation };
 }
 
 function filterValueMatches(rowValue, filter) {
@@ -98,7 +108,7 @@ function filterValueMatches(rowValue, filter) {
   return value !== "" && value === filter;
 }
 
-function filterPackages(packages, { status, propertyId, mode, planner, unit, system }) {
+function filterPackages(packages, { status, propertyId, mode, planner, unit, system, costCategory, allocation }, costByPackage = null) {
   return packages.filter((pkg) => {
     if (status !== "all" && pkg.status !== status) return false;
     if (mode !== "all" && inferEffectiveMode(pkg) !== mode) return false;
@@ -114,6 +124,17 @@ function filterPackages(packages, { status, propertyId, mode, planner, unit, sys
     if (planner !== "all" && !filterValueMatches(pkg.responsible_party?.display_name, planner)) return false;
     if (unit !== "all" && !filterValueMatches(pkg.unit, unit)) return false;
     if (system !== "all" && !filterValueMatches(pkg.system, system)) return false;
+    // D2b cost filters, read against the one bulk cost-split snapshot
+    // (never per-package). A package with no cost entry has no category
+    // total and no reconciled state, so it matches neither filter.
+    if (costCategory != null) {
+      const entry = costByPackage?.[pkg.id];
+      if (!entry || (entry.allocation?.categoryTotals?.[costCategory] ?? 0) <= 0) return false;
+    }
+    if (allocation === "unallocated") {
+      const entry = costByPackage?.[pkg.id];
+      if (!entry || entry.estimate == null || entry.reconciled) return false;
+    }
     return true;
   });
 }
@@ -184,10 +205,12 @@ export default async function WorkPackagesPage({ searchParams }) {
   ]);
 
   // Filters were parsed (and combined group filters redirected) at the
-  // top of the component, before any read — see above.
-  const filtered = ok ? filterPackages(packages, filters) : [];
+  // top of the component, before any read — see above. The grid filter
+  // runs after the bulk dashboard reads below: the D2b cost filters
+  // need the cost-split snapshot.
   const hasFilters = filters.status !== "all" || filters.propertyId !== "all" || filters.mode !== "all"
-    || filters.planner !== "all" || filters.unit !== "all" || filters.system !== "all";
+    || filters.planner !== "all" || filters.unit !== "all" || filters.system !== "all"
+    || filters.costCategory != null || filters.allocation != null;
   const properties = propertyResult.ok ? propertyResult.properties : [];
 
   // D2 dashboard: one bulk planning-% read for the whole in-scope
@@ -202,6 +225,31 @@ export default async function WorkPackagesPage({ searchParams }) {
     const planningResult = await listPlanningProgressForPackages(db, { ownerId, packages }).catch(() => null);
     if (planningResult && !planningResult.notApplied) planningByPackage = planningResult.byPackage;
   }
+
+  // D2b dashboard: one bounded bulk cost-split read for the whole
+  // in-scope project (never per-package). The widget and the strip's
+  // control-estimate total describe the whole project; the grid filter
+  // below narrows against the same snapshot. A failure (or the budget
+  // tables not being set up yet) hides the widget's numbers behind its
+  // not-available note instead of breaking the page.
+  let costByPackage = null;
+  let costSummary = null;
+  if (ok && scope.kind !== SCOPE_KINDS.NONE && packages.length > 0) {
+    const costResult = await listCostSplitForPackages(db, { ownerId, packages }).catch(() => null);
+    if (costResult && !costResult.notApplied) {
+      costByPackage = costResult.byPackage;
+      costSummary = costResult.summary;
+    }
+  }
+  const filtered = ok ? filterPackages(packages, filters, costByPackage) : [];
+  // D2b active-state rule (D1/D2 P1 lesson): a cost row claims
+  // "currently filtered" only when its filter is set AND no other
+  // narrowing filter is active — a combined URL shows the intersection
+  // in the grid, so the widget must not advertise a row the grid does
+  // not hold.
+  const costWidgetCanClaimActive = filters.status === "all"
+    && filters.propertyId === "all" && filters.mode === "all"
+    && filters.planner === "all" && filters.unit === "all" && filters.system === "all";
   // The dashboard tab: the explicit progressBy param wins; otherwise
   // the active group filter's dimension; otherwise System.
   const activeGroup = filters.planner !== "all" ? { dimension: "planner", key: filters.planner }
@@ -266,11 +314,14 @@ export default async function WorkPackagesPage({ searchParams }) {
   // unconditionally regardless of the active Status/Property filter.
   // D2: the same rule extends to the group filters — a blank row has no
   // planner / unit / system, so it matches only "all" or the sentinel.
+  // D2b: a blank row has no cost data either, so it matches only when
+  // no cost filter is active.
   const blankRowsMatchFilters = (filters.status === "all" || filters.status === "draft")
     && (filters.propertyId === "all" || filters.propertyId === UNASSIGNED)
     && (filters.planner === "all" || filters.planner === PLANNER_UNASSIGNED)
     && (filters.unit === "all" || filters.unit === GROUP_NONE)
-    && (filters.system === "all" || filters.system === GROUP_NONE);
+    && (filters.system === "all" || filters.system === GROUP_NONE)
+    && filters.costCategory == null && filters.allocation == null;
   const blankRowCount = blankRowsMatchFilters ? BLANK_ROWS : 0;
 
   return (
@@ -289,6 +340,8 @@ export default async function WorkPackagesPage({ searchParams }) {
           unit: filters.unit !== "all" ? filters.unit : "",
           system: filters.system !== "all" ? filters.system : "",
           progressBy: filters.progressBy || "",
+          costCategory: filters.costCategory || "",
+          allocation: filters.allocation || "",
           forgeProject: forgeProjectParam,
         }}
       />
@@ -308,6 +361,10 @@ export default async function WorkPackagesPage({ searchParams }) {
             planningByPackage={planningByPackage}
             activeDimension={activeDimension}
             activeGroup={activeGroup}
+            costSummary={costSummary}
+            activeCostCategory={filters.costCategory}
+            activeAllocationFilter={filters.allocation}
+            costWidgetCanClaimActive={costWidgetCanClaimActive}
           />
         </div>
       )}
@@ -337,7 +394,7 @@ export default async function WorkPackagesPage({ searchParams }) {
 
       {ok && packages.length > 0 && scope.kind !== SCOPE_KINDS.NONE && (
         <WorkPackageFilterForm
-          key={`filters-${filters.status}-${filters.propertyId}-${filters.mode}-${filters.planner}-${filters.unit}-${filters.system}`}
+          key={`filters-${filters.status}-${filters.propertyId}-${filters.mode}-${filters.planner}-${filters.unit}-${filters.system}-${filters.costCategory}-${filters.allocation}`}
           filters={filters}
           statusOptions={STATUS_VALUES}
           properties={properties}

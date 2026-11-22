@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   listWorkPackages: vi.fn(),
   listPackagePropertyOptions: vi.fn(),
   listPlanningProgressForPackages: vi.fn(),
+  listCostSplitForPackages: vi.fn(),
   listWorkspacesForActor: vi.fn(),
   createAuthenticatedForgeApplication: vi.fn(),
 }));
@@ -46,7 +47,18 @@ vi.mock("@/application/work-management/planningProcess", () => ({
   listPlanningProgressForPackages: mocks.listPlanningProgressForPackages,
 }));
 
+// D2b: the bulk cost-split read is mocked the same way. The default
+// synthesizes a reconciled all-labor allocation for every estimated
+// package from its planned_cost_cents, using the REAL summarizeCostSplit
+// — so the strip total always equals the fixture packages' estimates
+// ($1,750.00 for PACKAGES) and the widget's five-way totals reconcile
+// to the strip. D2b tests override per-test.
+vi.mock("@/application/work-management/budgetAllocations", () => ({
+  listCostSplitForPackages: mocks.listCostSplitForPackages,
+}));
+
 import WorkPackagesPage from "./page.jsx";
+import { summarizeCostSplit } from "@/domains/work-management/budgetAllocations";
 
 const PROPERTIES = [
   { slug: "1900-w-decker", label: "1900 W. Decker" },
@@ -72,6 +84,22 @@ beforeEach(() => {
   mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: PACKAGES });
   mocks.listPackagePropertyOptions.mockResolvedValue({ ok: true, properties: PROPERTIES });
   mocks.listPlanningProgressForPackages.mockResolvedValue({ ok: true, notApplied: false, byPackage: {} });
+  mocks.listCostSplitForPackages.mockImplementation(async (db, { packages }) => {
+    const byPackage = {};
+    for (const pkg of packages) {
+      if (pkg.planned_cost_cents != null) {
+        byPackage[pkg.id] = {
+          estimate: { id: `est_${pkg.id}`, version: 1, currentEstimateCents: pkg.planned_cost_cents },
+          allocation: { id: `alloc_${pkg.id}`, version: 1, estimateId: `est_${pkg.id}`, estimateVersion: 1, categoryTotals: { labor: pkg.planned_cost_cents, material: 0, equipment: 0, external_services: 0, rental: 0 } },
+          reconciled: true,
+          reason: null,
+        };
+      } else {
+        byPackage[pkg.id] = { estimate: null, allocation: null, reconciled: false, reason: "no_estimate" };
+      }
+    }
+    return { ok: true, notApplied: false, byPackage, summary: summarizeCostSplit({ packages, costByPackage: byPackage }) };
+  });
   mocks.listWorkspacesForActor.mockResolvedValue([
     { ownerId: "owner_1", role: "owner", label: "My workspace" },
   ]);
@@ -331,8 +359,8 @@ describe("/forge/work workspace switcher (UI-density redesign)", () => {
 describe("/forge/work dashboard shell (D1)", () => {
   it("renders the strip and scope chart on a scoped view, slices reconciling to the strip", async () => {
     const html = await renderPage();
-    // Strip: project, total planned cost ($1,500.00 + $250.00), total scope items.
-    expect(html).toContain("Total planned cost");
+    // Strip: project, total control estimate ($1,500.00 + $250.00), total scope items.
+    expect(html).toContain("Total control estimate");
     expect(html).toContain("$1,750.00");
     expect(html).toContain("Total scope items");
     expect(html).toContain("Scope by status");
@@ -406,7 +434,7 @@ describe("/forge/work dashboard shell (D1)", () => {
   it("renders no dashboard in the chooser state", async () => {
     const html = await renderPage({ forgeProject: undefined });
     expect(html).toContain("Choose a project to see its work packages.");
-    expect(html).not.toContain("Total planned cost");
+    expect(html).not.toContain("Total control estimate");
     expect(html).not.toContain("Scope by status");
   });
 
@@ -414,7 +442,7 @@ describe("/forge/work dashboard shell (D1)", () => {
     mocks.listWorkPackages.mockResolvedValue({ ok: false });
     const html = await renderPage();
     expect(html).toContain("Unable to load work packages.");
-    expect(html).not.toContain("Total planned cost");
+    expect(html).not.toContain("Total control estimate");
     expect(html).not.toContain("Scope by status");
   });
 
@@ -598,6 +626,135 @@ describe("/forge/work planning progress (D2)", () => {
     mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: [] });
     const html = await renderPage();
     expect(mocks.listPlanningProgressForPackages).not.toHaveBeenCalled();
+    expect(html).toContain("No packages in this project yet");
+  });
+});
+
+describe("/forge/work cost split (D2b)", () => {
+  // D2b cost fixture: wp_1 reconciled $1,500.00 (labor $1,000.00,
+  // material $500.00), wp_3 reconciled $250.00 (labor $250.00),
+  // wp_2 no estimate. Five-way totals: labor $1,250.00, material
+  // $500.00 — $1,750.00, the strip total.
+  const COST_BY_PACKAGE = {
+    wp_1: {
+      estimate: { id: "est_1", version: 1, currentEstimateCents: 150000 },
+      allocation: { id: "alloc_1", version: 1, estimateId: "est_1", estimateVersion: 1, categoryTotals: { labor: 100000, material: 50000, equipment: 0, external_services: 0, rental: 0 } },
+      reconciled: true, reason: null,
+    },
+    wp_2: { estimate: null, allocation: null, reconciled: false, reason: "no_estimate" },
+    wp_3: {
+      estimate: { id: "est_3", version: 1, currentEstimateCents: 25000 },
+      allocation: { id: "alloc_3", version: 1, estimateId: "est_3", estimateVersion: 1, categoryTotals: { labor: 25000, material: 0, equipment: 0, external_services: 0, rental: 0 } },
+      reconciled: true, reason: null,
+    },
+  };
+  function mockCost(byPackage = COST_BY_PACKAGE, packages = PACKAGES) {
+    mocks.listCostSplitForPackages.mockResolvedValue({
+      ok: true, notApplied: false, byPackage,
+      summary: summarizeCostSplit({ packages, costByPackage: byPackage }),
+    });
+  }
+
+  it("renders the cost-split widget from one bulk cost read", async () => {
+    mockCost();
+    const html = await renderPage();
+    expect(html).toContain("Cost split");
+    expect(html).toContain("All 2 estimated packages reconciled.");
+    expect(mocks.listCostSplitForPackages).toHaveBeenCalledTimes(1);
+    expect(mocks.listCostSplitForPackages).toHaveBeenCalledWith({ fakeDb: true }, { ownerId: "owner_1", packages: PACKAGES });
+  });
+
+  it("filters the grid by costCategory and ignores an unknown category", async () => {
+    mockCost();
+    const html = await renderPage({ costCategory: "material" });
+    // Only wp_1 has a positive material total.
+    expect(html).toContain("Decker turnover");
+    expect(html).not.toContain("Kent kitchen");
+    expect(html).not.toContain("Unassigned repairs");
+    // The strip and the widget still describe the whole project.
+    expect(html).toContain("$1,750.00");
+    // An unknown category is ignored, never widened into a filter.
+    const bogus = await renderPage({ costCategory: "bogus" });
+    expect(bogus).toContain("Decker turnover");
+    expect(bogus).toContain("Kent kitchen");
+    expect(bogus).toContain("Unassigned repairs");
+  });
+
+  it("D2b regression (D1 fix round 1): following a cost drill link lands on exactly the rows behind the count", async () => {
+    mockCost();
+    const html = await renderPage();
+    const laborLink = html.match(/href="([^"]*costCategory=labor[^"]*)"/);
+    expect(laborLink).not.toBeNull();
+    // The drill link is project-wide: no status/property/mode/group
+    // params ride along, so its destination rows equal the count.
+    expect(laborLink[1]).not.toContain("status=");
+    expect(laborLink[1]).not.toContain("propertyId=");
+    const linkParams = Object.fromEntries(
+      new URLSearchParams(laborLink[1].replace(/&amp;/g, "&").split("?")[1] || ""),
+    );
+    const drilled = await renderPage(linkParams);
+    expect(drilled).toContain("Decker turnover");
+    expect(drilled).toContain("Unassigned repairs");
+    expect(drilled).not.toContain("Kent kitchen");
+  });
+
+  it("routes allocation=unallocated to exactly the estimated-but-unreconciled rows", async () => {
+    // wp_3's allocation went stale: its $250.00 is unallocated, wp_1
+    // stays reconciled, wp_2 has no estimate at all.
+    const unreconciled = {
+      ...COST_BY_PACKAGE,
+      wp_3: {
+        estimate: { id: "est_3", version: 2, currentEstimateCents: 25000 },
+        allocation: { id: "alloc_3", version: 1, estimateId: "est_3", estimateVersion: 1, categoryTotals: { labor: 25000, material: 0, equipment: 0, external_services: 0, rental: 0 } },
+        reconciled: false, reason: "stale",
+      },
+    };
+    mockCost(unreconciled);
+    const html = await renderPage();
+    expect(html).toContain("Allocation incomplete — 1 of 2 estimated packages have no reconciled allocation, $250.00 unallocated. 1 of 2 reconciled.");
+    const link = html.match(/href="([^"]*allocation=unallocated[^"]*)">Show unallocated packages/);
+    expect(link).not.toBeNull();
+    const linkParams = Object.fromEntries(
+      new URLSearchParams(link[1].replace(/&amp;/g, "&").split("?")[1] || ""),
+    );
+    const drilled = await renderPage(linkParams);
+    expect(drilled).toContain("Unassigned repairs");
+    expect(drilled).not.toContain("Decker turnover");
+    expect(drilled).not.toContain("Kent kitchen");
+  });
+
+  it("carries the cost filters through the filter form as hidden inputs", async () => {
+    mockCost();
+    const html = await renderPage({ costCategory: "labor", allocation: "unallocated" });
+    expect(html).toContain('<input type="hidden" name="costCategory" value="labor"/>');
+    expect(html).toContain('<input type="hidden" name="allocation" value="unallocated"/>');
+    const plain = await renderPage();
+    expect(plain).not.toContain('name="costCategory"');
+    expect(plain).not.toContain('name="allocation"');
+  });
+
+  it("hides blank add-rows under a cost filter — a blank row has no cost data", async () => {
+    mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: [] });
+    mockCost({}, []);
+    const html = await renderPage({ costCategory: "labor" });
+    expect(html).not.toContain("New package title");
+    const plain = await renderPage();
+    expect(plain).toContain("New package title");
+  });
+
+  it("shows the not-available note when the cost read fails, and the strip shows —", async () => {
+    mocks.listCostSplitForPackages.mockRejectedValue(new Error("db down"));
+    const html = await renderPage();
+    expect(html).toContain("Decker turnover");
+    expect(html).toContain("Cost split isn&#x27;t available yet");
+    expect(html).toContain("Cost split not available yet");
+    expect(html).not.toContain("$1,750.00");
+  });
+
+  it("skips the bulk cost read for an empty project", async () => {
+    mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: [] });
+    const html = await renderPage();
+    expect(mocks.listCostSplitForPackages).not.toHaveBeenCalled();
     expect(html).toContain("No packages in this project yet");
   });
 });
