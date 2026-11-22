@@ -1048,7 +1048,19 @@ export default function DesignerViewport3D({
   // parent's overlay can clear. One-shot per visibility generation
   // (firstFrameSignal.js): a hide before any render discards the pending
   // generation, so a stale callback can never clear a later switch.
+  // Fix round 2 (re-review finding A): the signal is additionally gated
+  // on scene readiness — it fires only once the scene for the CURRENT
+  // design/modelEpoch has committed and rendered, never from an older or
+  // empty scene.
   onFirstFrameRendered = null,
+  // Fix round 2 (verdict finding A): called when a scene build fails, with
+  // { message, retry } — and with null when a later build commits
+  // successfully, clearing a previously reported failure. The parent shows
+  // a visible error + Retry instead of letting the loading overlay spin
+  // forever on a design that can never build; the overlay must never claim
+  // success for a failed build. retry re-runs the build for the current
+  // design (the same debounced commit the rebuild effect runs).
+  onSceneBuildError = null,
 }) {
   const mountRef = useRef(null);
 
@@ -1143,6 +1155,23 @@ export default function DesignerViewport3D({
   const multiSelectionRef = useRef(multiSelection);
   const onFloorCenterChangeRef = useRef(onFloorCenterChange);
   const onFirstFrameRenderedRef = useRef(onFirstFrameRendered);
+  const onSceneBuildErrorRef = useRef(onSceneBuildError);
+  // Fix round 2 (verdict finding A): the first-frame signal is shared by
+  // the setup effect (visibility + animation loop) and the rebuild effect
+  // (build generations), so it lives at component level — one signal per
+  // mount, reset by the mount itself. The rebuild effect calls
+  // noteBuildRequested() on every run and noteBuildCommitted() only when
+  // a build actually lands; the loop fires the signal only from a render
+  // of the committed current scene.
+  const firstFrameSignalRef = useRef(createFirstFrameSignal());
+  // Fix round 2: re-runs the latest scheduled build (the error-retry
+  // handle handed to the parent with a build failure). The rebuild effect
+  // assigns it on every run, so it always builds the current design.
+  const retryBuildRef = useRef(null);
+  // Fix round 2: the latest failed build ({ generation, message }) or null.
+  // A successful commit clears it and notifies the parent with null, so
+  // the parent's error state is never stale.
+  const lastBuildErrorRef = useRef(null);
   const designRef = useRef(design);
   const dispatchRef = useRef(dispatch);
   const popupRef = useRef(null);
@@ -1152,10 +1181,11 @@ export default function DesignerViewport3D({
     multiSelectionRef.current = multiSelection;
     onFloorCenterChangeRef.current = onFloorCenterChange;
     onFirstFrameRenderedRef.current = onFirstFrameRendered;
+    onSceneBuildErrorRef.current = onSceneBuildError;
     designRef.current = design;
     dispatchRef.current = dispatch;
     popupAnchorRef.current = popupAnchorForSelection(selection, design);
-  }, [selection, multiSelection, design, dispatch, onFloorCenterChange, onFirstFrameRendered]);
+  }, [selection, multiSelection, design, dispatch, onFloorCenterChange, onFirstFrameRendered, onSceneBuildError]);
   // ---- setup: once per mount ----
   useEffect(() => {
     const mount = mountRef.current;
@@ -1437,14 +1467,19 @@ export default function DesignerViewport3D({
       el.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%)`;
     };
 
-    // Fix round 1 (PR #850, verdict P1): one-shot visibility generation for
-    // the "first frame rendered" signal. Armed by the ResizeObserver below
-    // when the pane becomes visible; fired from the animate loop right
-    // after a real renderer.render() — never on a timer, and a stale
-    // generation (hidden again before any frame rendered) can never clear
-    // a later switch's overlay. Effect-local, like wasHidden below: one
-    // signal per mount, reset by the mount itself.
-    const firstFrameSignal = createFirstFrameSignal();
+    // Fix round 1 (PR #850, verdict P1), extended in fix round 2 with
+    // scene-ready gating (re-review finding A): one-shot visibility
+    // generation for the "first frame rendered" signal. Armed by the
+    // ResizeObserver below when the pane becomes visible; fired from the
+    // animate loop right after a real renderer.render() — never on a
+    // timer, and a stale generation (hidden again before any frame
+    // rendered) can never clear a later switch's overlay. Fix round 2:
+    // the signal additionally waits for the scene for the CURRENT
+    // design/modelEpoch to have committed (noteBuildRequested /
+    // noteBuildCommitted in the rebuild effect below), so a render of an
+    // older/empty scene stays silent. Shared with the rebuild effect via
+    // firstFrameSignalRef (one signal per mount).
+    const firstFrameSignal = firstFrameSignalRef.current;
 
     const lastTarget = { x: NaN, z: NaN };
     lastFrameTimeRef.current = performance.now();
@@ -1483,10 +1518,15 @@ export default function DesignerViewport3D({
         controls.update();
       }
       renderer.render(threeScene, camera);
-      // Fix round 1 (PR #850, verdict P1): the overlay clears from THIS
+      // Fix round 1 (PR #850, verdict P1), gated on scene readiness in
+      // fix round 2 (re-review finding A): the overlay clears from THIS
       // render — a real frame reached the canvas after the pane became
-      // visible — not from elapsed frame opportunities. The one-shot
-      // generation makes the signal fire at most once per visibility.
+      // visible — not from elapsed frame opportunities, and only when the
+      // rendered frame shows the scene for the CURRENT design/modelEpoch:
+      // the signal stays silent while a rebuild is pending or has failed,
+      // so an older/empty scene can never clear a later switch. The
+      // one-shot generation makes the signal fire at most once per
+      // visibility.
       firstFrameSignal.noteFrameRendered(() => onFirstFrameRenderedRef.current?.());
       // ViewCube gizmo, Orbit/Dollhouse only — Walk/Fly have no on-screen
       // widget to click while the pointer is locked. Scissored into a corner
@@ -1801,8 +1841,21 @@ export default function DesignerViewport3D({
   // ---- rebuild: on design change, debounced ----
   useEffect(() => {
     if (rebuildTimerRef.current) clearTimeout(rebuildTimerRef.current);
-    rebuildTimerRef.current = setTimeout(() => {
-      rebuildTimerRef.current = null;
+    // Fix round 2 (verdict finding A): a build for this design/modelEpoch
+    // is now pending — the first-frame signal must wait for it to commit
+    // and render, never fire from the older/empty scene still on screen.
+    // Requested on every effect run, even when the build is deferred
+    // (#851): the gate tracks the request, not the commit.
+    const requestedBuildGeneration = firstFrameSignalRef.current.noteBuildRequested();
+    // Named (not an anonymous timer callback) so the build-failure retry
+    // can re-run it: retryBuildRef always holds the latest scheduled
+    // build, i.e. the current design. Calling it directly clears any
+    // pending debounce timer first, so a retry never double-builds.
+    const runBuild = () => {
+      if (rebuildTimerRef.current) {
+        clearTimeout(rebuildTimerRef.current);
+        rebuildTimerRef.current = null;
+      }
       const scene = sceneRef.current;
       const materialCache = materialCacheRef.current;
       if (!scene || !materialCache) return; // setup effect has not run yet (or has torn down)
@@ -1810,9 +1863,18 @@ export default function DesignerViewport3D({
       let built;
       try {
         built = buildThreeScene(design);
-      } catch {
-        // A transiently invalid design (mid-edit) must not blank the 3D
-        // view or throw out of an effect; keep showing the last good build.
+      } catch (err) {
+        // Fix round 2 (verdict finding A): a failed build never commits,
+        // so the first-frame gate stays closed and the overlay must not
+        // claim success. Report a visible error + Retry to the parent
+        // instead of spinning forever; keep showing the last good build.
+        firstFrameSignalRef.current.noteBuildFailed(requestedBuildGeneration, err);
+        const message = err instanceof Error ? err.message : String(err);
+        lastBuildErrorRef.current = { generation: requestedBuildGeneration, message };
+        onSceneBuildErrorRef.current?.({
+          message,
+          retry: () => retryBuildRef.current?.(),
+        });
         return;
       }
 
@@ -2209,7 +2271,20 @@ export default function DesignerViewport3D({
       // A rebuild replaces every mesh, so a live highlight would otherwise
       // vanish on the next keystroke; re-apply it against the new registry.
       applyHighlight(selectionRef.current, design, registryRef, highlightedRef, multiSelectionRef.current);
-    }, REBUILD_DEBOUNCE_MS);
+
+      // Fix round 2 (verdict finding A): this build committed — the scene
+      // on screen is now the current design, so the first-frame signal may
+      // fire from the next render after a show. A successful commit also
+      // clears a previously reported build failure.
+      firstFrameSignalRef.current.noteBuildCommitted(requestedBuildGeneration);
+      if (lastBuildErrorRef.current !== null) {
+        lastBuildErrorRef.current = null;
+        onSceneBuildErrorRef.current?.(null);
+      }
+    };
+    // The retry handle always runs the latest scheduled build.
+    retryBuildRef.current = runBuild;
+    rebuildTimerRef.current = setTimeout(runBuild, REBUILD_DEBOUNCE_MS);
 
     return () => {
       if (rebuildTimerRef.current) {

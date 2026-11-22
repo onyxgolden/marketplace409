@@ -189,7 +189,26 @@ export default function DesignerCanvasArea({
     onSwitchingChange?.(switchingTo3D);
   }, [switchingTo3D, onSwitchingChange]);
 
+  // Fix round 2 (PR #850, verdict finding A): a scene build can fail
+  // (buildThreeScene throws for a transiently invalid design), and the
+  // loading overlay must never claim success for it. The viewport reports
+  // the failure here as { message, retry } — and null when a later build
+  // commits, clearing a previously reported failure — so this state is
+  // always current: it survives a view switch (the failed design is still
+  // unbuilt on the next switch) and clears only on a real success. While
+  // set, the overlay shows the error + Retry instead of spinning forever.
+  const [sceneBuildError, setSceneBuildError] = useState(null);
+  const handleSceneBuildError = useCallback((error) => {
+    setSceneBuildError(error);
+  }, []);
+  const handleBuildRetry = useCallback(() => {
+    const retry = sceneBuildError?.retry;
+    setSceneBuildError(null); // back to the spinner while the retry runs
+    retry?.();
+  }, [sceneBuildError]);
+
   const handleFirstFrameRendered = useCallback(() => {
+    setSceneBuildError(null);
     setSwitchingTo3D(false);
   }, []);
 
@@ -353,6 +372,7 @@ export default function DesignerCanvasArea({
           dispatch={dispatch}
           onFloorCenterChange={onFloorCenterChange}
           onFirstFrameRendered={handleFirstFrameRendered}
+          onSceneBuildError={handleSceneBuildError}
         />
         {switchingTo3D && (
           <div
@@ -361,13 +381,30 @@ export default function DesignerCanvasArea({
             aria-live="polite"
             className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-[#0b1220]/90 text-gray-200"
           >
-            <span
-              aria-hidden="true"
-              className="h-8 w-8 animate-spin rounded-full border-2 border-gray-500 border-t-emerald-500"
-            />
-            <p className="text-sm">
-              Loading 3D view… {elapsedSeconds}s
-            </p>
+            {sceneBuildError ? (
+              <>
+                <p className="text-sm font-semibold">3D view couldn&apos;t build this design</p>
+                <p className="max-w-md px-4 text-center text-xs text-gray-400">{sceneBuildError.message}</p>
+                <button
+                  type="button"
+                  data-testid="viewport-3d-build-error-retry"
+                  onClick={handleBuildRetry}
+                  className="pointer-events-auto rounded border border-emerald-500 px-3 py-1.5 text-sm text-emerald-300 hover:bg-emerald-500/10"
+                >
+                  Retry 3D build
+                </button>
+              </>
+            ) : (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="h-8 w-8 animate-spin rounded-full border-2 border-gray-500 border-t-emerald-500"
+                />
+                <p className="text-sm">
+                  Loading 3D view… {elapsedSeconds}s
+                </p>
+              </>
+            )}
           </div>
         )}
       </div>

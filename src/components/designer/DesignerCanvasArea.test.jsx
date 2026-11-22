@@ -387,3 +387,82 @@ describe("3D loading feedback (Jason's live report, 2026-11-21: ~30s switch with
     expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).not.toBeNull();
   });
 });
+
+describe("3D scene-build failure (fix round 2, verdict finding A)", () => {
+  function latestViewport3DProps() {
+    return viewport3DRenderSpy.mock.calls[viewport3DRenderSpy.mock.calls.length - 1][0];
+  }
+
+  async function fireBuildError(retry) {
+    await act(async () => {
+      latestViewport3DProps().onSceneBuildError({ message: "bad wall", retry });
+    });
+  }
+
+  it("a build failure while switching keeps the overlay up and shows an error with a Retry button, never a success", async () => {
+    await render({ view: "2d" });
+    await rerender({ view: "3d" });
+    expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).not.toBeNull();
+    const retry = vi.fn();
+    await fireBuildError(retry);
+    const overlay = container.querySelector('[data-testid="viewport-3d-loading-overlay"]');
+    expect(overlay).not.toBeNull();
+    expect(overlay.textContent).toContain("couldn't build");
+    expect(overlay.textContent).toContain("bad wall");
+    const retryButton = container.querySelector('[data-testid="viewport-3d-build-error-retry"]');
+    expect(retryButton).not.toBeNull();
+    expect(retryButton.textContent).toContain("Retry");
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("clicking Retry calls the viewport's retry handle and returns the overlay to the loading state", async () => {
+    await render({ view: "2d" });
+    await rerender({ view: "3d" });
+    const retry = vi.fn();
+    await fireBuildError(retry);
+    const retryButton = container.querySelector('[data-testid="viewport-3d-build-error-retry"]');
+    await act(async () => {
+      retryButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(retry).toHaveBeenCalledTimes(1);
+    const overlay = container.querySelector('[data-testid="viewport-3d-loading-overlay"]');
+    expect(overlay).not.toBeNull();
+    expect(overlay.textContent).toContain("Loading 3D view");
+    expect(container.querySelector('[data-testid="viewport-3d-build-error-retry"]')).toBeNull();
+  });
+
+  it("a later first-frame signal clears the error and the overlay", async () => {
+    await render({ view: "2d" });
+    await rerender({ view: "3d" });
+    await fireBuildError(vi.fn());
+    expect(container.querySelector('[data-testid="viewport-3d-build-error-retry"]')).not.toBeNull();
+    await act(async () => {
+      latestViewport3DProps().onFirstFrameRendered();
+    });
+    expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).toBeNull();
+  });
+
+  it("a failure reported while in 2D shows the error on the next switch, not before", async () => {
+    await render({ view: "2d" });
+    await fireBuildError(vi.fn());
+    expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).toBeNull();
+    await rerender({ view: "3d" });
+    const overlay = container.querySelector('[data-testid="viewport-3d-loading-overlay"]');
+    expect(overlay).not.toBeNull();
+    expect(container.querySelector('[data-testid="viewport-3d-build-error-retry"]')).not.toBeNull();
+  });
+
+  it("a successful build (null error) clears a stored error and returns the overlay to loading", async () => {
+    await render({ view: "2d" });
+    await rerender({ view: "3d" });
+    await fireBuildError(vi.fn());
+    expect(container.querySelector('[data-testid="viewport-3d-build-error-retry"]')).not.toBeNull();
+    await act(async () => {
+      latestViewport3DProps().onSceneBuildError(null);
+    });
+    const overlay = container.querySelector('[data-testid="viewport-3d-loading-overlay"]');
+    expect(overlay).not.toBeNull();
+    expect(overlay.textContent).toContain("Loading 3D view");
+    expect(container.querySelector('[data-testid="viewport-3d-build-error-retry"]')).toBeNull();
+  });
+});
