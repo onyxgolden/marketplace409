@@ -88,6 +88,17 @@ export default function WorkPackageFilterForm({
       {forgeProjectParam && (
         <input type="hidden" name="forgeProject" value={forgeProjectParam} />
       )}
+      {/* D2b: the cost drill-down filters are not selects in this form —
+         they arrive from the cost-split widget's links — but submitting
+         the form must not silently drop them. Hidden inputs carry the
+         active cost filter through every Apply, so the grid stays
+         narrowed and the widget's active state stays honest. */}
+      {filters.costCategory && (
+        <input type="hidden" name="costCategory" value={filters.costCategory} />
+      )}
+      {filters.allocation && (
+        <input type="hidden" name="allocation" value={filters.allocation} />
+      )}
       {/* D11: a bare <select> has no text/background color of its own
          in dark mode; it inherited the page's white text with the
          browser's native (white) control background, rendering a
