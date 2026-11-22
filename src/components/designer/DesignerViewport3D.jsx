@@ -35,6 +35,10 @@ import {
 } from "@/domains/roomDesigner/designer3DEditing";
 import Viewport3DSizePopup from "./Viewport3DSizePopup";
 import { createFurnitureModelCache, furniturePartGeometry } from "./furnitureModelCache";
+// Phone scroll-freeze slice (Jason's live report, 2026-11-21): pause the
+// render loop and defer synchronous rebuilds while the 3D pane is hidden —
+// see hiddenPaneWork.js.
+import { createDeferredRebuild, shouldRenderFrame } from "./hiddenPaneWork";
 import {
   acquireTextureCaches,
   plasterTexture,
@@ -1058,6 +1062,18 @@ export default function DesignerViewport3D({
   const tierNameRef = useRef("balanced");
   const initialCameraSetRef = useRef(false);
   const rebuildTimerRef = useRef(null);
+  // Phone scroll-freeze slice (Jason's live report, 2026-11-21): the 3D
+  // pane is always mounted but often hidden (2D-only view). The
+  // ResizeObserver in the setup effect owns the visibility truth (a hidden
+  // pane reports 0x0); paneVisibleRef shares it with the animate loop
+  // (pause rendering while hidden) and the rebuild effect (defer
+  // synchronous rebuilds while hidden). deferredRebuild (hiddenPaneWork.js)
+  // is the one deferred-rebuild machine; deferredRebuildSeq is bumped by
+  // the ResizeObserver when the pane becomes visible with a rebuild
+  // pending, so the rebuild effect re-runs and builds.
+  const paneVisibleRef = useRef(false);
+  const [deferredRebuild] = useState(() => createDeferredRebuild());
+  const [deferredRebuildSeq, setDeferredRebuildSeq] = useState(0);
   const builtRef = useRef(null); // last buildThreeScene descriptor, for reset-view
   // Camera mode: 'orbit' (default, existing behavior) | 'dollhouse' (OrbitControls,
   // constrained to an elevated overview) | 'walk' | 'fly' (PointerLockControls,
@@ -1433,6 +1449,16 @@ export default function DesignerViewport3D({
       const delta = Math.min((now - lastFrameTimeRef.current) / 1000, 0.1);
       lastFrameTimeRef.current = now;
 
+      // Phone scroll-freeze slice (Jason's live report, 2026-11-21): while
+      // the pane is hidden (2D-only view) render NOTHING — the full FCCU
+      // scene was rendering 60x/s into a pane nobody could see, starving
+      // the main thread the page scroll needs. The rAF loop itself stays
+      // alive (one cheap callback per frame) so showing the pane resumes
+      // on the very next frame with no restart and no orbit/camera state
+      // lost. Time bookkeeping above still runs every frame, so a long
+      // hidden stretch cannot fling the camera on resume (delta clamp).
+      if (!shouldRenderFrame(paneVisibleRef.current, document.hidden)) return;
+
       const mode = cameraModeRef.current;
       if (mode === "walk" || mode === "fly") {
         if (pointerLockedRef.current) {
@@ -1663,11 +1689,31 @@ export default function DesignerViewport3D({
     // CSS visibility (2D-only <-> split <-> 3D-only) and dragging the split
     // divider both change this element's size without the window itself
     // resizing, and a window-only listener would miss both.
+    let wasHidden = true; // the pane may start hidden (2D-only on mount)
     const applySize = (w, h) => {
-      if (!(w > 0) || !(h > 0)) return; // a hidden (display:none) pane reports 0x0 — skip, don't corrupt the camera
+      if (!(w > 0) || !(h > 0)) {
+        // A hidden (display:none) pane reports 0x0 — skip, don't corrupt
+        // the camera. Phone scroll-freeze slice: record the hide so the
+        // animate loop pauses and the rebuild effect defers.
+        wasHidden = true;
+        paneVisibleRef.current = false;
+        return;
+      }
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      if (wasHidden) {
+        // The pane just became visible (2D -> 3D or 2D -> Split).
+        // Rendering resumes on the next animation frame, and any rebuild
+        // deferred while hidden is now due: bump the sequence so the
+        // rebuild effect re-runs and builds (once, however many requests
+        // piled up while hidden).
+        wasHidden = false;
+        paneVisibleRef.current = true;
+        if (deferredRebuild.noteBecameVisible()) {
+          setDeferredRebuildSeq((s) => s + 1);
+        }
+      }
     };
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -1749,7 +1795,10 @@ export default function DesignerViewport3D({
       sunRef.current = null;
     };
     // Intentionally empty deps: this effect must run exactly once per mount.
-  }, []);
+    // (deferredRebuild is listed only for the exhaustive-deps rule — it is
+    // a stable useState-lazy value that never changes identity, so it can
+    // never re-fire this effect.)
+  }, [deferredRebuild]);
 
   // ---- rebuild: on design change, debounced ----
   useEffect(() => {
@@ -1759,6 +1808,21 @@ export default function DesignerViewport3D({
       const scene = sceneRef.current;
       const materialCache = materialCacheRef.current;
       if (!scene || !materialCache) return; // setup effect has not run yet (or has torn down)
+
+      // Phone scroll-freeze slice (Jason's live report, 2026-11-21): never
+      // run a synchronous multi-second buildThreeScene while the pane is
+      // hidden — that is what froze page scrolling for 10-15s per rebuild.
+      // Defer instead; the ResizeObserver runs the build once when the
+      // pane becomes visible again (deferredRebuildSeq bump), and any
+      // number of hidden requests coalesce into that one build. Checked
+      // at fire time, not schedule time, so a pane that hides during the
+      // 120ms debounce still defers, and one that shows during it builds.
+      // (Chunking/yielding the build itself was considered and rejected:
+      // the builder is one synchronous pass over the design, and deferring
+      // removes the whole block from the scroll path rather than slicing
+      // it. A rebuild that lands while the user is LOOKING at the pane is
+      // the companion loading-feedback slice's moment, not a scroll freeze.)
+      if (deferredRebuild.requestRebuild(paneVisibleRef.current) === "defer") return;
 
       let built;
       try {
@@ -2170,7 +2234,13 @@ export default function DesignerViewport3D({
         rebuildTimerRef.current = null;
       }
     };
-  }, [design, modelEpoch]);
+    // deferredRebuildSeq: bumped by the ResizeObserver when the pane
+    // becomes visible with a rebuild pending — the effect re-runs and
+    // builds. (design/modelEpoch alone would never re-fire for a
+    // visibility change.) deferredRebuild is a stable useState-lazy value
+    // that never changes identity; it is listed only for the
+    // exhaustive-deps rule.
+  }, [design, modelEpoch, deferredRebuildSeq, deferredRebuild]);
 
   // ---- highlight: on selection change, cheap ----
   useEffect(() => {
