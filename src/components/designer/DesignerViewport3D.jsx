@@ -35,6 +35,10 @@ import {
 } from "@/domains/roomDesigner/designer3DEditing";
 import Viewport3DSizePopup from "./Viewport3DSizePopup";
 import { createFurnitureModelCache, furniturePartGeometry } from "./furnitureModelCache";
+// Fix round 1 (PR #850, verdict P1): the "first frame rendered" signal is a
+// one-shot visibility generation, fired from the actual render path — see
+// firstFrameSignal.js.
+import { createFirstFrameSignal } from "./firstFrameSignal";
 import {
   acquireTextureCaches,
   plasterTexture,
@@ -1036,14 +1040,14 @@ export default function DesignerViewport3D({
   // (the floor spot the view is centered on) — whenever it moves. One-tap
   // shape placement in 3D drops the shape there.
   onFloorCenterChange = null,
-  // Loading-feedback fix (Jason's live report, 2026-11-21): called once
-  // after this pane's ResizeObserver first reports a real (non-zero)
-  // size following a hidden (0x0) one — the signal that this pane just
-  // became visible (2D -> 3D or 2D -> Split) and the parent's overlay
-  // can clear. Deferred two animation frames past that point (not called
-  // synchronously from the observer), so the browser has definitely had
-  // a chance to paint at least one real frame before the caller treats
-  // "pixels are on screen" as true.
+  // Loading-feedback fix (Jason's live report, 2026-11-21), fix round 1
+  // (verdict P1): called once after this pane's ResizeObserver reports a
+  // real (non-zero) size following a hidden (0x0) one AND the animation
+  // loop has then run a real renderer.render(threeScene, camera) — the
+  // signal that a first 3D frame actually reached the canvas, so the
+  // parent's overlay can clear. One-shot per visibility generation
+  // (firstFrameSignal.js): a hide before any render discards the pending
+  // generation, so a stale callback can never clear a later switch.
   onFirstFrameRendered = null,
 }) {
   const mountRef = useRef(null);
@@ -1433,6 +1437,15 @@ export default function DesignerViewport3D({
       el.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%)`;
     };
 
+    // Fix round 1 (PR #850, verdict P1): one-shot visibility generation for
+    // the "first frame rendered" signal. Armed by the ResizeObserver below
+    // when the pane becomes visible; fired from the animate loop right
+    // after a real renderer.render() — never on a timer, and a stale
+    // generation (hidden again before any frame rendered) can never clear
+    // a later switch's overlay. Effect-local, like wasHidden below: one
+    // signal per mount, reset by the mount itself.
+    const firstFrameSignal = createFirstFrameSignal();
+
     const lastTarget = { x: NaN, z: NaN };
     lastFrameTimeRef.current = performance.now();
     let raf = 0;
@@ -1470,6 +1483,11 @@ export default function DesignerViewport3D({
         controls.update();
       }
       renderer.render(threeScene, camera);
+      // Fix round 1 (PR #850, verdict P1): the overlay clears from THIS
+      // render — a real frame reached the canvas after the pane became
+      // visible — not from elapsed frame opportunities. The one-shot
+      // generation makes the signal fire at most once per visibility.
+      firstFrameSignal.noteFrameRendered(() => onFirstFrameRenderedRef.current?.());
       // ViewCube gizmo, Orbit/Dollhouse only — Walk/Fly have no on-screen
       // widget to click while the pointer is locked. Scissored into a corner
       // of the SAME renderer/canvas rather than a second WebGL context; the
@@ -1678,20 +1696,24 @@ export default function DesignerViewport3D({
     const applySize = (w, h) => {
       if (!(w > 0) || !(h > 0)) {
         wasHidden = true; // a hidden (display:none) pane reports 0x0 — skip, don't corrupt the camera
+        // Fix round 1 (PR #850, verdict P1): a hide discards any pending
+        // first-frame generation, so a stale callback can never clear a
+        // later switch's overlay.
+        firstFrameSignal.noteBecameHidden();
         return;
       }
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
       if (wasHidden) {
-        // This pane just became visible (2D -> 3D or 2D -> Split). Two
-        // animation frames is the standard "the browser has definitely
-        // painted by now" wait — by the time this fires, whatever the
-        // loading overlay's own DOM paint needed has had every chance to
-        // happen, so clearing it here never races ahead of it actually
-        // being on screen.
+        // This pane just became visible (2D -> 3D or 2D -> Split). Arm a
+        // new one-shot generation; the animate loop fires it from the
+        // first renderer.render() after this point. (The previous
+        // implementation inferred "rendered" from two bare
+        // requestAnimationFrame callbacks, which prove only that frame
+        // opportunities elapsed — not that the scene reached the canvas.)
         wasHidden = false;
-        requestAnimationFrame(() => requestAnimationFrame(() => onFirstFrameRenderedRef.current?.()));
+        firstFrameSignal.noteBecameVisible();
       }
     };
     const resizeObserver = new ResizeObserver((entries) => {

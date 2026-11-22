@@ -943,9 +943,10 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   const [zoomRequest, setZoomRequest] = useState(null);
   // Loading-feedback fix (Jason's live report, 2026-11-21): true while
   // DesignerCanvasArea's 3D pane is un-hiding and has not yet rendered a
-  // real frame. Drives the view-switch buttons' busy state below —
-  // disabled while true, so a repeat click can never double-trigger a
-  // second rebuild.
+  // real frame. Drives the view-switch buttons' busy state below — fix
+  // round 1 (verdict P2): only the ACTIVE view's button is disabled while
+  // true, so a repeat click on the load trigger is ignored without
+  // trapping the user (2D stays an explicit escape).
   const [isSwitchingTo3D, setIsSwitchingTo3D] = useState(false);
   const zoomSeq = useRef(0);
   // Open-time auto-fit identity for PlanCanvas: the open project + current
@@ -1039,7 +1040,17 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               <button
                 key={v}
                 onClick={() => dispatch({ type: "SET_VIEW", view: v })}
-                disabled={isSwitchingTo3D}
+                // Fix round 1 (PR #850, verdict P2): while the 3D pane is
+                // un-hiding, disable ONLY the active view's button — the
+                // load trigger, so a repeat click is ignored. The 2D button
+                // stays enabled as an explicit escape (the dispatch never
+                // required trapping the user in the loading view), and Split
+                // stays available; either clears or carries the switch
+                // without a second rebuild (rebuilds key off design, not
+                // view). Disabling all three made the "switch back to 2D
+                // while loading clears the overlay" path unreachable in the
+                // assembled screen.
+                disabled={isSwitchingTo3D && view === v}
                 className={`px-3 py-1 text-sm disabled:cursor-wait disabled:opacity-60 ${view === v ? "bg-emerald-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}
               >
                 {v === "2d" ? "2D Plan" : v === "split" ? "Split" : "3D View"}

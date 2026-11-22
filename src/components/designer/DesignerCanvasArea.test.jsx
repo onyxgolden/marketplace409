@@ -353,6 +353,10 @@ describe("3D loading feedback (Jason's live report, 2026-11-21: ~30s switch with
   });
 
   it("switching straight back to 2D while still loading clears the overlay (never stuck on)", async () => {
+    // Fix round 1 (verdict P2): this path is reachable in the assembled
+    // screen too — DesignerScreen leaves the 2D button enabled as an
+    // explicit escape while switching (DesignerScreen.viewSwitch.test.jsx
+    // pins the button states); it is not only a CanvasArea-level claim.
     await render({ view: "2d" });
     await rerender({ view: "3d" });
     expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).not.toBeNull();
