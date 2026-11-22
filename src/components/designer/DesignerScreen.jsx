@@ -941,6 +941,12 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   };
   // "Zoom to sheet" requests from the Paper sheets panel: consumed by PlanCanvas.
   const [zoomRequest, setZoomRequest] = useState(null);
+  // Loading-feedback fix (Jason's live report, 2026-11-21): true while
+  // DesignerCanvasArea's 3D pane is un-hiding and has not yet rendered a
+  // real frame. Drives the view-switch buttons' busy state below —
+  // disabled while true, so a repeat click can never double-trigger a
+  // second rebuild.
+  const [isSwitchingTo3D, setIsSwitchingTo3D] = useState(false);
   const zoomSeq = useRef(0);
   // Open-time auto-fit identity for PlanCanvas: the open project + current
   // level. It changes when a design opens or the level switches (the
@@ -1028,14 +1034,16 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               </button>
             ))}
           </div>
-          <div className="flex overflow-hidden rounded border border-gray-700">
+          <div className="flex overflow-hidden rounded border border-gray-700" aria-busy={isSwitchingTo3D}>
             {(["2d", "split", "3d"]).map((v) => (
               <button
                 key={v}
                 onClick={() => dispatch({ type: "SET_VIEW", view: v })}
-                className={`px-3 py-1 text-sm ${view === v ? "bg-emerald-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}
+                disabled={isSwitchingTo3D}
+                className={`px-3 py-1 text-sm disabled:cursor-wait disabled:opacity-60 ${view === v ? "bg-emerald-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}
               >
                 {v === "2d" ? "2D Plan" : v === "split" ? "Split" : "3D View"}
+                {isSwitchingTo3D && view === v && "…"}
               </button>
             ))}
           </div>
@@ -1270,6 +1278,7 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               onPlanCenterChange={reportPlanCenter}
               onFloorCenterChange={reportFloorCenter}
               onFileImport={onCanvasFileImport}
+              onSwitchingChange={setIsSwitchingTo3D}
             />
           )}
           </DesignerErrorBoundary>

@@ -1036,6 +1036,15 @@ export default function DesignerViewport3D({
   // (the floor spot the view is centered on) — whenever it moves. One-tap
   // shape placement in 3D drops the shape there.
   onFloorCenterChange = null,
+  // Loading-feedback fix (Jason's live report, 2026-11-21): called once
+  // after this pane's ResizeObserver first reports a real (non-zero)
+  // size following a hidden (0x0) one — the signal that this pane just
+  // became visible (2D -> 3D or 2D -> Split) and the parent's overlay
+  // can clear. Deferred two animation frames past that point (not called
+  // synchronously from the observer), so the browser has definitely had
+  // a chance to paint at least one real frame before the caller treats
+  // "pixels are on screen" as true.
+  onFirstFrameRendered = null,
 }) {
   const mountRef = useRef(null);
 
@@ -1129,6 +1138,7 @@ export default function DesignerViewport3D({
   const selectionRef = useRef(selection);
   const multiSelectionRef = useRef(multiSelection);
   const onFloorCenterChangeRef = useRef(onFloorCenterChange);
+  const onFirstFrameRenderedRef = useRef(onFirstFrameRendered);
   const designRef = useRef(design);
   const dispatchRef = useRef(dispatch);
   const popupRef = useRef(null);
@@ -1137,10 +1147,11 @@ export default function DesignerViewport3D({
     selectionRef.current = selection;
     multiSelectionRef.current = multiSelection;
     onFloorCenterChangeRef.current = onFloorCenterChange;
+    onFirstFrameRenderedRef.current = onFirstFrameRendered;
     designRef.current = design;
     dispatchRef.current = dispatch;
     popupAnchorRef.current = popupAnchorForSelection(selection, design);
-  }, [selection, multiSelection, design, dispatch, onFloorCenterChange]);
+  }, [selection, multiSelection, design, dispatch, onFloorCenterChange, onFirstFrameRendered]);
   // ---- setup: once per mount ----
   useEffect(() => {
     const mount = mountRef.current;
@@ -1663,11 +1674,25 @@ export default function DesignerViewport3D({
     // CSS visibility (2D-only <-> split <-> 3D-only) and dragging the split
     // divider both change this element's size without the window itself
     // resizing, and a window-only listener would miss both.
+    let wasHidden = true; // the pane may start hidden (2D-only on mount)
     const applySize = (w, h) => {
-      if (!(w > 0) || !(h > 0)) return; // a hidden (display:none) pane reports 0x0 — skip, don't corrupt the camera
+      if (!(w > 0) || !(h > 0)) {
+        wasHidden = true; // a hidden (display:none) pane reports 0x0 — skip, don't corrupt the camera
+        return;
+      }
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      if (wasHidden) {
+        // This pane just became visible (2D -> 3D or 2D -> Split). Two
+        // animation frames is the standard "the browser has definitely
+        // painted by now" wait — by the time this fires, whatever the
+        // loading overlay's own DOM paint needed has had every chance to
+        // happen, so clearing it here never races ahead of it actually
+        // being on screen.
+        wasHidden = false;
+        requestAnimationFrame(() => requestAnimationFrame(() => onFirstFrameRenderedRef.current?.()));
+      }
     };
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];

@@ -305,3 +305,81 @@ describe("split ratio", () => {
     expect(after).toBeGreaterThan(before);
   });
 });
+
+describe("3D loading feedback (Jason's live report, 2026-11-21: ~30s switch with no acknowledgement)", () => {
+  function latestViewport3DProps() {
+    return viewport3DRenderSpy.mock.calls[viewport3DRenderSpy.mock.calls.length - 1][0];
+  }
+
+  it("no overlay on first mount in 2D -- nothing to acknowledge yet", async () => {
+    await render({ view: "2d" });
+    expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).toBeNull();
+  });
+
+  it("switching 2D -> 3D shows the overlay in the same commit as the view change, with a working status role", async () => {
+    await render({ view: "2d" });
+    await rerender({ view: "3d" });
+    const overlay = container.querySelector('[data-testid="viewport-3d-loading-overlay"]');
+    expect(overlay).not.toBeNull();
+    expect(overlay.getAttribute("role")).toBe("status");
+    expect(overlay.textContent).toContain("Loading 3D view");
+  });
+
+  it("switching 2D -> Split also shows the overlay (Split un-hides the same 3D pane)", async () => {
+    await render({ view: "2d" });
+    await rerender({ view: "split" });
+    expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).not.toBeNull();
+  });
+
+  it("clears once the 3D viewport reports its first rendered frame, never before", async () => {
+    await render({ view: "2d" });
+    await rerender({ view: "3d" });
+    expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).not.toBeNull();
+    await act(async () => {
+      latestViewport3DProps().onFirstFrameRendered();
+    });
+    expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).toBeNull();
+  });
+
+  it("does not re-show the overlay on an unrelated re-render while already showing 3D (e.g. a selection change)", async () => {
+    await render({ view: "2d" });
+    await rerender({ view: "3d" });
+    await act(async () => {
+      latestViewport3DProps().onFirstFrameRendered();
+    });
+    expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).toBeNull();
+    await rerender({ view: "3d", selection: { kind: "wall", id: "w1" } });
+    expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).toBeNull();
+  });
+
+  it("switching straight back to 2D while still loading clears the overlay (never stuck on)", async () => {
+    await render({ view: "2d" });
+    await rerender({ view: "3d" });
+    expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).not.toBeNull();
+    await rerender({ view: "2d" });
+    expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).toBeNull();
+  });
+
+  it("reports the switching state upward via onSwitchingChange, so the view buttons can show a busy state", async () => {
+    const onSwitchingChange = vi.fn();
+    await render({ view: "2d", onSwitchingChange });
+    onSwitchingChange.mockClear();
+    await rerender({ view: "3d", onSwitchingChange });
+    expect(onSwitchingChange).toHaveBeenCalledWith(true);
+    await act(async () => {
+      latestViewport3DProps().onFirstFrameRendered();
+    });
+    expect(onSwitchingChange).toHaveBeenCalledWith(false);
+  });
+
+  it("switching 3D -> 2D -> 3D again re-shows the overlay for the second switch too", async () => {
+    await render({ view: "2d" });
+    await rerender({ view: "3d" });
+    await act(async () => {
+      latestViewport3DProps().onFirstFrameRendered();
+    });
+    await rerender({ view: "2d" });
+    await rerender({ view: "3d" });
+    expect(container.querySelector('[data-testid="viewport-3d-loading-overlay"]')).not.toBeNull();
+  });
+});
