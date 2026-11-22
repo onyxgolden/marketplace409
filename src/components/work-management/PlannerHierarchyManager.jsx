@@ -21,16 +21,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import {
-  CLIENT_STATUSES,
-  PROJECT_STATUSES,
-  SITE_STATUSES,
-  SITE_TYPES,
-  validateClientInput,
-  validateProjectInput,
-  validateSiteInput,
-} from "@/domains/forge-shared-hierarchy/hierarchy.js";
 import { withWorkspaceQuery } from "./workspaceQuery.js";
+import { buildCreateBody, emptyDraft, newRequestId, validateDraft } from "./hierarchyFormShared.js";
+import HierarchyRecordFields, { statusLabel } from "./HierarchyRecordFields.jsx";
 
 const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
@@ -38,15 +31,6 @@ const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-5
 const btnDanger = `${btn} bg-red-600 text-white hover:bg-red-500`;
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
-
-const STATUS_LABELS = {
-  active: "Active",
-  inactive: "Inactive",
-  archived: "Archived",
-  planned: "Planned",
-  on_hold: "On hold",
-  complete: "Complete",
-};
 
 const ENTITY_LABELS = { client: "client", site: "site", project: "project" };
 
@@ -59,15 +43,6 @@ const DELETE_BLOCK_MESSAGE = {
   site: "Remove or move the projects first.",
   project: "Unassign or explicitly move packages first.",
 };
-
-function newRequestId() {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
-  return `req-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function statusLabel(status) {
-  return STATUS_LABELS[status] || status;
-}
 
 function blank(value) {
   return value === null || value === undefined ? "" : String(value);
@@ -85,36 +60,6 @@ async function callJson(path, { method = "GET", body } = {}) {
   });
   const data = await response.json().catch(() => ({}));
   return { response, data };
-}
-
-function emptyDraft(entity, parentId) {
-  if (entity === "client") {
-    return { name: "", externalReference: "", notes: "", status: "active" };
-  }
-  if (entity === "site") {
-    return {
-      parentId: parentId || "",
-      name: "",
-      siteType: "",
-      addressLine1: "",
-      addressLine2: "",
-      city: "",
-      region: "",
-      postalCode: "",
-      countryCode: "",
-      status: "active",
-    };
-  }
-  return {
-    parentId: parentId || "",
-    name: "",
-    projectCode: "",
-    description: "",
-    projectType: "",
-    plannedStart: "",
-    plannedFinish: "",
-    status: "planned",
-  };
 }
 
 function draftFromRecord(entity, record) {
@@ -169,12 +114,6 @@ function draftIsUnchanged(entity, draft, record) {
   if (entity === "site") return draft.parentId === blank(record.clientId);
   if (entity === "project") return draft.parentId === blank(record.siteId);
   return true;
-}
-
-function validateDraft(entity, draft) {
-  if (entity === "client") return validateClientInput(draft);
-  if (entity === "site") return validateSiteInput(draft);
-  return validateProjectInput(draft);
 }
 
 export default function PlannerHierarchyManager() {
@@ -484,37 +423,10 @@ export default function PlannerHierarchyManager() {
     let result;
     try {
       if (mode === "create") {
-        const body =
-          entity === "client"
-            // A test-mode client create sends isTest: true so the route
-            // selects the test-create RPC (the only way to mint a test
-            // client). The regular create takes no test flag.
-            ? { entity, name: draft.name, externalReference: draft.externalReference || null, notes: draft.notes || null, isTest: openForm.isTest === true, requestId }
-            : entity === "site"
-              ? {
-                  entity,
-                  clientId: draft.parentId,
-                  name: draft.name,
-                  siteType: draft.siteType || null,
-                  addressLine1: draft.addressLine1 || null,
-                  addressLine2: draft.addressLine2 || null,
-                  city: draft.city || null,
-                  region: draft.region || null,
-                  postalCode: draft.postalCode || null,
-                  countryCode: draft.countryCode || null,
-                  requestId,
-                }
-              : {
-                  entity,
-                  siteId: draft.parentId,
-                  name: draft.name,
-                  projectCode: draft.projectCode || null,
-                  description: draft.description || null,
-                  projectType: draft.projectType || null,
-                  plannedStart: draft.plannedStart || null,
-                  plannedFinish: draft.plannedFinish || null,
-                  requestId,
-                };
+        // A test-mode client create sends isTest: true so the route
+        // selects the test-create RPC (the only way to mint a test
+        // client). The regular create takes no test flag.
+        const body = buildCreateBody(entity, draft, { isTest: openForm.isTest === true, requestId });
         result = await callJson("/api/forge/hierarchy", { method: "POST", body });
       } else {
         // PATCH: send the draft strings verbatim, including "" for a
@@ -863,7 +775,6 @@ export default function PlannerHierarchyManager() {
       mode === "create"
         ? `New ${ENTITY_LABELS[entity]}`
         : `Edit ${ENTITY_LABELS[entity]} ${openForm.record?.name || ""}`;
-    const statuses = entity === "client" ? CLIENT_STATUSES : entity === "site" ? SITE_STATUSES : PROJECT_STATUSES;
     const parents = parentOptions(entity);
     return (
       <div className="rounded-lg border border-slate-200 bg-slate-50 p-4" data-testid="hierarchy-form">
@@ -877,151 +788,8 @@ export default function PlannerHierarchyManager() {
         {formError && (
           <p role="alert" className="mt-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">{formError}</p>
         )}
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {entity !== "client" && (
-            <div className="sm:col-span-2">
-              <label className={label} htmlFor="hierarchy-form-parent">
-                {entity === "site" ? "Parent client" : "Parent site"}
-              </label>
-              <select
-                id="hierarchy-form-parent"
-                className={input}
-                value={draft.parentId}
-                onChange={(event) => updateDraft("parentId", event.target.value)}
-              >
-                <option value="">{entity === "site" ? "Choose a client…" : "Choose a site…"}</option>
-                {parents.map((parent) => (
-                  <option key={parent.id} value={parent.id}>{parent.label}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          <div>
-            <label className={label} htmlFor="hierarchy-form-name">Name</label>
-            <input
-              id="hierarchy-form-name"
-              className={input}
-              value={draft.name}
-              onChange={(event) => updateDraft("name", event.target.value)}
-            />
-          </div>
-          {entity === "client" && (
-            <div>
-              <label className={label} htmlFor="hierarchy-form-external-reference">External reference</label>
-              <input
-                id="hierarchy-form-external-reference"
-                className={input}
-                value={draft.externalReference}
-                onChange={(event) => updateDraft("externalReference", event.target.value)}
-              />
-            </div>
-          )}
-          {entity === "site" && (
-            <div>
-              <label className={label} htmlFor="hierarchy-form-site-type">Site type</label>
-              <select
-                id="hierarchy-form-site-type"
-                className={input}
-                value={draft.siteType}
-                onChange={(event) => updateDraft("siteType", event.target.value)}
-              >
-                <option value="">Choose a type…</option>
-                {SITE_TYPES.map((type) => (
-                  <option key={type} value={type}>{type}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          {entity === "project" && (
-            <div>
-              <label className={label} htmlFor="hierarchy-form-project-code">Project code</label>
-              <input
-                id="hierarchy-form-project-code"
-                className={input}
-                value={draft.projectCode}
-                onChange={(event) => updateDraft("projectCode", event.target.value)}
-              />
-            </div>
-          )}
-          {entity === "client" && (
-            <div className="sm:col-span-2">
-              <label className={label} htmlFor="hierarchy-form-notes">Notes</label>
-              <textarea
-                id="hierarchy-form-notes"
-                className={input}
-                rows={2}
-                value={draft.notes}
-                onChange={(event) => updateDraft("notes", event.target.value)}
-              />
-            </div>
-          )}
-          {entity === "site" && (
-            <>
-              <div>
-                <label className={label} htmlFor="hierarchy-form-address-line1">Address line 1</label>
-                <input id="hierarchy-form-address-line1" className={input} value={draft.addressLine1} onChange={(event) => updateDraft("addressLine1", event.target.value)} />
-              </div>
-              <div>
-                <label className={label} htmlFor="hierarchy-form-address-line2">Address line 2</label>
-                <input id="hierarchy-form-address-line2" className={input} value={draft.addressLine2} onChange={(event) => updateDraft("addressLine2", event.target.value)} />
-              </div>
-              <div>
-                <label className={label} htmlFor="hierarchy-form-city">City</label>
-                <input id="hierarchy-form-city" className={input} value={draft.city} onChange={(event) => updateDraft("city", event.target.value)} />
-              </div>
-              <div>
-                <label className={label} htmlFor="hierarchy-form-region">Region</label>
-                <input id="hierarchy-form-region" className={input} value={draft.region} onChange={(event) => updateDraft("region", event.target.value)} />
-              </div>
-              <div>
-                <label className={label} htmlFor="hierarchy-form-postal-code">Postal code</label>
-                <input id="hierarchy-form-postal-code" className={input} value={draft.postalCode} onChange={(event) => updateDraft("postalCode", event.target.value)} />
-              </div>
-              <div>
-                <label className={label} htmlFor="hierarchy-form-country-code">Country code</label>
-                <input id="hierarchy-form-country-code" className={input} value={draft.countryCode} onChange={(event) => updateDraft("countryCode", event.target.value)} placeholder="US" />
-              </div>
-            </>
-          )}
-          {entity === "project" && (
-            <>
-              <div className="sm:col-span-2">
-                <label className={label} htmlFor="hierarchy-form-description">Description</label>
-                <textarea
-                  id="hierarchy-form-description"
-                  className={input}
-                  rows={2}
-                  value={draft.description}
-                  onChange={(event) => updateDraft("description", event.target.value)}
-                />
-              </div>
-              <div>
-                <label className={label} htmlFor="hierarchy-form-project-type">Project type</label>
-                <input id="hierarchy-form-project-type" className={input} value={draft.projectType} onChange={(event) => updateDraft("projectType", event.target.value)} />
-              </div>
-              <div>
-                <label className={label} htmlFor="hierarchy-form-planned-start">Planned start</label>
-                <input id="hierarchy-form-planned-start" type="date" className={input} value={draft.plannedStart} onChange={(event) => updateDraft("plannedStart", event.target.value)} />
-              </div>
-              <div>
-                <label className={label} htmlFor="hierarchy-form-planned-finish">Planned finish</label>
-                <input id="hierarchy-form-planned-finish" type="date" className={input} value={draft.plannedFinish} onChange={(event) => updateDraft("plannedFinish", event.target.value)} />
-              </div>
-            </>
-          )}
-          <div>
-            <label className={label} htmlFor="hierarchy-form-status">Status</label>
-            <select
-              id="hierarchy-form-status"
-              className={input}
-              value={draft.status}
-              onChange={(event) => updateDraft("status", event.target.value)}
-            >
-              {statuses.map((status) => (
-                <option key={status} value={status}>{statusLabel(status)}</option>
-              ))}
-            </select>
-          </div>
+        <div className="mt-3">
+          <HierarchyRecordFields entity={entity} draft={draft} parents={parents} onChange={updateDraft} />
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <button type="button" className={btnPrimary} disabled={busy} onClick={saveForm}>
