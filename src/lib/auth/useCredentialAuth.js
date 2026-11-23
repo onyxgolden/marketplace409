@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { isMfaLayer2Activated } from "./securityPolicy.js";
+import { MESSAGE_TURNSTILE_REQUIRED, isTurnstileEnabled } from "./turnstilePolicy.js";
 import {
   gatewayErrorMessage,
   gatewayResetPassword,
@@ -47,8 +48,43 @@ export function useCredentialAuth({ supabase, emailRedirectTo, initialEmail = ""
   const [authAction, setAuthAction] = useState(null);
   const authActionPending = authAction !== null;
 
+  // Turnstile challenge token for the current attempt. The widget reports it
+  // via setCaptchaToken; it is single-use, so it is cleared (and the widget
+  // remounted via challengeKey) after every submit attempt. When Turnstile
+  // is disabled both stay inert: no token, no widget, no behavior change.
+  const turnstileEnabled = isTurnstileEnabled();
+  const [captchaToken, setCaptchaToken] = useState(null);
+  const [challengeKey, setChallengeKey] = useState(0);
+  const captchaTokenReady = captchaToken !== null;
+
+  // The gateway path applies the distributed admission limits and generic
+  // anti-enumeration errors server-side. It is required whenever Layer 2
+  // (MFA) is active OR Turnstile is enabled — the direct-Supabase path
+  // cannot carry a challenge token, so a Turnstile-enabled submit must
+  // never take it. With both off, the EXACT pre-Layer-2 direct call below.
+  const useGateway = isMfaLayer2Activated() || turnstileEnabled;
+
+  // A Turnstile token is spent after one submit attempt, whatever the
+  // outcome — a fresh challenge is free in managed mode, so always rotate.
+  function rotateChallenge() {
+    setCaptchaToken(null);
+    setChallengeKey((n) => n + 1);
+  }
+
+  // Block the submit until the challenge has produced a token, instead of
+  // sending a token-less request the route will refuse. Returns true when
+  // the caller may proceed.
+  function requireChallengeToken() {
+    if (turnstileEnabled && !captchaToken) {
+      setMessage(MESSAGE_TURNSTILE_REQUIRED);
+      return false;
+    }
+    return true;
+  }
+
   async function signUp() {
     if (authActionPending) return;
+    if (!requireChallengeToken()) return;
     setMessage("");
     setAuthAction("signUp");
     // `emailRedirectTo` may be a plain string or a thunk -- a thunk lets the caller defer reading
@@ -56,11 +92,12 @@ export function useCredentialAuth({ supabase, emailRedirectTo, initialEmail = ""
     // instead of evaluating them during render, which would break server-side rendering of the
     // "use client" component that owns this hook.
     const resolvedEmailRedirectTo = typeof emailRedirectTo === "function" ? emailRedirectTo() : emailRedirectTo;
-    // Layer 2 active: the gateway route applies admission limits and returns
-    // generic anti-enumeration errors. Layer 2 inactive: the EXACT pre-Layer-2
-    // direct Supabase call below — no behavior change while disabled.
+    // Gateway path when Layer 2 or Turnstile is active: the gateway route
+    // applies admission limits and returns generic anti-enumeration errors,
+    // and (Turnstile) requires + forwards the challenge token. Otherwise
+    // the EXACT pre-Layer-2 direct Supabase call — no behavior change.
     let error;
-    if (isMfaLayer2Activated()) {
+    if (useGateway) {
       // Gateway contract: { status:'ok', message } | { error }. The route
       // returns SIGNUP_SUBMITTED_MESSAGE verbatim on success; the hook keeps
       // its own copy as the single source of truth for this message (see the
@@ -70,6 +107,7 @@ export function useCredentialAuth({ supabase, emailRedirectTo, initialEmail = ""
         email,
         password,
         ...(resolvedEmailRedirectTo ? { emailRedirectTo: resolvedEmailRedirectTo } : {}),
+        ...(turnstileEnabled && captchaToken ? { captchaToken } : {}),
       });
       error = result.status === "ok" ? null : { message: gatewayErrorMessage(result) };
     } else {
@@ -79,6 +117,7 @@ export function useCredentialAuth({ supabase, emailRedirectTo, initialEmail = ""
         ...(resolvedEmailRedirectTo ? { options: { emailRedirectTo: resolvedEmailRedirectTo } } : {}),
       }));
     }
+    rotateChallenge();
     setAuthAction(null);
 
     if (error) {
@@ -91,9 +130,10 @@ export function useCredentialAuth({ supabase, emailRedirectTo, initialEmail = ""
 
   async function signIn() {
     if (authActionPending) return {};
+    if (!requireChallengeToken()) return {};
     setMessage("");
     setAuthAction("signIn");
-    // Gateway path when Layer 2 is active; the EXACT pre-Layer-2 direct call
+    // Gateway path when Layer 2 or Turnstile is active; the EXACT pre-Layer-2 direct call
     // otherwise (see signUp for the rationale).
     //
     // Gateway contract: { status:'ok', session } -> the browser establishes
@@ -104,8 +144,13 @@ export function useCredentialAuth({ supabase, emailRedirectTo, initialEmail = ""
     // next hint ('enroll' | 'challenge').
     // { error } -> generic message shown verbatim (covers 401/429/503).
     let outcome = {};
-    if (isMfaLayer2Activated()) {
-      const result = await gatewaySignIn({ operationId: newAttemptId(), email, password });
+    if (useGateway) {
+      const result = await gatewaySignIn({
+        operationId: newAttemptId(),
+        email,
+        password,
+        ...(turnstileEnabled && captchaToken ? { captchaToken } : {}),
+      });
       if (result.status === "ok" && result.session?.access_token) {
         const { error: sessionError } = await supabase.auth.setSession({
           access_token: result.session.access_token,
@@ -126,6 +171,7 @@ export function useCredentialAuth({ supabase, emailRedirectTo, initialEmail = ""
         setMessage(error.message);
       }
     }
+    rotateChallenge();
     setAuthAction(null);
     // On success the caller's own onAuthStateChange subscription handles what happens next
     // (redirect, refresh, etc.) once the session lands -- this hook only knows how to attempt
@@ -139,24 +185,27 @@ export function useCredentialAuth({ supabase, emailRedirectTo, initialEmail = ""
       setMessage("Enter your email address first, then select Forgot password?");
       return;
     }
+    if (!requireChallengeToken()) return;
 
     setMessage("");
     setAuthAction("resetPassword");
-    // Gateway path when Layer 2 is active; the EXACT pre-Layer-2 direct call
+    // Gateway path when Layer 2 or Turnstile is active; the EXACT pre-Layer-2 direct call
     // otherwise (see signUp for the rationale).
     let error;
-    if (isMfaLayer2Activated()) {
+    if (useGateway) {
       // Gateway contract: { status:'ok', message } | { error }. The route uses
       // a server-side redirectTo and applies the reset-request admission
       // bucket; the hook keeps its own verbatim success message (see signUp).
       const result = await gatewayResetPassword({
         operationId: newAttemptId(),
         email: email.trim(),
+        ...(turnstileEnabled && captchaToken ? { captchaToken } : {}),
       });
       error = result.status === "ok" ? null : { message: gatewayErrorMessage(result) };
     } else {
       ({ error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo }));
     }
+    rotateChallenge();
     setAuthAction(null);
 
     if (error) {
@@ -177,5 +226,10 @@ export function useCredentialAuth({ supabase, emailRedirectTo, initialEmail = ""
     // three this hook directly implements.
     authAction, setAuthAction, authActionPending,
     signIn, signUp, resetPassword,
+    // Turnstile challenge state, for the surfaces that render the widget:
+    // captchaToken holds the current single-use token (null until the
+    // challenge completes), setCaptchaToken is the widget's onToken,
+    // challengeKey remounts the widget for a fresh token after each attempt.
+    turnstileEnabled, captchaToken, setCaptchaToken, captchaTokenReady, challengeKey,
   };
 }

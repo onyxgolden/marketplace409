@@ -22,18 +22,20 @@
 //   them verbatim and never branches on their text.
 //
 // Per-route:
-//   POST /api/auth/sign-in  { operationId, email, password }
+//   POST /api/auth/sign-in  { operationId, email, password, captchaToken? }
 //     -> 200 { status:'ok', session, cohort? }   (browser must establish the
 //        session via supabase.auth.setSession(session))
 //     -> 403 { status:'mfa_required', next:'enroll'|'challenge' } (NO session;
 //        see ROUTE GAP 1)
 //     -> 401 { error } | 429 { error, retryAfterSeconds } | 503 { error }
-//   POST /api/auth/sign-up  { operationId, email, password }
+//     (captchaToken: the Turnstile token, required by the route only when
+//     Turnstile is enabled; the provider validates it. Omitted otherwise.)
+//   POST /api/auth/sign-up  { operationId, email, password, captchaToken? }
 //     -> 200 { status:'ok', message }  (message is SIGNUP_SUBMITTED_MESSAGE,
 //        verbatim, for new/existing/confirmed/unconfirmed alike)
 //     -> 4xx/5xx { error }
 //     NOTE: the route currently ignores `emailRedirectTo` (see ROUTE GAP 4).
-//   POST /api/auth/reset  { operationId, email }
+//   POST /api/auth/reset  { operationId, email, captchaToken? }
 //     -> 200 { status:'ok', message } ("Check your email for a secure
 //        password-reset link.") | 4xx/5xx { error }
 //     (Server-side redirectTo; the client MUST NOT send its own. Password
@@ -129,22 +131,32 @@ export function gatewayErrorMessage(result) {
   return result?.error ?? result?.transportError ?? GATEWAY_UNAVAILABLE_MESSAGE;
 }
 
-export function gatewaySignIn({ operationId, email, password }) {
-  return postGateway("/api/auth/sign-in", { operationId, email, password });
+export function gatewaySignIn({ operationId, email, password, captchaToken }) {
+  return postGateway("/api/auth/sign-in", {
+    operationId,
+    email,
+    password,
+    ...(captchaToken ? { captchaToken } : {}),
+  });
 }
 
-export function gatewaySignUp({ operationId, email, password, emailRedirectTo }) {
+export function gatewaySignUp({ operationId, email, password, emailRedirectTo, captchaToken }) {
   return postGateway("/api/auth/sign-up", {
     operationId,
     email,
     password,
     ...(emailRedirectTo ? { emailRedirectTo } : {}),
+    ...(captchaToken ? { captchaToken } : {}),
   });
 }
 
-export function gatewayResetPassword({ operationId, email }) {
+export function gatewayResetPassword({ operationId, email, captchaToken }) {
   // The route uses a server-side redirectTo; the client must not send its own.
-  return postGateway("/api/auth/reset", { operationId, email });
+  return postGateway("/api/auth/reset", {
+    operationId,
+    email,
+    ...(captchaToken ? { captchaToken } : {}),
+  });
 }
 
 export function gatewayRefresh({ operationId, refreshToken }) {

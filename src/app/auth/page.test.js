@@ -37,6 +37,36 @@ vi.mock("@/lib/auth/securityPolicy.js", () => ({
   isMfaLayer2Activated: () => layer2Enabled.current,
 }));
 
+// Turnstile activation flag for page.jsx + useCredentialAuth.js, both of which import
+// isTurnstileEnabled from this module. Defaults to false so every pre-existing test
+// below exercises the exact pre-Turnstile behavior; the "Turnstile enabled" describe
+// block flips it to true.
+const { turnstileEnabled } = vi.hoisted(() => ({ turnstileEnabled: { current: false } }));
+
+vi.mock("@/lib/auth/turnstilePolicy.js", () => ({
+  MESSAGE_TURNSTILE_REQUIRED: "Please complete the human-verification check and try again.",
+  isTurnstileEnabled: () => turnstileEnabled.current,
+  getTurnstileSiteKey: () => "1x00000000000000000000AA",
+}));
+
+// Stand-in for the real widget (which loads Cloudflare's script and renders an
+// iframe): it renders a marker plus a button that issues a fixed test token,
+// so the page tests can drive the challenge flow without a network round-trip.
+// The widget's own rendering, callbacks, and retry UI are tested directly in
+// TurnstileWidget.test.jsx.
+vi.mock("@/components/TurnstileWidget.jsx", () => ({
+  default: ({ onToken, siteKey }) =>
+    React.createElement(
+      "div",
+      { "data-testid": "turnstile-widget", "data-site-key": siteKey },
+      React.createElement(
+        "button",
+        { type: "button", onClick: () => onToken("0.AQTestToken") },
+        "Complete challenge"
+      )
+    ),
+}));
+
 vi.mock("@/components/Header", () => ({ default: () => React.createElement("header", null, "409 Marketplace") }));
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => ({
@@ -115,6 +145,10 @@ describe("AuthPage password controls", () => {
     act(() => toggle.click());
     expect(password.type).toBe("text");
     expect(container.querySelector('button[aria-label="Hide password"]')).not.toBeNull();
+  });
+
+  it("does not render the Turnstile widget while Turnstile is disabled (ships inert)", () => {
+    expect(container.querySelector('[data-testid="turnstile-widget"]')).toBeNull();
   });
 
   it("emails a reset link to the entered address", async () => {
@@ -604,5 +638,116 @@ describe("AuthPage Layer 2 enabled: gateway integration (real route contracts)",
 
     expect(window.location.href).toBe("/forge/portal");
     restore();
+  });
+});
+
+describe("AuthPage Turnstile enabled", () => {
+  let container;
+  let root;
+  let originalFetch;
+
+  function jsonResponse(payload) {
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => payload };
+  }
+
+  beforeEach(() => {
+    turnstileEnabled.current = true;
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ status: "ok", session: { access_token: "atk", refresh_token: "rtk" } })
+    );
+    resetPasswordForEmail.mockReset().mockResolvedValue({ error: null });
+    signInWithPassword.mockReset().mockResolvedValue({ data: { session: {}, user: { id: "user-1" } }, error: null });
+    signUp.mockReset().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+    signOutSafely.mockReset().mockResolvedValue({ success: true, error: null });
+    setSession.mockReset().mockResolvedValue({ data: {}, error: null });
+    window.history.pushState({}, "", "/auth");
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => root.render(React.createElement(AuthPage)));
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    globalThis.fetch = originalFetch;
+    turnstileEnabled.current = false;
+  });
+
+  it("renders the challenge widget with the site key when enabled", () => {
+    const widget = container.querySelector('[data-testid="turnstile-widget"]');
+    expect(widget).not.toBeNull();
+    expect(widget.getAttribute("data-site-key")).toBe("1x00000000000000000000AA");
+  });
+
+  it("blocks Sign In with a plain message when enabled and no token exists yet", async () => {
+    const signIn = findButton(container, "Sign In");
+
+    await act(async () => signIn.click());
+
+    // No request of any kind leaves the browser: the hook blocks the submit
+    // instead of sending a token-less request the route would refuse.
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(signInWithPassword).not.toHaveBeenCalled();
+    const status = container.querySelector('[role="status"]');
+    expect(status).not.toBeNull();
+    expect(status.textContent).toBe("Please complete the human-verification check and try again.");
+  });
+
+  it("sends the challenge token with the gateway sign-in request after the challenge completes", async () => {
+    const email = container.querySelector('input[placeholder="Email"]');
+    const password = container.querySelector('input[placeholder="Password"]');
+    act(() => {
+      enter(email, "owner@example.com");
+      enter(password, "correct horse battery staple");
+    });
+    const complete = findButton(container, "Complete challenge");
+    act(() => complete.click());
+    const signIn = findButton(container, "Sign In");
+
+    await act(async () => signIn.click());
+
+    expect(signInWithPassword).not.toHaveBeenCalled();
+    const call = globalThis.fetch.mock.calls.find(([url]) => url === "/api/auth/sign-in");
+    expect(call).toBeDefined();
+    const body = JSON.parse(call[1].body);
+    expect(body.captchaToken).toBe("0.AQTestToken");
+    expect(setSession).toHaveBeenCalledWith({ access_token: "atk", refresh_token: "rtk" });
+  });
+
+  it("clears the token after a submit, so a second Sign In without a fresh challenge is blocked again", async () => {
+    const complete = findButton(container, "Complete challenge");
+    act(() => complete.click());
+    const signIn = findButton(container, "Sign In");
+
+    await act(async () => signIn.click());
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    // The token is single-use: the first submit spent it. Without completing
+    // a fresh challenge the next submit must be blocked, not retried with a
+    // stale token.
+    await act(async () => signIn.click());
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const status = container.querySelector('[role="status"]');
+    expect(status).not.toBeNull();
+    expect(status.textContent).toBe("Please complete the human-verification check and try again.");
+  });
+
+  it("sends the challenge token with the gateway password-reset request after the challenge completes", async () => {
+    const email = container.querySelector('input[placeholder="Email"]');
+    act(() => enter(email, "owner@example.com"));
+    const complete = findButton(container, "Complete challenge");
+    act(() => complete.click());
+    const forgot = findButton(container, "Forgot password?");
+
+    await act(async () => forgot.click());
+
+    expect(resetPasswordForEmail).not.toHaveBeenCalled();
+    const call = globalThis.fetch.mock.calls.find(([url]) => url === "/api/auth/reset");
+    expect(call).toBeDefined();
+    const body = JSON.parse(call[1].body);
+    expect(body.captchaToken).toBe("0.AQTestToken");
+    expect(container.textContent).toContain("Check your email for a secure password-reset link.");
   });
 });

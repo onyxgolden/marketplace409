@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import TurnstileWidget from "@/components/TurnstileWidget.jsx";
 import { createClient } from "@/lib/supabase/client";
 import { friendlySignOutError, signOutSafely } from "@/lib/auth/signOutSafely.js";
+import { getTurnstileSiteKey } from "@/lib/auth/turnstilePolicy.js";
 import { useCredentialAuth } from "@/lib/auth/useCredentialAuth.js";
 import { useLoginSafety } from "@/lib/auth/useLoginSafety.js";
 
@@ -61,6 +63,7 @@ export default function WorkspaceAccountPanel({ initialUser = undefined }) {
   const {
     email, setEmail, password, setPassword, message, authAction, authActionPending, signIn, signUp,
     resetPassword: resetPasswordViaHook,
+    turnstileEnabled, setCaptchaToken, challengeKey,
   } = useCredentialAuth({ supabase, emailRedirectTo: () => `${window.location.origin}/` });
 
   async function handleSignOut() {
@@ -165,6 +168,19 @@ export default function WorkspaceAccountPanel({ initialUser = undefined }) {
             {authAction === "signUp" ? "Creating account…" : "Create Account"}
           </button>
         </div>
+        {/* Turnstile human verification: renders only when enabled. One
+           single-use token per challenge; the hook clears it and remounts
+           the widget (challengeKey) after every submit attempt. */}
+        {turnstileEnabled ? (
+          <TurnstileWidget
+            key={challengeKey}
+            siteKey={getTurnstileSiteKey()}
+            action="auth"
+            onToken={setCaptchaToken}
+            onExpired={() => setCaptchaToken(null)}
+            onError={() => setCaptchaToken(null)}
+          />
+        ) : null}
       </form>
       <button
         type="button"

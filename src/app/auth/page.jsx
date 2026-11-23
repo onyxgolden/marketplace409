@@ -1,9 +1,11 @@
 "use client";
 
 import Header from "@/components/Header";
+import TurnstileWidget from "@/components/TurnstileWidget.jsx";
 import { createClient } from "@/lib/supabase/client";
 import { gatewayMfaStatus, newOperationId } from "@/lib/auth/authGateway.js";
 import { friendlySignOutError, signOutSafely } from "@/lib/auth/signOutSafely.js";
+import { getTurnstileSiteKey } from "@/lib/auth/turnstilePolicy.js";
 import { useCredentialAuth } from "@/lib/auth/useCredentialAuth.js";
 import { useLoginSafety } from "@/lib/auth/useLoginSafety.js";
 import { useEffect, useState } from "react";
@@ -41,6 +43,7 @@ export default function AuthPage() {
     message, setMessage,
     authAction, setAuthAction, authActionPending,
     signIn, signUp, resetPassword: resetPasswordViaHook,
+    turnstileEnabled, setCaptchaToken, challengeKey,
   } = useCredentialAuth({ supabase, emailRedirectTo: () => buildAuthRedirect(invitedEmail) });
 
   // Reports each SIGNED_IN event to /api/auth/record-login once per session
@@ -212,6 +215,21 @@ export default function AuthPage() {
               <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-950">
                 {message}
               </p>
+            ) : null}
+
+            {/* Turnstile human verification: renders only when enabled.
+               The widget issues one single-use token per challenge; the hook
+               clears it and remounts the widget (challengeKey) after every
+               submit attempt. With the flag off, nothing renders here. */}
+            {turnstileEnabled ? (
+              <TurnstileWidget
+                key={challengeKey}
+                siteKey={getTurnstileSiteKey()}
+                action="auth"
+                onToken={setCaptchaToken}
+                onExpired={() => setCaptchaToken(null)}
+                onError={() => setCaptchaToken(null)}
+              />
             ) : null}
 
             <button

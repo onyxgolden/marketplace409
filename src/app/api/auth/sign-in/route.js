@@ -29,6 +29,7 @@ import {
   MESSAGE_SIGNIN_FAILED,
   MESSAGE_UNAVAILABLE,
   claimExecution,
+  extractCaptchaToken,
   extractEmail,
   extractOperationId,
   extractPassword,
@@ -36,6 +37,7 @@ import {
   isActivationEnabled,
   markInert,
   readJsonBody,
+  requireHumanVerification,
   trustedClientIp,
 } from "../_lib/gatewaySupport.js";
 
@@ -49,6 +51,12 @@ export async function POST(request) {
   if (!operationId || !email || !password) {
     return NextResponse.json({ error: MESSAGE_INVALID_REQUEST }, { status: 400 });
   }
+
+  // Turnstile: when enabled, a missing challenge token is refused here —
+  // before admission, lease, or any provider call. When disabled this is a
+  // no-op and the route behaves exactly as before.
+  const human = requireHumanVerification({ captchaToken: extractCaptchaToken(body) });
+  if (!human.ok) return human.response;
 
   const env = process.env;
   const ip = trustedClientIp(request, env);
@@ -86,7 +94,15 @@ export async function POST(request) {
   let data;
   let error;
   try {
-    ({ data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password }));
+    // Provider is the verification authority for auth tokens (one verifier
+    // per single-use token): the captchaToken is validated by Supabase once
+    // dashboard CAPTCHA is enabled with the same site key. FORGE never
+    // Siteverifies an auth token as well.
+    ({ data, error } = await supabaseAdmin.auth.signInWithPassword({
+      email,
+      password,
+      ...(human.captchaToken ? { options: { captchaToken: human.captchaToken } } : {}),
+    }));
   } catch {
     // Ambiguous provider outcome: reconcile before any refire.
     await recordAttemptOutcome({ supabaseAdmin, operationId, outcome: "uncertain", accountKey: null });
