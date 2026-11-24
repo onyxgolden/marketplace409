@@ -250,3 +250,38 @@ describe("D2 fix round 2 (P1): the filter form enforces mutual exclusion on chan
     expect(selectBlock(landed, "filter-unit")).not.toContain('value="B" selected=""');
   });
 });
+
+describe("S26+ slice 2: every filter select carries the D11 dark-mode classes", () => {
+  // Jason's S26+ walkthrough (Nov 22, checks 2 + 4): the Mode filter
+  // showed as an empty box on both screens. Root cause: the Mode
+  // <select> was the ONLY filter control missing the D11 dark-mode
+  // classes, so in dark mode it rendered the page's white text on the
+  // browser's native white control background — white-on-white. The
+  // same form serves both screens, so one missing class was two
+  // sightings. These tests pin the Mode control to its siblings so
+  // the bug class cannot recur on any filter here.
+  const DARK_SELECT_CLASSES = ["dark:border-slate-600", "dark:bg-slate-800", "dark:text-white"];
+
+  it("Mode select and label match their siblings", async () => {
+    const container = await mountForm({});
+    const modeSelect = container.querySelector("#filter-mode");
+    expect(modeSelect).not.toBeNull();
+    for (const cls of DARK_SELECT_CLASSES) {
+      expect(modeSelect.className).toContain(cls);
+    }
+    const modeLabel = container.querySelector('label[for="filter-mode"]');
+    expect(modeLabel).not.toBeNull();
+    expect(modeLabel.className).toContain("dark:text-slate-300");
+  });
+
+  it("all six filter selects carry the same dark classes", async () => {
+    const container = await mountForm({});
+    for (const id of ["filter-status", "filter-property", "filter-mode", "filter-planner", "filter-unit", "filter-system"]) {
+      const select = container.querySelector(`#${id}`);
+      expect(select).not.toBeNull();
+      for (const cls of DARK_SELECT_CLASSES) {
+        expect(select.className).toContain(cls);
+      }
+    }
+  });
+});
