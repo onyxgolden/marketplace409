@@ -1070,14 +1070,14 @@ begin
 end;
 $$;
 
-revoke all on function public.forge_work_milestones_snapshot(text, text) from public;
-revoke all on function public.forge_work_milestone_template_create(text, text, numeric, boolean, numeric, text, text, text, text, text, boolean, boolean, text) from public;
-revoke all on function public.forge_work_milestone_template_update(text, text, integer, text, text, text, text, text, boolean, boolean, text) from public;
-revoke all on function public.forge_work_milestone_template_retire(text, text, integer, text) from public;
-revoke all on function public.forge_work_milestone_complexity_offset_set(text, text, integer, text, numeric, text) from public;
-revoke all on function public.forge_work_milestones_instantiate(text, text, text, date, text) from public;
-revoke all on function public.forge_work_milestone_update(text, text, integer, text, text, text, date, date, numeric, text, text, text) from public;
-revoke all on function public.forge_work_milestone_retire(text, text, integer, text) from public;
+revoke all on function public.forge_work_milestones_snapshot(text, text) from public, anon, authenticated, service_role;
+revoke all on function public.forge_work_milestone_template_create(text, text, numeric, boolean, numeric, text, text, text, text, text, boolean, boolean, text) from public, anon, authenticated, service_role;
+revoke all on function public.forge_work_milestone_template_update(text, text, integer, text, text, text, text, text, boolean, boolean, text) from public, anon, authenticated, service_role;
+revoke all on function public.forge_work_milestone_template_retire(text, text, integer, text) from public, anon, authenticated, service_role;
+revoke all on function public.forge_work_milestone_complexity_offset_set(text, text, integer, text, numeric, text) from public, anon, authenticated, service_role;
+revoke all on function public.forge_work_milestones_instantiate(text, text, text, date, text) from public, anon, authenticated, service_role;
+revoke all on function public.forge_work_milestone_update(text, text, integer, text, text, text, date, date, numeric, text, text, text) from public, anon, authenticated, service_role;
+revoke all on function public.forge_work_milestone_retire(text, text, integer, text) from public, anon, authenticated, service_role;
 
 grant execute on function public.forge_work_milestones_snapshot(text, text) to authenticated;
 grant execute on function public.forge_work_milestone_template_create(text, text, numeric, boolean, numeric, text, text, text, text, text, boolean, boolean, text) to authenticated;

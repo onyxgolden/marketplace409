@@ -17,7 +17,11 @@
 // auth.uid() returns uuid (matching the real schema) via
 // current_setting('app.test_uid', true)::uuid — the exact fixture
 // shape that caught PR #767's uuid=text defect, deliberately mirrored
-// here so this suite cannot repeat that class of bug.
+// here so this suite cannot repeat that class of bug. The fixture also
+// installs Supabase-like default privileges (EXECUTE on new functions
+// to anon/authenticated/service_role) so the ACL receipt proves the
+// migration text under production defaults — a revoke-from-public-only
+// pattern fails here, exactly as it would in production (PR #786 P1).
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
@@ -43,6 +47,14 @@ const PREREQ_SQL = `
   create role anon nologin;
   create role authenticated nologin;
   create role service_role nologin;
+  -- Supabase-like default privileges: in production, pg_default_acl grants
+  -- EXECUTE on new functions to the named app roles (anon, authenticated,
+  -- service_role) with NO public entry, so a revoke-from-public alone
+  -- removes nothing. Install the same defaults here so the ACL receipt
+  -- below proves the migration text under production defaults, not the
+  -- vacuous vanilla-Postgres PUBLIC path (PR #786 P1; same class as
+  -- #766/#734/#752).
+  alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
   create schema auth;
   create or replace function auth.uid() returns uuid language sql stable as $$
     select current_setting('app.test_uid', true)::uuid
@@ -436,11 +448,19 @@ describe("Work Package Planner slice 9 — Milestones migration", () => {
     });
   });
 
-  it60("non-vacuous negative control: a naive function with no explicit revoke grants anon EXECUTE by default", async () => {
+  it60("non-vacuous negative control: under Supabase-like defaults, revoke-from-public alone leaves anon and service_role with EXECUTE", async () => {
     await db.exec(`create or replace function public._naive_probe() returns int language sql as $$ select 1 $$;`);
+    // The old PR pattern: revoke only from public. Under the Supabase-like
+    // defaults installed in setup, the named-role grants survive the revoke
+    // — this is the exact defect class the ACL receipt guards against.
+    // (This also proves the fixture carries those defaults: without them,
+    // the revoke would clear anon and this test would fail.)
+    await db.exec(`revoke all on function public._naive_probe() from public;`);
     const { rows } = await db.query(`
-      select has_function_privilege('anon', '_naive_probe()', 'execute') as anon_exec;
+      select has_function_privilege('anon', '_naive_probe()', 'execute') as anon_exec,
+             has_function_privilege('service_role', '_naive_probe()', 'execute') as service_role_exec;
     `);
     expect(rows[0].anon_exec).toBe(true);
+    expect(rows[0].service_role_exec).toBe(true);
   });
 });
