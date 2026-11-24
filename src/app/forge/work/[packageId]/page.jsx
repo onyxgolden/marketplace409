@@ -8,6 +8,7 @@ import {
   SCOPE_KINDS,
 } from "@/application/work-management/projectScope";
 import { listLinks } from "@/application/work-management/workLinks";
+import { formatPackageCode } from "@/domains/work-management/workPackage.js";
 import WorkPackageDetailClient from "@/components/work-management/WorkPackageDetailClient";
 import WorkPackageWorkspaceSwitcher from "@/components/work-management/WorkPackageWorkspaceSwitcher";
 
@@ -81,7 +82,7 @@ export default async function WorkPackagePage({ params, searchParams }) {
 
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-8">
-      <p className="text-xs font-mono text-slate-400">{detail.package.code}</p>
+      <p className="text-xs font-mono text-slate-400">{formatPackageCode(detail.package.code)}</p>
       <h1 className="text-2xl font-bold">{detail.package.title}</h1>
       <WorkPackageWorkspaceSwitcher
         workspaces={workspaces}

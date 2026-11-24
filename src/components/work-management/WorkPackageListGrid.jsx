@@ -24,7 +24,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { WP_STATUS, WP_PACKAGE_TYPES_BY_MODE, isTerminalStatus, inferEffectiveMode } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_PACKAGE_TYPES_BY_MODE, isTerminalStatus, inferEffectiveMode, formatPackageCode } from "@/domains/work-management/workPackage.js";
 import { formatCents } from "@/domains/work-management/packageCosts.js";
 import EditableGridCell from "./EditableGridCell.jsx";
 import WorkPackageImportDialog from "./WorkPackageImportDialog.jsx";
@@ -342,7 +342,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
       const created = body.package;
       setRows((current) => [created, ...current]);
       setDrafts((current) => current.map((d, i) => (i === index ? emptyDraft() : d)));
-      report(`Package ${created.code} created.`, "ok");
+      report(`Package ${formatPackageCode(created.code)} created.`, "ok");
     } catch (e) {
       report(e?.message || "Could not create this package.");
     }
@@ -400,11 +400,11 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
               className={`grid ${GRID_COLS} items-center gap-x-2 border-b border-slate-200 px-3 py-2 text-sm ${selectedId === pkg.id ? "bg-blue-50" : "hover:bg-slate-50"} ${terminal ? "opacity-70" : ""}`}>
               <div role="cell" className="min-w-0 truncate font-mono text-xs text-slate-400">
                 <Link href={`/forge/work/${pkg.id}${workspaceQuery}`} className="hover:underline">
-                  {pkg.code}
+                  {formatPackageCode(pkg.code)}
                 </Link>
               </div>
               <EditableGridCell
-                value={pkg.title} display={pkg.title} ariaLabel={`Title for ${pkg.code}`}
+                value={pkg.title} display={pkg.title} ariaLabel={`Title for ${formatPackageCode(pkg.code)}`}
                 readOnly={terminal} placeholder="Package title"
                 validate={(next) => (next.trim() === "" ? "Title is required." : null)}
                 onCommit={(next) => commitField(pkg, { title: next })}
@@ -418,7 +418,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
                     {pkg.status.replace(/_/g, " ")}
                   </span>
                 }
-                editor="select" options={statusOptions} ariaLabel={`Status for ${pkg.code}`}
+                editor="select" options={statusOptions} ariaLabel={`Status for ${formatPackageCode(pkg.code)}`}
                 readOnly={terminal}
                 onCommit={(next) => commitStatus(pkg, next)}
                 onError={(text) => report(text)}
@@ -427,7 +427,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
                 <EditableGridCell
                   value={pkg.property_id || ""}
                   display={pkg.property_id ? (propertyLabelBySlug.get(pkg.property_id) || pkg.property_id) : "—"}
-                  editor="select" options={propertyOptions} ariaLabel={`Property for ${pkg.code}`}
+                  editor="select" options={propertyOptions} ariaLabel={`Property for ${formatPackageCode(pkg.code)}`}
                   readOnly={terminal}
                   onCommit={(next) => commitField(pkg, { property_id: next || null })}
                   onError={(text) => report(text)}
@@ -453,7 +453,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
               <EditableGridCell
                 value={pkg.package_type}
                 display={[pkg.package_type, pkg.unit, pkg.area, pkg.system].filter(Boolean).join(" · ") || "—"}
-                editor="select" options={scopeOptionsForMode(inferEffectiveMode(pkg))} ariaLabel={`Scope for ${pkg.code}`}
+                editor="select" options={scopeOptionsForMode(inferEffectiveMode(pkg))} ariaLabel={`Scope for ${formatPackageCode(pkg.code)}`}
                 readOnly={terminal}
                 onCommit={(next) => commitField(pkg, { package_type: next })}
                 onError={(text) => report(text)}

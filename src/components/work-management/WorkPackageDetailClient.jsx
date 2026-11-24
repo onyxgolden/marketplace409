@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { WP_STATUS, WP_PACKAGE_TYPES, WP_PACKAGE_TYPES_BY_MODE, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor, inferEffectiveMode } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_PACKAGE_TYPES, WP_PACKAGE_TYPES_BY_MODE, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor, inferEffectiveMode, formatPackageCode } from "@/domains/work-management/workPackage.js";
 import WorkPackageLinks from "./WorkPackageLinks.jsx";
 import WorkPackagePermitAnnotations from "./WorkPackagePermitAnnotations.jsx";
 import WorkPackageDocuments from "./WorkPackageDocuments.jsx";
@@ -414,7 +414,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   }, [deleteOpen]);
 
   async function onConfirmDelete() {
-    if (deleteBusyRef.current || deleteConfirmCode !== pkg.code) return;
+    if (deleteBusyRef.current || deleteConfirmCode !== formatPackageCode(pkg.code)) return;
     setDeleteBusy(true);
     deleteBusyRef.current = true;
     setDeleteError("");
@@ -1189,13 +1189,13 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                   Delete work package
                 </h2>
                 <p className="mt-2 text-sm text-slate-600">
-                  Delete <span className="font-mono font-medium">{pkg.code}</span> — {pkg.title}?
+                  Delete <span className="font-mono font-medium">{formatPackageCode(pkg.code)}</span> — {pkg.title}?
                   This permanently deletes the draft package. A short audit record (code,
                   title, who deleted it, and when) is kept. This can&apos;t be undone.
                 </p>
                 <div className="mt-4">
                   <label className={label} htmlFor="delete_confirm_code">
-                    Type the package code ({pkg.code}) to confirm
+                    Type the package code ({formatPackageCode(pkg.code)}) to confirm
                   </label>
                   <input
                     id="delete_confirm_code"
@@ -1225,7 +1225,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                     type="button"
                     className={`${btn} bg-red-600 text-white hover:bg-red-500`}
                     onClick={onConfirmDelete}
-                    disabled={deleteBusy || deleteConfirmCode !== pkg.code}
+                    disabled={deleteBusy || deleteConfirmCode !== formatPackageCode(pkg.code)}
                   >
                     {deleteBusy ? "Deleting…" : "Delete"}
                   </button>

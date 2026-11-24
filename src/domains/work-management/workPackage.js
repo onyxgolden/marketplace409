@@ -70,6 +70,20 @@ export function inferEffectiveMode(pkg) {
   return "industrial";
 }
 
+// Display form of a package code: the bare zero-padded number, four
+// digits minimum — "WP-0014" and "14" both read "0014", "1000" stays
+// "1000", longer numbers are never truncated. Only the display drops
+// the "WP-" prefix: stored codes, sorting, import matching, and the
+// delete RPC still see the stored form, so nothing is re-keyed.
+export function formatPackageCode(code) {
+  if (code === null || code === undefined) return "";
+  const raw = String(code).trim();
+  if (raw === "") return "";
+  const numeric = raw.replace(/^WP-/i, "");
+  if (/^\d+$/.test(numeric)) return numeric.padStart(4, "0");
+  return raw;
+}
+
 export const WP_PRIORITIES = Object.freeze(["low", "normal", "high", "critical"]);
 
 // Source systems a package or step may have been imported from (file

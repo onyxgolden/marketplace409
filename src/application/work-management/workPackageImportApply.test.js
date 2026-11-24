@@ -137,7 +137,7 @@ describe("applyWorkPackageImport — packages", () => {
     });
     expect(results.created).toHaveLength(1);
     expect(results.warnings).toHaveLength(1);
-    expect(results.warnings[0].message).toContain("WP-0007 was created");
+    expect(results.warnings[0].message).toContain("0007 was created");
     expect(results.errors).toHaveLength(0);
   });
 

@@ -26,6 +26,7 @@
 // change (no revision row, no version bump), so stamping never
 // invalidates an in-flight edit.
 import { createWorkPackage, updateWorkPackage, transitionWorkPackage, listPackagePropertyOptions } from "./workPackages.js";
+import { formatPackageCode } from "@/domains/work-management/workPackage.js";
 import { createWorkStep, updateWorkStep, listWorkSteps } from "./workSteps.js";
 import { constrainPackageQuery, provePackageInScope, SCOPE_KINDS } from "./projectScope.js";
 
@@ -175,7 +176,7 @@ export async function applyWorkPackageImport(db, {
           if (!moved.ok) {
             results.warnings.push({
               rowIndex: item.rowIndex,
-              message: `${pkg.code} was created, but its status could not move to ${item.statusTarget}: ${moved.error}`,
+              message: `${formatPackageCode(pkg.code)} was created, but its status could not move to ${item.statusTarget}: ${moved.error}`,
             });
           } else pkg = moved.package;
         }
@@ -249,7 +250,7 @@ export async function applyWorkPackageImport(db, {
           if (!moved.ok) {
             results.warnings.push({
               rowIndex: item.rowIndex,
-              message: `${pkg.code} was updated, but its status could not move to ${item.statusTarget}: ${moved.error}`,
+              message: `${formatPackageCode(pkg.code)} was updated, but its status could not move to ${item.statusTarget}: ${moved.error}`,
             });
           } else pkg = moved.package;
         }

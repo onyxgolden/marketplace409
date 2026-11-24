@@ -1342,13 +1342,41 @@ describe("deleteWorkPackage (D7)", () => {
       package_id: "forge_wp_1", code: "WP-0007", title: "Turnover",
       prior_status: "draft", deleted_at: "2026-10-08T00:00:00Z",
     };
-    const db = mockDb([], rpcReturning({ ok: true, deletion }));
+    const db = mockDb([chain({ data: PKG, error: null })], rpcReturning({ ok: true, deletion }));
     const result = await deleteWorkPackage(db, args);
     expect(result).toEqual({ ok: true, deletion });
     expect(db.rpc).toHaveBeenCalledWith("forge_work_delete_empty_draft_package", {
       p_owner_id: "owner_1", p_package_id: "forge_wp_1",
       p_expected_version: 3, p_confirm_code: "WP-0007",
     });
+  });
+
+  it("accepts the typed display form (0007) and sends the stored code (WP-0007) to the RPC", async () => {
+    const deletion = { package_id: "forge_wp_1", code: "WP-0007", title: "Turnover" };
+    const db = mockDb([chain({ data: PKG, error: null })], rpcReturning({ ok: true, deletion }));
+    const result = await deleteWorkPackage(db, { ...args, confirmCode: "0007" });
+    expect(result).toEqual({ ok: true, deletion });
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_delete_empty_draft_package", {
+      p_owner_id: "owner_1", p_package_id: "forge_wp_1",
+      p_expected_version: 3, p_confirm_code: "WP-0007",
+    });
+  });
+
+  it("passes a display-form guess for another package through untouched, so the RPC still returns code_mismatch", async () => {
+    const db = mockDb([chain({ data: PKG, error: null })], rpcReturning({ ok: false, error: "code_mismatch" }));
+    const result = await deleteWorkPackage(db, { ...args, confirmCode: "0008" });
+    expect(result.httpStatus).toBe(409);
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_delete_empty_draft_package", {
+      p_owner_id: "owner_1", p_package_id: "forge_wp_1",
+      p_expected_version: 3, p_confirm_code: "0008",
+    });
+  });
+
+  it("returns 404 without calling the RPC when the package is already gone", async () => {
+    const db = mockDb([chain({ data: null, error: null })], rpcReturning({ ok: true, deletion: {} }));
+    const result = await deleteWorkPackage(db, args);
+    expect(result.httpStatus).toBe(404);
+    expect(db.rpc).not.toHaveBeenCalled();
   });
 
   it("maps RPC outcomes to 403/404/409 (a second delete is 404, never false success)", async () => {
@@ -1359,7 +1387,7 @@ describe("deleteWorkPackage (D7)", () => {
       [{ ok: false, error: "code_mismatch" }, 409],
     ];
     for (const [data, httpStatus] of cases) {
-      const db = mockDb([], rpcReturning(data));
+      const db = mockDb([chain({ data: PKG, error: null })], rpcReturning(data));
       const result = await deleteWorkPackage(db, args);
       expect(result.ok).toBe(false);
       expect(result.httpStatus).toBe(httpStatus);
@@ -1367,14 +1395,14 @@ describe("deleteWorkPackage (D7)", () => {
   });
 
   it("maps not_draft to 409 naming the current status", async () => {
-    const db = mockDb([], rpcReturning({ ok: false, error: "not_draft", status: "in_progress" }));
+    const db = mockDb([chain({ data: PKG, error: null })], rpcReturning({ ok: false, error: "not_draft", status: "in_progress" }));
     const result = await deleteWorkPackage(db, args);
     expect(result.httpStatus).toBe(409);
     expect(result.error).toBe("Only draft packages can be deleted. This package is in progress.");
   });
 
   it("maps blocked to 409 with annotated typed blockers", async () => {
-    const db = mockDb([], rpcReturning({
+    const db = mockDb([chain({ data: PKG, error: null })], rpcReturning({
       ok: false, error: "blocked",
       blockers: [{ type: "budget_revisions", count: 1 }],
     }));
@@ -1387,9 +1415,9 @@ describe("deleteWorkPackage (D7)", () => {
   });
 
   it("fails closed (throws) on database errors and unknown RPC outcomes", async () => {
-    const dbError = mockDb([], async () => ({ data: null, error: new Error("rpc down") }));
+    const dbError = mockDb([chain({ data: PKG, error: null })], async () => ({ data: null, error: new Error("rpc down") }));
     await expect(deleteWorkPackage(dbError, args)).rejects.toThrow(/rpc down/);
-    const unknown = mockDb([], rpcReturning({ ok: false, error: "mystery" }));
+    const unknown = mockDb([chain({ data: PKG, error: null })], rpcReturning({ ok: false, error: "mystery" }));
     await expect(deleteWorkPackage(unknown, args)).rejects.toThrow(/mystery/);
   });
 });
