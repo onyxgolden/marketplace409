@@ -5,8 +5,12 @@
 // phone-only fit missed: desktop open/switch, and content arriving after
 // first render under an identity whose fit never landed (the async
 // project load landing after an empty first render). Once a fit lands,
-// edits never refit, and a user interaction before the fit cancels it
-// for that identity — the view is the user's from then on.
+// edits never refit, and a user interaction that MOVES THE VIEW before
+// the fit cancels it for that identity — the view is the user's from
+// then on. A tap/select that leaves the view untouched does NOT cancel
+// it: the fit still lands when the design arrives (a phone tap on the
+// zoomed-in pre-fit view must not strand the canvas — Jason's S26+
+// report, 2026-11-23).
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -166,7 +170,35 @@ describe("PlanCanvas open-time fit (all sizes)", () => {
     expect(coords(wallLine(container, 0))).toEqual({ x1: 48, y1: 124, x2: 1152, y2: 676 });
   });
 
-  it("a user interaction before the fit cancels it on desktop too", () => {
+  it("a view-changing interaction before the fit cancels it on desktop too", () => {
+    mockSize = { w: 0, h: 0 };
+    const design = addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 240, y: 120 });
+    renderCanvas(design, { autoFitKey: "p1:level1" });
+    const svg = container.querySelector("svg");
+    // Wheel-zoom moves the view before the canvas is measured: the fit
+    // is cancelled and the view stays the user's (wheeled) one, no yank.
+    act(() => {
+      svg.dispatchEvent(
+        new window.WheelEvent("wheel", {
+          bubbles: true,
+          deltaY: -100,
+          clientX: 100,
+          clientY: 100,
+        }),
+      );
+    });
+    mockSize = { w: 1200, h: 800 };
+    triggerResize();
+    // Wheeled view: scale 1.6 * 1.12 = 1.792 around (100, 100) →
+    // ox = oy = 100 - 40 * 1.12 = 55.2.
+    const wheeled = coords(wallLine(container));
+    expect(wheeled.x1).toBeCloseTo(55.2, 3);
+    expect(wheeled.y1).toBeCloseTo(55.2, 3);
+    expect(wheeled.x2).toBeCloseTo(485.28, 3);
+    expect(wheeled.y2).toBeCloseTo(270.24, 3);
+  });
+
+  it("a bare pointerdown that does not move the view does not cancel the fit", () => {
     mockSize = { w: 0, h: 0 };
     const design = addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 240, y: 120 });
     renderCanvas(design, { autoFitKey: "p1:level1" });
@@ -183,8 +215,10 @@ describe("PlanCanvas open-time fit (all sizes)", () => {
     });
     mockSize = { w: 1200, h: 800 };
     triggerResize();
-    // Default view { scale: 1.6, ox: 60, oy: 60 } — no fit, no yank.
-    expect(coords(wallLine(container))).toEqual({ x1: 60, y1: 60, x2: 444, y2: 252 });
+    // A tap selects nothing and moves nothing, so the fit still lands:
+    // avail 1104 x 704 over 240 x 120 → scale 1104/240 = 4.6, ox = 48.
+    expect(coords(wallLine(container)).x1).toBeCloseTo(48, 6);
+    expect(coords(wallLine(container)).x2).toBeCloseTo(1152, 6);
   });
 
   it("phone open sequence: empty mount, load with a new identity, still fits", () => {
@@ -224,16 +258,16 @@ describe("PlanCanvas open-time fit (all sizes)", () => {
     renderCanvas(largeDesign(), { autoFitKey: "A" });
     expect(coords(wallLine(container)).x1).toBeCloseTo(88, 6);
     // Drive the canvas unmeasured, then let B arrive and be cancelled by
-    // a user interaction before any fit can land for it.
+    // a view-changing interaction (wheel zoom) before any fit can land.
     mockSize = { w: 0, h: 0 };
     triggerResize();
     renderCanvas(largeDesign(), { autoFitKey: "B" });
     const svg = container.querySelector("svg");
     act(() => {
       svg.dispatchEvent(
-        new window.PointerEvent("pointerdown", {
+        new window.WheelEvent("wheel", {
           bubbles: true,
-          button: 0,
+          deltaY: -100,
           clientX: 100,
           clientY: 100,
         }),
@@ -241,8 +275,9 @@ describe("PlanCanvas open-time fit (all sizes)", () => {
     });
     mockSize = { w: 1200, h: 800 };
     triggerResize();
-    // B stays on the default view (cancelled), not fitted.
-    expect(coords(wallLine(container)).x1).toBeCloseTo(60, 6);
+    // B stays on the wheeled view (scale 1.792 around (100, 100) →
+    // ox = 55.2), not fitted.
+    expect(coords(wallLine(container)).x1).toBeCloseTo(55.2, 3);
     // Returning to A is a fresh activation: it fits again, and B's
     // cancellation does not poison it.
     renderCanvas(largeDesign(), { autoFitKey: "A" });

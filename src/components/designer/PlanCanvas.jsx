@@ -175,6 +175,11 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // except through the view transform.
   const touchPointers = useRef(new Map()); // pointerId -> {x, y} screen px
   const pinch = useRef(null); // {dist, mid:{x,y}} of the previous move, or null
+  // Touch pointerdown point on a phone-overview tag, so a drag starting on
+  // a tag can still pan: the tag's pointerdown is swallowed for tap-select
+  // and no drag ever starts from it (see renderPhoneOverviewTags).
+  // {pointerId, x, y} (client px) or null.
+  const tagDragStart = useRef(null);
   // A touch tap whose commit is deferred to pointerup, so a second finger can
   // still turn the gesture into a pinch (which discards the tap instead of
   // committing it). {pointerId, run} or null.
@@ -357,15 +362,23 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // pending, so content arriving later under the same identity — the
   // async load landing, not an edit — still fits once. Once settled,
   // edits never refit: the view is the user's from then on. A user
-  // interaction (pointer/wheel) before the fit lands cancels it for this
-  // identity, so a late fit can never yank the view away from work
-  // already in progress.
+  // interaction that MOVES THE VIEW (pan, pinch step, wheel) before the
+  // fit lands cancels it for this identity, so a late fit can never yank
+  // the view away from work already in progress; a tap/select that
+  // leaves the view untouched does not cancel it.
   const autoFitIdentity = autoFitKey ?? "__mount__";
-  // Set by the first wheel / pointer interaction on the canvas. An
-  // open-time fit that has not applied yet is cancelled by it, so a late
-  // fit can never yank the view away from work already in progress. Reset
-  // when the auto-fit identity changes (a new design/level opened).
-  const [userNav, setUserNav] = useState(false);
+  // Set by the first view-changing gesture on the canvas (pan, pinch
+  // step, wheel). An open-time fit that has not applied yet is cancelled
+  // by it, so a late fit can never yank the view away from work already
+  // in progress. Reset when the auto-fit identity changes (a new
+  // design/level opened).
+  // Whether the user has taken control of the view (a pan, pinch step,
+  // or wheel zoom). A plain tap/select does not set it — the pending
+  // open-time fit must still land when the design arrives. A ref, not
+  // state: flipping it must never cost a render (the gesture coalescing
+  // contract allows zero commits mid-burst), and the fit block below
+  // reads it on every render anyway.
+  const userNavRef = useRef(false);
   // Interactive zoom floor while an open-time fit is in effect: a fitted
   // scale can sit far below MIN_SCALE (a very large drawing on a small
   // canvas), and flooring the first wheel zoom at MIN_SCALE would snap
@@ -382,7 +395,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const [prevAutoFitIdentity, setPrevAutoFitIdentity] = useState(autoFitIdentity);
   if (prevAutoFitIdentity !== autoFitIdentity) {
     setPrevAutoFitIdentity(autoFitIdentity);
-    setUserNav(false);
+    userNavRef.current = false;
     // Identity-scoped fit state never leaks into the next design/level:
     // the previous identity's fitted zoom floor belongs to its drawing,
     // not this one. The view returns to the default on every identity
@@ -400,7 +413,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     prevAutoFitIdentity === autoFitIdentity &&
     canvasSize.w > 0 &&
     canvasSize.h > 0 &&
-    !userNav
+    !userNavRef.current
   ) {
     const fitted = fitViewToBounds(
       // Phone only: on a phone-width pane the fit must include deck/platform
@@ -781,7 +794,15 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // pointerup: if a second finger lands first, trackTouchDown starts a pinch
   // and discards the tap. Only a value snapshot is held, never the event.
   const onPointerDown = (e) => {
-    setUserNav(true);
+    // Only a drawing/placement tool claims the view on pointerdown: a
+    // shape started on the empty canvas must not be yanked by a late
+    // fit. A select/pan tap does not move the view, so it must not cancel
+    // the pending open-time fit either — the fit still lands when the
+    // design arrives (Jason's S26+ report, 2026-11-23: the canvas "opens
+    // zoomed in" because his first tap cancelled the fit before the
+    // design loaded). A gesture that actually moves the view (pinch step,
+    // pan drag, wheel) sets userNavRef where the view changes, below.
+    if (tool !== "select" && tool !== "pan") userNavRef.current = true;
     // Capture the pointer to the canvas so move/up keep flowing when the
     // pointer leaves the element mid-gesture (edge-following while drawing,
     // releasing outside after a drag). Touch already has implicit capture;
@@ -1038,6 +1059,22 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       }
     }
     const hit = cycleStackedHit(plan, hitTest(plan));
+    // Touch: a drag pans unless it starts on the already-selected entity —
+    // tap selects first, then drag the selection to move it. On a phone
+    // the fitted plot leaves almost no empty background to start a pan
+    // from, so letting any unselected hit start a move-drag makes "drag
+    // to pan" (the HUD's promise, and Jason's S26+ report 2026-11-23)
+    // unreachable. Mouse behavior is unchanged.
+    if (
+      e.pointerType === "touch" &&
+      hit &&
+      !hitMovesWithSelection(design, selection, hit) &&
+      !(selection && hit.kind === selection.kind && hit.id === selection.id)
+    ) {
+      setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
+      dispatch({ type: "SELECT", selection: hit });
+      return;
+    }
     if (hitMovesWithSelection(design, selection, hit)) {
       houseMoveSeqRef.current += 1;
       houseMoveRef.current = { origin: plan, applied: { x: 0, y: 0 }, key: `move-house:${houseMoveSeqRef.current}` };
@@ -1176,6 +1213,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // during pan anyway, so only the view needs the frame cadence.
     if (e.pointerType === "touch" && drag?.kind === "pan") {
       stashGestureCursor(screen);
+      userNavRef.current = true; // a pan moves the view: cancels the pending fit
       const v = gestureView();
       scheduleGestureView({ ...v, ox: drag.ox + (screen.x - drag.start.x), oy: drag.oy + (screen.y - drag.start.y) });
       return;
@@ -1216,6 +1254,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       // Touch pan is intercepted above and rides the gesture frame
       // scheduler (with its cursor stashed for the final flush); the mouse
       // keeps the direct per-move commit it has always had.
+      userNavRef.current = true; // a pan moves the view: cancels the pending fit
       setView((v) => ({ ...v, ox: drag.ox + (screen.x - drag.start.x), oy: drag.oy + (screen.y - drag.start.y) }));
       return;
     }
@@ -1526,8 +1565,18 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // the pending view, so a burst of moves within one frame lands on
     // exactly the view the old step-by-step commits produced.
     const v = gestureView();
-    const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor));
+    // Same floor as wheel zoom (see onWheel): while a below-MIN_SCALE
+    // open-time fit is in effect, the floor drops to the fitted scale.
+    // Flooring the first pinch step at MIN_SCALE snapped a fitted phone
+    // view ~10x closer on the first move — the FCCU plot flew thousands
+    // of pixels off-screen (Jason's S26+ report, 2026-11-23: pinch
+    // "totally non-responsive").
+    const floor = fitFloor !== null ? Math.min(MIN_SCALE, fitFloor) : MIN_SCALE;
+    const scale = Math.min(MAX_SCALE, Math.max(floor, v.scale * factor));
     const applied = scale / v.scale;
+    // A pinch step moves the view, so it cancels the pending open-time
+    // fit (a tap that never moves the view must not — see onPointerDown).
+    userNavRef.current = true;
     scheduleGestureView({
       scale,
       ox: mid.x - (mid.x - (v.ox + dx)) * applied,
@@ -1610,13 +1659,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   };
 
   const onWheel = (e) => {
-    setUserNav(true);
+    userNavRef.current = true;
     const screen = eventPoint(e);
     const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    // The only interactive scale clamp in this component (there are no
-    // pinch handlers or zoom buttons). Its floor drops to the fitted scale
-    // while a below-MIN_SCALE open-time fit is in effect (see fitFloor above);
-    // otherwise it is exactly MIN_SCALE, as before.
+    // Its floor drops to the fitted scale while a below-MIN_SCALE
+    // open-time fit is in effect (see fitFloor above); otherwise it is
+    // exactly MIN_SCALE, as before. The pinch step (applyPinchStep)
+    // uses the same floor.
     const floor = fitFloor !== null ? Math.min(MIN_SCALE, fitFloor) : MIN_SCALE;
     setView((v) => {
       const scale = Math.min(MAX_SCALE, Math.max(floor, v.scale * factor));
@@ -1845,7 +1894,23 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             style={{ cursor: "pointer" }}
             onPointerDown={(e) => {
               e.stopPropagation();
+              tagDragStart.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
               dispatch({ type: "SELECT", selection: { kind: "symbol", id: t.symbolId } });
+            }}
+            onPointerMove={(e) => {
+              // A touch drag starting on a tag pans the canvas: the tag is
+              // a label, not a draggable body, and its pointerdown is
+              // swallowed for tap-select above, so without this no drag
+              // ever starts from a tag — the commonest drag origin on a
+              // phone, where tags cover the fitted plot. The first move
+              // only arms the pan (the svg's move handler takes over from
+              // the next move, once the drag state lands); a pinch never
+              // reaches here — its moves are consumed in the capture phase.
+              if (e.pointerType !== "touch" || drag) return;
+              const start = tagDragStart.current;
+              if (!start || start.pointerId !== e.pointerId) return;
+              if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 6) return;
+              setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
             }}
           >
             <rect
@@ -2728,6 +2793,34 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         ref={svgRef}
         className="h-full w-full touch-none select-none"
         style={{ cursor: drag?.kind === "resize-furniture" ? "nwse-resize" : drag?.kind ? "grabbing" : cursorForTool }}
+        // Gesture tracking runs in the capture phase so a child handler
+        // that stops propagation (the phone-overview tag labels) can
+        // never hide a touch pointer from pinch tracking: a pinch whose
+        // finger lands on a tag must still engage (Jason's S26+ report,
+        // 2026-11-23: pinch dead whenever a finger started on a tag).
+        // The bubble-phase handlers below still run for the first finger
+        // (capture returns false); for a pinch finger they are skipped
+        // (capture returns true + stops propagation), so no step is ever
+        // applied twice. A lift is swallowed only when it ends a pinch —
+        // a single-finger tap or drag still needs its bubble-phase
+        // commit below.
+        onPointerDownCapture={(e) => {
+          if (trackTouchDown(e)) e.stopPropagation();
+        }}
+        onPointerMoveCapture={(e) => {
+          if (trackTouchMove(e)) {
+            stashGestureCursor(eventPoint(e));
+            e.stopPropagation();
+          }
+        }}
+        onPointerUpCapture={(e) => {
+          const wasPinch = pinch.current !== null;
+          if (trackTouchEnd(e) && wasPinch) e.stopPropagation();
+        }}
+        onPointerCancelCapture={(e) => {
+          const wasPinch = pinch.current !== null;
+          if (trackTouchEnd(e) && wasPinch) e.stopPropagation();
+        }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

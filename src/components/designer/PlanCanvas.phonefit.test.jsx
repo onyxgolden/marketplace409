@@ -305,25 +305,32 @@ describe("PlanCanvas phone auto-fit", () => {
     expect(after.x2 - after.x1).toBeCloseTo(240 * 0.35, 4);
   });
 
-  it("a user interaction before the canvas is measured cancels the pending fit", () => {
+  it("a view-changing interaction before the canvas is measured cancels the pending fit", () => {
     mockSize = { w: 0, h: 0 };
     const design = addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 240, y: 120 });
     renderCanvas(design, { autoFitKey: "p1:level1" });
     const svg = container.querySelector("svg");
+    // Wheel-zoom moves the view before the canvas is measured: the fit
+    // is cancelled and the view stays the user's (wheeled) one, no yank.
     act(() => {
       svg.dispatchEvent(
-        new window.PointerEvent("pointerdown", {
+        new window.WheelEvent("wheel", {
           bubbles: true,
-          button: 0,
+          deltaY: -100,
           clientX: 100,
           clientY: 100,
         }),
       );
     });
     // The canvas is measured only now; the fit for this open is cancelled,
-    // so the view stays at the desktop default.
+    // so the view stays at the wheeled view (scale 1.792 around (100,100)
+    // → ox = oy = 55.2), not the fitted one.
     mockSize = { w: 390, h: 700 };
     triggerResize();
-    expect(coords(wallLine(container))).toEqual({ x1: 60, y1: 60, x2: 444, y2: 252 });
+    const c = coords(wallLine(container));
+    expect(c.x1).toBeCloseTo(55.2, 3);
+    expect(c.y1).toBeCloseTo(55.2, 3);
+    expect(c.x2).toBeCloseTo(485.28, 3);
+    expect(c.y2).toBeCloseTo(270.24, 3);
   });
 });
