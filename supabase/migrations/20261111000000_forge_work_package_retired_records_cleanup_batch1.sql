@@ -11,20 +11,39 @@
 --   forge_work_change_orders
 --   forge_work_craft_rates
 --
--- FK-dependency trace done fresh for this migration (not assumed from the
--- steps shape, which also had step_order and step_drawing_links): each of
--- these five tables has exactly ONE child -- its own *_revisions table,
--- with an ON DELETE RESTRICT FK back to the parent, and nothing else
--- references any of them anywhere in the schema (verified by grepping
--- every migration for "references ... <table>" for each of the five --
--- only each table's own revisions-table file matches). This is a strictly
--- simpler graph than steps', so all five get the identical two-step fix
--- (active-only blocker count, purge revisions-then-parent on delete) in
--- one migration -- not one giant change: each table's blocker-count arm
--- and purge block is independent and can be reviewed/reverted on its own,
--- there is no cross-table interaction, and grouping five instances of the
--- exact same mechanical pattern avoids five near-identical PRs with no
--- added safety.
+-- FK-dependency trace, CORRECTED in the fix round (the original trace
+-- missed the public.-qualified form when grepping for "references ...
+-- <table>"): three of the five hold the single-child premise -- permit
+-- annotations, craft assignments, and craft rates have exactly ONE child
+-- each (their own *_revisions table, ON DELETE RESTRICT) and nothing else
+-- references them. The other two do NOT:
+--   forge_work_change_orders is also referenced (ON DELETE RESTRICT) by
+--     forge_work_package_bust_change_orders.change_order_id
+--       (20261115000000_forge_work_package_busts.sql:349) and by
+--     forge_work_field_verification_links.change_order_id
+--       (20261120000000_forge_work_field_verifications.sql:367);
+--   forge_work_control_estimates is also referenced (ON DELETE RESTRICT)
+--     by forge_work_budget_allocations.control_estimate_id
+--       (20261121000000_forge_work_budget_allocations.sql:70).
+-- All three referrers are audit/history rows with no hard-delete path
+-- (bust links are "never hard-deleted" -- unlinking only soft-retires
+-- the link row; verification links are immutable field-verification
+-- audit; allocations carry an immutable revision audit), so they are
+-- NOT purged with the package. Instead the blocker count gains three
+-- arms (bust_change_order_links, field_verification_change_order_links,
+-- budget_allocations) that keep a package blocked, with a clean 409,
+-- while a RETIRED change order or control estimate still has such a link
+-- or allocation. The arms count links/allocations tied to retired
+-- parents only, in ANY soft state (active, unlinked, or retired): the
+-- RESTRICT FK fires on the row regardless of its soft state, so counting
+-- active rows only would still throw a raw 500 after the user cleared
+-- the visible link. With the arms in place the group stands (the
+-- grouping concern is closed by the P1 fix, not by splitting the PR):
+-- the three single-child arms purge as filed, and the two linked arms
+-- block cleanly instead of purging. Each table's blocker-count arm and
+-- purge block is independent and can be reviewed/reverted on its own,
+-- and grouping five instances of the same mechanical pattern avoids five
+-- near-identical PRs with no added safety.
 --
 -- forge_work_drawings' retire-due-to-review-history fallback (named in the
 -- same disclosure) is explicitly OUT OF SCOPE here and deferred as its own
@@ -41,15 +60,32 @@
 -- craft assignment, control estimate, change order, or craft rate still
 -- refuses with a clean 409 naming it, exactly as before. A package with
 -- only RETIRED rows of one or more of these five types now deletes
--- cleanly, with the retired rows (and their revisions) purged in the same
--- transaction as the package delete.
+-- cleanly -- unless a retired change order or control estimate still has
+-- a bust link, verification link, or budget allocation, in which case it
+-- still refuses with a clean 409 naming that link or allocation (the
+-- pre-PR behavior for linked retired rows was a clean 409; the as-filed
+-- PR would have thrown a raw FK 500 there instead). Retired rows (and
+-- their revisions) are purged in the same transaction as the package
+-- delete; the three link/allocation tables are never purged.
 -- ---------------------------------------------------------------------------
 
+-- Entitlement guard adopted from the trial migration
+-- (20261113030000_saas_trial_30day.sql): that file already carries this
+-- function's body verbatim as plpgsql + forge_has_app_entitlement, so
+-- this definition must retain the guard -- otherwise applying this
+-- migration after the trial migration would silently remove the Planner
+-- entitlement boundary on the deletion-blocker read leg. The function is
+-- plpgsql (not language sql) so the guard can raise.
 create or replace function forge_work_package_deletion_blocker_counts(
   p_owner_id text,
   p_package_id text
 ) returns jsonb
-language sql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.forge_has_app_entitlement(p_owner_id, 'planner') then
+    raise exception 'FORGE_TRIAL_ENTITLEMENT_REQUIRED' using errcode = '42501';
+  end if;
+  return (
   select coalesce(
     jsonb_agg(
       jsonb_build_object('type', t.type, 'count', t.count)
@@ -65,6 +101,20 @@ language sql security definer set search_path = public as $$
     select 'budget_revisions', count(*)::int
       from forge_work_package_budget_revisions
       where owner_id = p_owner_id and package_id = p_package_id
+    union all
+    -- Fix round: a budget allocation references its control estimate
+    -- (ON DELETE RESTRICT, 20261121000000:70) and is never hard-deleted,
+    -- so a retired estimate with a surviving allocation still blocks.
+    -- Counted regardless of the allocation's own retired_at: the FK fires
+    -- on the row in any soft state.
+    select 'budget_allocations', count(*)::int
+      from forge_work_budget_allocations a
+      where a.owner_id = p_owner_id
+        and exists (
+          select 1 from forge_work_control_estimates e
+          where e.owner_id = a.owner_id and e.id = a.control_estimate_id
+            and e.work_package_id = p_package_id and e.retired_at is not null
+        )
     union all
     select 'gate_evaluations', count(*)::int
       from forge_work_gate_evaluations
@@ -207,6 +257,30 @@ language sql security definer set search_path = public as $$
             and o.work_package_id = p_package_id and o.retired_at is null
         )
     union all
+    -- Fix round: bust links and field-verification links reference their
+    -- change order (ON DELETE RESTRICT, 20261115000000:349 and
+    -- 20261120000000:367) and are never hard-deleted (unlinking or
+    -- retiring only soft-retires the link row), so a retired change order
+    -- with a surviving link still blocks. Counted regardless of the
+    -- link's own soft state: the FK fires on the row in any state.
+    select 'bust_change_order_links', count(*)::int
+      from forge_work_package_bust_change_orders b
+      where b.owner_id = p_owner_id
+        and exists (
+          select 1 from forge_work_change_orders o
+          where o.owner_id = b.owner_id and o.id = b.change_order_id
+            and o.work_package_id = p_package_id and o.retired_at is not null
+        )
+    union all
+    select 'field_verification_change_order_links', count(*)::int
+      from forge_work_field_verification_links fvl
+      where fvl.owner_id = p_owner_id
+        and exists (
+          select 1 from forge_work_change_orders o
+          where o.owner_id = fvl.owner_id and o.id = fvl.change_order_id
+            and o.work_package_id = p_package_id and o.retired_at is not null
+        )
+    union all
     select 'craft_rates', count(*)::int
       from forge_work_craft_rates
       where owner_id = p_owner_id and work_package_id = p_package_id
@@ -221,7 +295,9 @@ language sql security definer set search_path = public as $$
             and c.work_package_id = p_package_id and c.retired_at is null
         )
   ) t
-  where t.count > 0;
+  where t.count > 0
+  );
+end;
 $$;
 
 revoke all on function forge_work_package_deletion_blocker_counts(text, text)

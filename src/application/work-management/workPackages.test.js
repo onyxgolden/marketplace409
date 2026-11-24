@@ -973,6 +973,34 @@ describe("getWorkPackageDeletionEligibility (D7)", () => {
     expect(result.eligibility.blockers.every((b) => !b.action.startsWith("These records"))).toBe(true);
   });
 
+  // 20261111000000 fix round (PR #784 review): bust links, verification
+  // links, and budget allocations tied to a retired change order or
+  // control estimate keep blocking with a clean 409 -- and their copy
+  // must say plainly that they can't be removed, not promise a retire /
+  // unlink step that does not clear the blocker (the RESTRICT FK fires
+  // on the link row in any soft state).
+  it("gives the fix-round link/allocation blocker types their own audit copy, not the generic fallback", async () => {
+    const db = mockDb(
+      [chain({ data: { ...PKG, status: "planned" }, error: null })],
+      rpcReturning([
+        { type: "bust_change_order_links", count: 1 },
+        { type: "field_verification_change_order_links", count: 2 },
+        { type: "budget_allocations", count: 1 },
+      ]),
+    );
+    const result = await getWorkPackageDeletionEligibility(db, {
+      ownerId: "owner_1", actor: "owner_1", packageId: "forge_wp_1",
+    });
+    expect(result.eligibility.blockers).toEqual([
+      { type: "bust_change_order_links", count: 1, label: "Bust change-order links",
+        action: "Bust change-order links are kept for audit and can't be removed." },
+      { type: "field_verification_change_order_links", count: 2, label: "Field verification change-order links",
+        action: "Field verification links are kept for audit and can't be removed." },
+      { type: "budget_allocations", count: 1, label: "Budget allocations",
+        action: "Budget allocations are kept for audit and can't be removed." },
+    ]);
+  });
+
   it("attaches deletionEligibility to detail only when an actor is given", async () => {
     const detailChains = () => [
       chain({ data: PKG, error: null }),

@@ -3,18 +3,27 @@
 // own header disclosed the identical pattern in five more tables --
 // forge_work_permit_annotations, forge_work_craft_assignments,
 // forge_work_control_estimates, forge_work_change_orders, and
-// forge_work_craft_rates -- each with exactly one child (its own
-// *_revisions table, ON DELETE RESTRICT back to the parent) and nothing
-// else referencing it anywhere in the schema (verified by grepping every
-// migration file for "references ... <table>" per table). This test
-// applies 20261008030000 -> 20261110040000 -> 20261110070000 ->
-// 20261111000000 in sequence and proves, for each of the five types: (1) a
-// RETIRED row of that type no longer blocks deletion, (2) an ACTIVE row of
-// that type still blocks exactly as before, (3) the retired row AND its
-// revision rows are purged with the package, never orphaned, (4) nothing
-// else regresses. forge_work_drawings' retire-due-to-review-history
-// fallback is explicitly out of scope for this migration -- its own,
-// materially more tangled graph is deferred as its own slice.
+// forge_work_craft_rates. The fix round CORRECTED the header's FK trace:
+// the original grep missed the public.-qualified form, so it claimed
+// each of the five had exactly one child (its own *_revisions table) and
+// nothing else referenced them. Three of the five hold that premise; the
+// other two do not -- change orders are also referenced (ON DELETE
+// RESTRICT) by bust links and field-verification links, and control
+// estimates by budget allocations. All three referrers are audit/history
+// rows with no hard-delete path, so they stay blockers (three new arms)
+// instead of purging. This test applies 20261008030000 ->
+// 20261110040000 -> 20261110070000 -> 20261111000000 in sequence and
+// proves, for each of the five types: (1) a RETIRED row of that type no
+// longer blocks deletion, (2) an ACTIVE row of that type still blocks
+// exactly as before, (3) the retired row AND its revision rows are purged
+// with the package, never orphaned, (4) nothing else regresses; plus the
+// fix-round cases: (5) a retired change order / control estimate with a
+// surviving bust link, verification link, or budget allocation still
+// refuses with a clean blocked 409 (never a raw FK 500), and (6) the
+// blocker-count read leg enforces the Planner entitlement guard.
+// forge_work_drawings' retire-due-to-review-history fallback is
+// explicitly out of scope for this migration -- its own, materially more
+// tangled graph is deferred as its own slice.
 
 import { readFileSync } from "node:fs";
 import { describe, it, expect, beforeAll } from "vitest";
@@ -60,6 +69,13 @@ const SETUP_SQL = `
   create function has_workspace_access(p_owner text)
   returns boolean language sql stable as $$
     select p_owner = any (string_to_array(coalesce(current_setting('test.owners', true), 'owner_1'), ','))
+  $$;
+  -- Fix-round stub for the Planner entitlement guard (real function in
+  -- 20261113010000_saas_auth_pr1.sql): entitled unless a test flips the
+  -- test.entitled setting off.
+  create function forge_has_app_entitlement(p_owner_id text, p_app_key text)
+  returns boolean language sql stable as $$
+    select coalesce(current_setting('test.entitled', true), 'true') = 'true'
   $$;
 
   create table forge_work_package_sequences (
@@ -223,6 +239,40 @@ const SETUP_SQL = `
     primary key (owner_id, id),
     foreign key (owner_id, craft_rate_id) references forge_work_craft_rates (owner_id, id) on delete restrict);
 
+  -- Fix round: the three additional RESTRICT referrers the original
+  -- header missed (bust links + verification links reference change
+  -- orders; budget allocations reference control estimates), with the
+  -- real FK shape. All three are audit/history rows with no hard-delete
+  -- path, so the fixture proves they keep blocking instead of purging.
+  -- Minimal busts/verifications parents included only as FK targets.
+  create table forge_work_package_busts (
+    owner_id text not null, id text not null, work_package_id text not null,
+    primary key (owner_id, id),
+    foreign key (owner_id, work_package_id) references forge_work_packages (owner_id, id) on delete restrict);
+  create table forge_work_package_bust_change_orders (
+    owner_id text not null, id text not null, bust_id text not null,
+    change_order_id text not null, unlinked_at timestamptz,
+    primary key (owner_id, id),
+    foreign key (owner_id, bust_id) references forge_work_package_busts (owner_id, id) on delete restrict,
+    foreign key (owner_id, change_order_id) references forge_work_change_orders (owner_id, id) on delete restrict);
+  create table forge_work_field_verifications (
+    owner_id text not null, id text not null, work_package_id text not null,
+    primary key (owner_id, id),
+    foreign key (owner_id, work_package_id) references forge_work_packages (owner_id, id) on delete restrict);
+  create table forge_work_field_verification_links (
+    owner_id text not null, id text not null, verification_id text not null,
+    work_package_id text not null, change_order_id text, retired_at timestamptz,
+    primary key (owner_id, id),
+    foreign key (owner_id, verification_id) references forge_work_field_verifications (owner_id, id) on delete restrict,
+    foreign key (owner_id, work_package_id) references forge_work_packages (owner_id, id) on delete restrict,
+    foreign key (owner_id, change_order_id) references forge_work_change_orders (owner_id, id) on delete restrict);
+  create table forge_work_budget_allocations (
+    owner_id text not null, id text not null, work_package_id text not null,
+    control_estimate_id text not null, retired_at timestamptz,
+    primary key (owner_id, id),
+    foreign key (owner_id, work_package_id) references forge_work_packages (owner_id, id) on delete restrict,
+    foreign key (owner_id, control_estimate_id) references forge_work_control_estimates (owner_id, id) on delete restrict);
+
   ${nextNumberSql}
 
   alter table forge_work_packages enable row level security;
@@ -256,6 +306,10 @@ async function query(sql) {
 async function asActor(actor, owners) {
   await db.exec(`select set_config('test.actor', '${actor}', false)`);
   await db.exec(`select set_config('test.owners', '${owners}', false)`);
+}
+
+async function asEntitled(entitled) {
+  await db.exec(`select set_config('test.entitled', '${entitled ? 'true' : 'false'}', false)`);
 }
 
 let seedCounter = 5000;
@@ -446,6 +500,184 @@ describe("migration fix: retired permit annotations / craft assignments / contro
     for (const def of TYPES) {
       expect(await rowCounts(def, pkg.id)).toEqual({ parent: 0, revisions: 0 });
     }
+  });
+
+  // Fix round (PR #784 review P1): the three missed RESTRICT referrers.
+  // A retired change order / control estimate with a surviving bust link,
+  // verification link, or budget allocation must still refuse with a
+  // clean blocked 409 -- never the raw FK 500 the as-filed PR threw when
+  // the purge hit the link. The link/allocation rows survive the refused
+  // attempt: they are audit history and are never purged.
+  describe("fix round: linked retired rows still block cleanly (no raw FK 500)", () => {
+    it("retired change order + ACTIVE bust link: blocked naming bust_change_order_links, nothing purged", async () => {
+      await asActor("owner_1", "owner_1");
+      const pkg = await seedPackage("owner_1");
+      const coId = `forge_rec_co_${pkg.id}`;
+      await db.exec(`
+        insert into forge_work_change_orders (owner_id, id, work_package_id, retired_at)
+        values ('owner_1', '${coId}', '${pkg.id}', now());
+        insert into forge_work_package_busts (owner_id, id, work_package_id)
+        values ('owner_1', 'forge_rec_bust_${pkg.id}', '${pkg.id}');
+        insert into forge_work_package_bust_change_orders (owner_id, id, bust_id, change_order_id)
+        values ('owner_1', 'forge_rec_blink_${pkg.id}', 'forge_rec_bust_${pkg.id}', '${coId}');
+      `);
+      expect(await callBlockers("owner_1", pkg.id)).toEqual([
+        { type: "bust_change_order_links", count: 1 },
+      ]);
+      const result = await callDelete("owner_1", pkg.id, pkg.version, pkg.code);
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("blocked");
+      expect(result.blockers).toEqual([{ type: "bust_change_order_links", count: 1 }]);
+      expect(await packageCount(pkg.id)).toBe(1);
+      const links = await query(`select count(*)::int as count from forge_work_package_bust_change_orders where change_order_id = '${coId}'`);
+      expect(links[0].count).toBe(1);
+    });
+
+    it("retired change order + UNLINKED bust link: still blocked (the FK fires on the history row too)", async () => {
+      await asActor("owner_1", "owner_1");
+      const pkg = await seedPackage("owner_1");
+      const coId = `forge_rec_co_unl_${pkg.id}`;
+      await db.exec(`
+        insert into forge_work_change_orders (owner_id, id, work_package_id, retired_at)
+        values ('owner_1', '${coId}', '${pkg.id}', now());
+        insert into forge_work_package_busts (owner_id, id, work_package_id)
+        values ('owner_1', 'forge_rec_bust_unl_${pkg.id}', '${pkg.id}');
+        insert into forge_work_package_bust_change_orders (owner_id, id, bust_id, change_order_id, unlinked_at)
+        values ('owner_1', 'forge_rec_blink_unl_${pkg.id}', 'forge_rec_bust_unl_${pkg.id}', '${coId}', now());
+      `);
+      expect(await callBlockers("owner_1", pkg.id)).toEqual([
+        { type: "bust_change_order_links", count: 1 },
+      ]);
+      const result = await callDelete("owner_1", pkg.id, pkg.version, pkg.code);
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("blocked");
+      expect(await packageCount(pkg.id)).toBe(1);
+    });
+
+    it("retired change order + ACTIVE verification link: blocked naming field_verification_change_order_links", async () => {
+      await asActor("owner_1", "owner_1");
+      const pkg = await seedPackage("owner_1");
+      const coId = `forge_rec_co_fv_${pkg.id}`;
+      await db.exec(`
+        insert into forge_work_change_orders (owner_id, id, work_package_id, retired_at)
+        values ('owner_1', '${coId}', '${pkg.id}', now());
+        insert into forge_work_field_verifications (owner_id, id, work_package_id)
+        values ('owner_1', 'forge_rec_fv_${pkg.id}', '${pkg.id}');
+        insert into forge_work_field_verification_links (owner_id, id, verification_id, work_package_id, change_order_id)
+        values ('owner_1', 'forge_rec_fvlink_${pkg.id}', 'forge_rec_fv_${pkg.id}', '${pkg.id}', '${coId}');
+      `);
+      expect(await callBlockers("owner_1", pkg.id)).toEqual([
+        { type: "field_verification_change_order_links", count: 1 },
+      ]);
+      const result = await callDelete("owner_1", pkg.id, pkg.version, pkg.code);
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("blocked");
+      expect(await packageCount(pkg.id)).toBe(1);
+    });
+
+    it("retired change order + RETIRED verification link: still blocked", async () => {
+      await asActor("owner_1", "owner_1");
+      const pkg = await seedPackage("owner_1");
+      const coId = `forge_rec_co_fvr_${pkg.id}`;
+      await db.exec(`
+        insert into forge_work_change_orders (owner_id, id, work_package_id, retired_at)
+        values ('owner_1', '${coId}', '${pkg.id}', now());
+        insert into forge_work_field_verifications (owner_id, id, work_package_id)
+        values ('owner_1', 'forge_rec_fv_r_${pkg.id}', '${pkg.id}');
+        insert into forge_work_field_verification_links (owner_id, id, verification_id, work_package_id, change_order_id, retired_at)
+        values ('owner_1', 'forge_rec_fvlink_r_${pkg.id}', 'forge_rec_fv_r_${pkg.id}', '${pkg.id}', '${coId}', now());
+      `);
+      expect(await callBlockers("owner_1", pkg.id)).toEqual([
+        { type: "field_verification_change_order_links", count: 1 },
+      ]);
+      const result = await callDelete("owner_1", pkg.id, pkg.version, pkg.code);
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("blocked");
+      expect(await packageCount(pkg.id)).toBe(1);
+    });
+
+    it("retired control estimate + ACTIVE budget allocation: blocked naming budget_allocations", async () => {
+      await asActor("owner_1", "owner_1");
+      const pkg = await seedPackage("owner_1");
+      const estId = `forge_rec_est_${pkg.id}`;
+      await db.exec(`
+        insert into forge_work_control_estimates (owner_id, id, work_package_id, retired_at)
+        values ('owner_1', '${estId}', '${pkg.id}', now());
+        insert into forge_work_budget_allocations (owner_id, id, work_package_id, control_estimate_id)
+        values ('owner_1', 'forge_rec_alloc_${pkg.id}', '${pkg.id}', '${estId}');
+      `);
+      expect(await callBlockers("owner_1", pkg.id)).toEqual([
+        { type: "budget_allocations", count: 1 },
+      ]);
+      const result = await callDelete("owner_1", pkg.id, pkg.version, pkg.code);
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("blocked");
+      expect(await packageCount(pkg.id)).toBe(1);
+      const allocs = await query(`select count(*)::int as count from forge_work_budget_allocations where control_estimate_id = '${estId}'`);
+      expect(allocs[0].count).toBe(1);
+    });
+
+    it("retired control estimate + RETIRED budget allocation: still blocked (the FK fires on the retired row too)", async () => {
+      await asActor("owner_1", "owner_1");
+      const pkg = await seedPackage("owner_1");
+      const estId = `forge_rec_est_r_${pkg.id}`;
+      await db.exec(`
+        insert into forge_work_control_estimates (owner_id, id, work_package_id, retired_at)
+        values ('owner_1', '${estId}', '${pkg.id}', now());
+        insert into forge_work_budget_allocations (owner_id, id, work_package_id, control_estimate_id, retired_at)
+        values ('owner_1', 'forge_rec_alloc_r_${pkg.id}', '${pkg.id}', '${estId}', now());
+      `);
+      expect(await callBlockers("owner_1", pkg.id)).toEqual([
+        { type: "budget_allocations", count: 1 },
+      ]);
+      const result = await callDelete("owner_1", pkg.id, pkg.version, pkg.code);
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("blocked");
+      expect(await packageCount(pkg.id)).toBe(1);
+    });
+
+    it("ACTIVE change order + bust link: blocked by change_orders only (no redundant link arm)", async () => {
+      await asActor("owner_1", "owner_1");
+      const pkg = await seedPackage("owner_1");
+      const coId = `forge_rec_co_act_${pkg.id}`;
+      await db.exec(`
+        insert into forge_work_change_orders (owner_id, id, work_package_id)
+        values ('owner_1', '${coId}', '${pkg.id}');
+        insert into forge_work_package_busts (owner_id, id, work_package_id)
+        values ('owner_1', 'forge_rec_bust_act_${pkg.id}', '${pkg.id}');
+        insert into forge_work_package_bust_change_orders (owner_id, id, bust_id, change_order_id)
+        values ('owner_1', 'forge_rec_blink_act_${pkg.id}', 'forge_rec_bust_act_${pkg.id}', '${coId}');
+      `);
+      expect(await callBlockers("owner_1", pkg.id)).toEqual([
+        { type: "change_orders", count: 1 },
+      ]);
+      const result = await callDelete("owner_1", pkg.id, pkg.version, pkg.code);
+      expect(result.error).toBe("blocked");
+    });
+  });
+
+  // Fix round (PR #784 review P2): the Planner entitlement guard on the
+  // blocker-count read leg, adopted from the trial migration
+  // (20261113030000). The guard must raise before any count is returned.
+  describe("fix round: Planner entitlement guard on the blocker-count read leg", () => {
+    it("without a Planner entitlement the blocker call raises FORGE_TRIAL_ENTITLEMENT_REQUIRED", async () => {
+      await asActor("owner_1", "owner_1");
+      await asEntitled(false);
+      try {
+        await expect(callBlockers("owner_1", "forge_wp_missing")).rejects.toThrow(
+          "FORGE_TRIAL_ENTITLEMENT_REQUIRED",
+        );
+      } finally {
+        await asEntitled(true);
+      }
+    });
+
+    it("with a Planner entitlement the blocker call works exactly as before", async () => {
+      await asActor("owner_1", "owner_1");
+      await asEntitled(true);
+      const pkg = await seedPackage("owner_1");
+      expect(await callBlockers("owner_1", pkg.id)).toEqual([]);
+    });
   });
 
   it("re-applies idempotently (create or replace, no destructive statement)", async () => {

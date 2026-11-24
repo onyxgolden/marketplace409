@@ -628,6 +628,26 @@ const DELETION_BLOCKER_INFO = Object.freeze({
     label: "Craft rate history",
     action: "Retire the craft rate(s) in Budget & Change Orders, then try again.",
   },
+  // Fix round for the 20261111000000 review (PR #784): bust links,
+  // verification links, and budget allocations reference a retired change
+  // order or control estimate with ON DELETE RESTRICT and are never
+  // hard-deleted, so they keep blocking with a clean 409 instead of
+  // purging. No user action clears them -- unlinking or retiring a link
+  // only soft-retires the row, and the FK fires on the row in any soft
+  // state -- so the copy says so plainly instead of promising a next
+  // step that does not work.
+  bust_change_order_links: {
+    label: "Bust change-order links",
+    action: "Bust change-order links are kept for audit and can't be removed.",
+  },
+  field_verification_change_order_links: {
+    label: "Field verification change-order links",
+    action: "Field verification links are kept for audit and can't be removed.",
+  },
+  budget_allocations: {
+    label: "Budget allocations",
+    action: "Budget allocations are kept for audit and can't be removed.",
+  },
 });
 
 // Annotate raw {type, count} blockers from the database with display copy.
