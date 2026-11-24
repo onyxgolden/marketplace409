@@ -1286,7 +1286,8 @@ describe("getWorkPackageDeletionEligibility (D7)", () => {
     expect(withoutActor.rpc).not.toHaveBeenCalled();
   });
 
-  it("hides the affordance (null) instead of failing detail when eligibility errors", async () => {
+  it("degrades to a logged, not-deletable eligibility (never a silent null) when the RPC errors", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const db = mockDb([
       chain({ data: PKG, error: null }),
       chain({ data: [], error: null }),
@@ -1299,7 +1300,22 @@ describe("getWorkPackageDeletionEligibility (D7)", () => {
       ownerId: "owner_1", packageId: "forge_wp_1", actor: "owner_1",
     });
     expect(detail.ok).toBe(true);
-    expect(detail.deletionEligibility).toBeNull();
+    // The owner still sees the Danger zone (so the affordance isn't just
+    // invisible with zero explanation), but it reports the check failed
+    // and never guesses deletable while blockers are unknown.
+    expect(detail.deletionEligibility).toEqual({
+      isOwner: true,
+      canDelete: false,
+      status: PKG.status,
+      packageVersion: PKG.version,
+      blockers: [],
+      error: true,
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("deletion eligibility check failed"),
+      expect.any(Error),
+    );
+    consoleError.mockRestore();
   });
 });
 

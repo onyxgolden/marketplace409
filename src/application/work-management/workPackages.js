@@ -848,12 +848,26 @@ export async function getWorkPackageDetail(db, { ownerId, packageId, actor, scop
   };
   if (actor) {
     // Advisory delete affordance for the detail UI — never authorization
-    // (the delete RPC revalidates everything in SQL). A failure here hides
-    // the affordance instead of breaking the detail view.
+    // (the delete RPC revalidates everything in SQL). A failure here must
+    // not silently vanish the affordance with no trace (that read live as
+    // "no danger zone, no delete" with nothing to diagnose) — log it and
+    // tell the owner the check failed, defaulting to not-deletable rather
+    // than guessing blockers are clear.
     try {
       result.deletionEligibility = await computeDeletionEligibility(db, { ownerId, actor, pkg });
-    } catch {
-      result.deletionEligibility = null;
+    } catch (err) {
+      console.error(
+        `getWorkPackageDetail: deletion eligibility check failed (package ${pkg.id}, owner ${ownerId}):`,
+        err,
+      );
+      result.deletionEligibility = {
+        isOwner: actor === ownerId,
+        canDelete: false,
+        status: pkg.status,
+        packageVersion: pkg.version,
+        blockers: [],
+        error: true,
+      };
     }
   }
   // Planning-process earned value for the Overview tab (the package's
