@@ -120,7 +120,12 @@
 --     plus the three new branches — the earlier 20261110070000 body
 --     is superseded; copying from it would have dropped the
 --     gate/permit/craft-rate branches and silently unblocked
---     deletions). Unlike steps, retired verifications still block:
+--     deletions). Carry-forward (2026-11-24): the PR #784 fix
+--     round's budget_allocations and bust_change_order_links arms
+--     are carried forward here too, so this file applying after
+--     #784 does not clobber them; the fix round's
+--     field_verification_change_order_links arm is already covered
+--     by this file's own all-links arm below. Unlike steps, retired
 --     a verification is immutable audit history with no hard-delete
 --     path, so purging it on package delete would erase attestations
 --     — a package that ever held a verification can never be
@@ -2230,6 +2235,21 @@ select coalesce(
       from forge_work_package_budget_revisions
       where owner_id = p_owner_id and package_id = p_package_id
     union all
+    -- Carry-forward (2026-11-24, PR #784 fix round): a budget
+    -- allocation references its control estimate (ON DELETE RESTRICT,
+    -- 20261121000000:70) and is never hard-deleted, so a retired
+    -- estimate with a surviving allocation still blocks. Counted
+    -- regardless of the allocation's own retired_at: the FK fires on
+    -- the row in any soft state.
+    select 'budget_allocations', count(*)::int
+      from forge_work_budget_allocations a
+      where a.owner_id = p_owner_id
+        and exists (
+          select 1 from forge_work_control_estimates e
+          where e.owner_id = a.owner_id and e.id = a.control_estimate_id
+            and e.work_package_id = p_package_id and e.retired_at is not null
+        )
+    union all
     select 'gate_evaluations', count(*)::int
       from forge_work_gate_evaluations
       where owner_id = p_owner_id and package_id = p_package_id
@@ -2369,6 +2389,21 @@ select coalesce(
           select 1 from forge_work_change_orders o
           where o.owner_id = r.owner_id and o.id = r.change_order_id
             and o.work_package_id = p_package_id and o.retired_at is null
+        )
+    union all
+    -- Carry-forward (2026-11-24, PR #784 fix round): bust links
+    -- reference their change order (ON DELETE RESTRICT,
+    -- 20261115000000:349) and are never hard-deleted (unlinking only
+    -- soft-retires the link row), so a retired change order with a
+    -- surviving link still blocks. Counted regardless of the link's
+    -- own soft state: the FK fires on the row in any state.
+    select 'bust_change_order_links', count(*)::int
+      from forge_work_package_bust_change_orders b
+      where b.owner_id = p_owner_id
+        and exists (
+          select 1 from forge_work_change_orders o
+          where o.owner_id = b.owner_id and o.id = b.change_order_id
+            and o.work_package_id = p_package_id and o.retired_at is not null
         )
     union all
     select 'craft_rates', count(*)::int
