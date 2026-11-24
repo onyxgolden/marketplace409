@@ -620,6 +620,67 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
   const isTerminal = pkg.status === WP_STATUS.VERIFIED_CLOSED || pkg.status === WP_STATUS.CANCELLED;
 
+  // D7 follow-up: delete lives where the work happens, not buried in a
+  // tab — the same body (guards, blocker reasons, trigger) is reused in
+  // the Edit form (Overview) and the Activity tab's Danger zone, which
+  // never render at once (Edit form shows only while not viewing Activity).
+  const dangerZoneBody = deletionEligibility?.isOwner ? (
+    <>
+      <h2 className="text-sm font-semibold text-red-700">Danger zone</h2>
+      <h3 className="mt-3 text-sm font-medium text-slate-900">Delete work package</h3>
+      {deletionEligibility.error ? (
+        <p className="mt-1 text-sm text-slate-600">
+          We couldn&apos;t check whether this package can be deleted right now. Reload the
+          page and try again.
+        </p>
+      ) : deletionEligibility.canDelete ? (
+        <>
+          <p className="mt-1 text-sm text-slate-600">
+            This draft package has no budget, links, or history yet, so it can be
+            deleted permanently. A short audit record of the deletion is kept.
+          </p>
+          <button
+            ref={deleteTriggerRef}
+            type="button"
+            className={`${btn} mt-3 bg-red-600 text-white hover:bg-red-500`}
+            onClick={openDeleteDialog}
+          >
+            Delete work package
+          </button>
+        </>
+      ) : (
+        <div className="mt-1 text-sm text-slate-600">
+          <p>This package can&apos;t be deleted:</p>
+          {deletionEligibility.status !== WP_STATUS.DRAFT && (
+            <p className="mt-2">
+              Only draft packages can be deleted — this package is{" "}
+              <span className="font-medium">
+                {deletionEligibility.status.replace(/_/g, " ")}
+              </span>
+              . If it is no longer needed, cancel it instead of deleting it.
+            </p>
+          )}
+          {deletionEligibility.blockers.length > 0 && (
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              {deletionEligibility.blockers.map((blocker) => (
+                <li key={blocker.type}>
+                  <span className="font-medium">{blocker.label}</span> ({blocker.count})
+                  {" — "}
+                  {blocker.action}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {!deleteOpen && deleteError && (
+        <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+          {deleteError}
+        </p>
+      )}
+    </>
+  ) : null;
+
   return (
     <PackagePageProvider workspace={workspaceParam} forgeProject={forgeProjectParam}>
     <div className="mt-6">
@@ -807,6 +868,13 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
                 <Field title="Equipment tag" value={pkg.equipment_tag} />
                 <Field title="Work order ref" value={pkg.work_order_ref} />
               </dl>
+            )}
+            {/* Delete also lives here, not only on the Activity tab — it's
+               part of editing the package, not a separate destination. */}
+            {editing && dangerZoneBody && (
+              <section aria-label="Danger zone" className="mt-6 rounded-lg border border-red-200 bg-white p-5">
+                {dangerZoneBody}
+              </section>
             )}
             {pkg.description && !editing && <p className="mt-4 text-sm text-slate-600">{pkg.description}</p>}
             {/* Slice-7 confirmation-placement fix (R1/R3): the Package
@@ -1120,119 +1188,73 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
             )}
           </section>
 
-          {deletionEligibility?.isOwner && (
+          {dangerZoneBody && (
             <section aria-label="Danger zone" className="rounded-lg border border-red-200 bg-white p-5">
-              <h2 className="text-sm font-semibold text-red-700">Danger zone</h2>
-              <h3 className="mt-3 text-sm font-medium text-slate-900">Delete work package</h3>
-              {deletionEligibility.canDelete ? (
-                <>
-                  <p className="mt-1 text-sm text-slate-600">
-                    This draft package has no budget, links, or history yet, so it can be
-                    deleted permanently. A short audit record of the deletion is kept.
-                  </p>
-                  <button
-                    ref={deleteTriggerRef}
-                    type="button"
-                    className={`${btn} mt-3 bg-red-600 text-white hover:bg-red-500`}
-                    onClick={openDeleteDialog}
-                  >
-                    Delete work package
-                  </button>
-                </>
-              ) : (
-                <div className="mt-1 text-sm text-slate-600">
-                  <p>This package can&apos;t be deleted:</p>
-                  {deletionEligibility.status !== WP_STATUS.DRAFT && (
-                    <p className="mt-2">
-                      Only draft packages can be deleted — this package is{" "}
-                      <span className="font-medium">
-                        {deletionEligibility.status.replace(/_/g, " ")}
-                      </span>
-                      . If it is no longer needed, cancel it instead of deleting it.
-                    </p>
-                  )}
-                  {deletionEligibility.blockers.length > 0 && (
-                    <ul className="mt-2 list-disc space-y-1 pl-5">
-                      {deletionEligibility.blockers.map((blocker) => (
-                        <li key={blocker.type}>
-                          <span className="font-medium">{blocker.label}</span> ({blocker.count})
-                          {" — "}
-                          {blocker.action}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-              {!deleteOpen && deleteError && (
-                <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
-                  {deleteError}
-                </p>
-              )}
+              {dangerZoneBody}
             </section>
           )}
+        </div>
+      )}
 
-          {deleteOpen && deletionEligibility?.isOwner && (
-            <div
-              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-              onClick={(event) => {
-                if (event.target === event.currentTarget) closeDeleteDialog();
-              }}
-            >
-              <div
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="delete-package-title"
-                className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
-              >
-                <h2 id="delete-package-title" className="text-base font-semibold text-slate-900">
-                  Delete work package
-                </h2>
-                <p className="mt-2 text-sm text-slate-600">
-                  Delete <span className="font-mono font-medium">{pkg.code}</span> — {pkg.title}?
-                  This permanently deletes the draft package. A short audit record (code,
-                  title, who deleted it, and when) is kept. This can&apos;t be undone.
-                </p>
-                <div className="mt-4">
-                  <label className={label} htmlFor="delete_confirm_code">
-                    Type the package code ({pkg.code}) to confirm
-                  </label>
-                  <input
-                    id="delete_confirm_code"
-                    className={input}
-                    value={deleteConfirmCode}
-                    onChange={(event) => setDeleteConfirmCode(event.target.value)}
-                    disabled={deleteBusy}
-                    autoComplete="off"
-                  />
-                </div>
-                {deleteError && (
-                  <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
-                    {deleteError}
-                  </p>
-                )}
-                <div className="mt-4 flex justify-end gap-2">
-                  <button
-                    type="button"
-                    className={btnGhost}
-                    onClick={closeDeleteDialog}
-                    disabled={deleteBusy}
-                    autoFocus
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className={`${btn} bg-red-600 text-white hover:bg-red-500`}
-                    onClick={onConfirmDelete}
-                    disabled={deleteBusy || deleteConfirmCode !== pkg.code}
-                  >
-                    {deleteBusy ? "Deleting…" : "Delete"}
-                  </button>
-                </div>
-              </div>
+      {deleteOpen && deletionEligibility?.isOwner && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeDeleteDialog();
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-package-title"
+            className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+          >
+            <h2 id="delete-package-title" className="text-base font-semibold text-slate-900">
+              Delete work package
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Delete <span className="font-mono font-medium">{pkg.code}</span> — {pkg.title}?
+              This permanently deletes the draft package. A short audit record (code,
+              title, who deleted it, and when) is kept. This can&apos;t be undone.
+            </p>
+            <div className="mt-4">
+              <label className={label} htmlFor="delete_confirm_code">
+                Type the package code ({pkg.code}) to confirm
+              </label>
+              <input
+                id="delete_confirm_code"
+                className={input}
+                value={deleteConfirmCode}
+                onChange={(event) => setDeleteConfirmCode(event.target.value)}
+                disabled={deleteBusy}
+                autoComplete="off"
+              />
             </div>
-          )}
+            {deleteError && (
+              <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                {deleteError}
+              </p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className={btnGhost}
+                onClick={closeDeleteDialog}
+                disabled={deleteBusy}
+                autoFocus
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={`${btn} bg-red-600 text-white hover:bg-red-500`}
+                onClick={onConfirmDelete}
+                disabled={deleteBusy || deleteConfirmCode !== pkg.code}
+              >
+                {deleteBusy ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -853,6 +853,37 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
       .toContain("This package has records that must be kept");
     expect(container.querySelector('[role="tablist"]')).not.toBeNull();
   });
+
+  it("shows a distinct error message (never a silent blank) when the eligibility check itself failed", () => {
+    stubFetch();
+    const { container } = renderDangerZone(BASE_PKG, {
+      deletionEligibility: {
+        isOwner: true, canDelete: false, status: "draft", packageVersion: 1, blockers: [], error: true,
+      },
+    });
+    const zone = dangerZone(container);
+    expect(zone).not.toBeNull();
+    expect(zone.textContent).toContain("couldn't check whether this package can be deleted");
+    // Never guesses deletable, and never claims a specific blocker that
+    // was never actually determined.
+    expect(deleteTrigger(container)).toBeNull();
+    expect(zone.textContent).not.toContain("can't be deleted:");
+  });
+
+  it("offers the same Delete affordance from the Edit form on Overview, not only the Activity tab", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG, { deletionEligibility: ELIGIBLE });
+    // Not editing yet: no Danger zone on Overview.
+    expect(dangerZone(container)).toBeNull();
+    const editButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Edit");
+    act(() => { editButton.click(); });
+    const zone = dangerZone(container);
+    expect(zone).not.toBeNull();
+    expect(zone.textContent).toContain("Delete work package");
+    act(() => { deleteTrigger(container).click(); });
+    expect(dialogEl(container)).not.toBeNull();
+    expect(dialogEl(container).textContent).toContain("WP-0001");
+  });
 });
 
 describe("WorkPackageDetailClient tabs (UI-density redesign)", () => {
