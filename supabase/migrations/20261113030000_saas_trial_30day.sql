@@ -2286,7 +2286,15 @@ create trigger forge_trial_planner_entitlement
 --     PR #784's version verbatim (active-only arms + revision arms —
 --     a strict superset of the 20261110070000 body on main), converted
 --     from language sql to language plpgsql so the guard can raise;
---     the query itself is unchanged. forge_work_planning_process_checklist
+--     the query itself is unchanged. Carry-forward (2026-11-24): the
+--     PR #784 fix round's budget_allocations and
+--     bust_change_order_links arms are carried forward here, so this
+--     file applying after #784 does not clobber them. The fix round's
+--     field_verification_change_order_links arm is deliberately NOT
+--     carried: its table is created by the gated 20261120000000
+--     migration, and that file counts ALL verification links as
+--     blockers, so it covers the case when it applies.
+--     forge_work_planning_process_checklist
 --     is the #796 body verbatim with the guard inserted after its
 --     workspace check. Mutation RPCs need no redefinition: their writes
 --     are blocked by the section 10 triggers before any data returns.
@@ -2317,6 +2325,21 @@ select coalesce(
     select 'budget_revisions', count(*)::int
       from forge_work_package_budget_revisions
       where owner_id = p_owner_id and package_id = p_package_id
+    union all
+    -- Carry-forward (2026-11-24, PR #784 fix round): a budget
+    -- allocation references its control estimate (ON DELETE RESTRICT,
+    -- 20261121000000:70) and is never hard-deleted, so a retired
+    -- estimate with a surviving allocation still blocks. Counted
+    -- regardless of the allocation's own retired_at: the FK fires on
+    -- the row in any soft state.
+    select 'budget_allocations', count(*)::int
+      from forge_work_budget_allocations a
+      where a.owner_id = p_owner_id
+        and exists (
+          select 1 from forge_work_control_estimates e
+          where e.owner_id = a.owner_id and e.id = a.control_estimate_id
+            and e.work_package_id = p_package_id and e.retired_at is not null
+        )
     union all
     select 'gate_evaluations', count(*)::int
       from forge_work_gate_evaluations
@@ -2457,6 +2480,21 @@ select coalesce(
           select 1 from forge_work_change_orders o
           where o.owner_id = r.owner_id and o.id = r.change_order_id
             and o.work_package_id = p_package_id and o.retired_at is null
+        )
+    union all
+    -- Carry-forward (2026-11-24, PR #784 fix round): bust links
+    -- reference their change order (ON DELETE RESTRICT,
+    -- 20261115000000:349) and are never hard-deleted (unlinking only
+    -- soft-retires the link row), so a retired change order with a
+    -- surviving link still blocks. Counted regardless of the link's
+    -- own soft state: the FK fires on the row in any state.
+    select 'bust_change_order_links', count(*)::int
+      from forge_work_package_bust_change_orders b
+      where b.owner_id = p_owner_id
+        and exists (
+          select 1 from forge_work_change_orders o
+          where o.owner_id = b.owner_id and o.id = b.change_order_id
+            and o.work_package_id = p_package_id and o.retired_at is not null
         )
     union all
     select 'craft_rates', count(*)::int
