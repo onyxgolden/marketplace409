@@ -11,6 +11,7 @@ import WorkPackageDrawingReadiness, { ActionConfirmation } from "./WorkPackageDr
 import WorkPackageCraftAssignments from "./WorkPackageCraftAssignments.jsx";
 import WorkPackageSteps from "./WorkPackageSteps.jsx";
 import WorkPackagePlanningProcess from "./WorkPackagePlanningProcess.jsx";
+import WorkPackageMilestones from "./WorkPackageMilestones.jsx";
 import WorkPackageManpowerCurve from "./WorkPackageManpowerCurve.jsx";
 import WorkPackageBudgetPanel from "./WorkPackageBudgetPanel.jsx";
 import WorkPackageChangeOrders from "./WorkPackageChangeOrders.jsx";
@@ -28,8 +29,7 @@ const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
 const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`;
 
-// UI-density redesign: 11 tabs (the Milestones tab is a placeholder until
-// slice 9 builds it — see the tabset correction). Tab order: the schedule
+// UI-density redesign: 11 tabs. Tab order: the schedule
 // spine (Work steps, then the Planning process build checklist, then
 // Milestones) follows the package overview; Budget & Change Orders sits
 // after the IFA→IFC redlines per the brief; Busts follows Budget, since a
@@ -1035,15 +1035,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
       {activeTab === "milestones" && (
         <div className="mt-6 space-y-6">
-          <section className="rounded-lg border border-slate-200 bg-white p-5">
-            <h2 className="text-sm font-semibold text-slate-900">Milestones</h2>
-            <p className="mt-1 text-sm text-slate-600">
-              Milestone tracking arrives with slice 9: the 14-milestone timing backbone from the
-              milestone tracker, per-package planned and actual dates, percent complete, and the
-              ±7-day late flag. This tab is a placeholder until that slice lands — nothing to
-              fill in here yet.
-            </p>
-          </section>
+          <WorkPackageMilestones packageId={pkg.id} />
         </div>
       )}
 
