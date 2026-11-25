@@ -10,6 +10,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { formatPackageCode } from "@/domains/work-management/workPackage.js";
 import HierarchyProjectSelector, { UNASSIGNED_VALUE } from "./HierarchyProjectSelector.jsx";
 import { usePageQuery } from "./packagePageContext.jsx";
 
@@ -97,8 +98,8 @@ export default function WorkPackageProjectLink({
       const nextPackage = body.package || null;
       setMessage(
         pickedTarget
-          ? `${packageCode} is now assigned to ${pickedName}.`
-          : `${packageCode} is now unassigned.`,
+          ? `${formatPackageCode(packageCode)} is now assigned to ${pickedName}.`
+          : `${formatPackageCode(packageCode)} is now unassigned.`,
       );
       setConfirming(false);
       setPicked("");
@@ -152,8 +153,8 @@ export default function WorkPackageProjectLink({
         <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-900/30">
           <p className="text-sm text-slate-800 dark:text-slate-100">
             {pickedTarget
-              ? `Move ${packageCode} from ${currentName} to ${pickedName}? Its steps, schedule, and budget move with it — nothing else changes.`
-              : `Remove ${packageCode} from ${currentName}? It will appear in the Unassigned packages inbox.`}
+              ? `Move ${formatPackageCode(packageCode)} from ${currentName} to ${pickedName}? Its steps, schedule, and budget move with it — nothing else changes.`
+              : `Remove ${formatPackageCode(packageCode)} from ${currentName}? It will appear in the Unassigned packages inbox.`}
           </p>
           <div className="mt-2 flex items-center gap-2">
             <button type="button" onClick={save} disabled={busy}

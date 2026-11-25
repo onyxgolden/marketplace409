@@ -734,7 +734,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
     act(() => { deleteTrigger(container).click(); });
     const dialog = dialogEl(container);
     expect(dialog).not.toBeNull();
-    expect(dialog.textContent).toContain("WP-0001");
+    expect(dialog.textContent).toContain("0001");
     expect(dialog.textContent).toContain("Turnover");
     expect(dialog.textContent).toContain("audit record");
     expect(dialog.textContent).toContain("can't be undone");
@@ -742,11 +742,11 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
     expect(document.activeElement).toBe(dialogButton(container, "Cancel"));
     // Wrong / partial codes never enable Delete.
     expect(dialogButton(container, "Delete").disabled).toBe(true);
-    typeCode(container, "WP-000");
+    typeCode(container, "000");
     expect(dialogButton(container, "Delete").disabled).toBe(true);
     typeCode(container, "wp-0001");
     expect(dialogButton(container, "Delete").disabled).toBe(true);
-    typeCode(container, "WP-0001");
+    typeCode(container, "0001");
     expect(dialogButton(container, "Delete").disabled).toBe(false);
     act(() => { dialogButton(container, "Cancel").click(); });
     expect(dialogEl(container)).toBeNull();
@@ -779,7 +779,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
     });
     const { container } = renderDangerZone(BASE_PKG, { deletionEligibility: ELIGIBLE });
     act(() => { deleteTrigger(container).click(); });
-    typeCode(container, "WP-0001");
+    typeCode(container, "0001");
     const deleteButton = dialogButton(container, "Delete");
     act(() => { deleteButton.click(); });
     expect(deleteButton.disabled).toBe(true);
@@ -794,7 +794,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
     await act(async () => { releaseDelete(); });
     await settle();
     expect(deletes).toHaveLength(1);
-    expect(deletes[0]).toEqual({ confirmCode: "WP-0001", expectedVersion: 1 });
+    expect(deletes[0]).toEqual({ confirmCode: "0001", expectedVersion: 1 });
     expect(routerMocks.push).toHaveBeenCalledWith("/forge/work");
   });
 
@@ -807,7 +807,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
     });
     const { container } = renderDangerZone(BASE_PKG, { deletionEligibility: ELIGIBLE });
     act(() => { deleteTrigger(container).click(); });
-    typeCode(container, "WP-0001");
+    typeCode(container, "0001");
     await act(async () => { dialogButton(container, "Delete").click(); });
     await settle();
     expect(dialogEl(container)).not.toBeNull();
@@ -819,7 +819,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
     stubFetch({ deleteImpl: async () => { throw new Error("offline"); } });
     const { container } = renderDangerZone(BASE_PKG, { deletionEligibility: ELIGIBLE });
     act(() => { deleteTrigger(container).click(); });
-    typeCode(container, "WP-0001");
+    typeCode(container, "0001");
     await act(async () => { dialogButton(container, "Delete").click(); });
     await settle();
     expect(dialogEl(container)).not.toBeNull();
@@ -840,7 +840,7 @@ describe("WorkPackageDetailClient delete danger zone (D7)", () => {
     });
     const { container } = renderDangerZone(BASE_PKG, { deletionEligibility: ELIGIBLE });
     act(() => { deleteTrigger(container).click(); });
-    typeCode(container, "WP-0001");
+    typeCode(container, "0001");
     await act(async () => { dialogButton(container, "Delete").click(); });
     await settle();
     expect(dialogEl(container)).toBeNull();

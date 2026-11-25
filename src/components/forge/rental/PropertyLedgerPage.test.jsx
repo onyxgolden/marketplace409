@@ -403,7 +403,7 @@ describe("PropertyLedgerPage work packages section (Slice 2)", () => {
     const el = section(container);
     expect(el).not.toBeNull();
     expect(el.textContent).toContain("2 packages");
-    expect(el.textContent).toContain("WP-0001 — Roof replacement");
+    expect(el.textContent).toContain("0001 — Roof replacement");
     expect(el.textContent).toContain("in progress");
     expect(el.textContent).toContain("draft");
     const links = [...el.querySelectorAll("a")].map((a) => a.getAttribute("href"));

@@ -6,6 +6,7 @@ import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
 import TransactionForm from "./TransactionForm";
 import CorrectPaymentDialog from "./CorrectPaymentDialog";
+import { formatPackageCode } from "@/domains/work-management/workPackage.js";
 
 // Every ledger row has an edit path (Jason, 2026-11-02: any transaction on
 // any ledger must be editable). Financial-event rows edit through the
@@ -977,7 +978,7 @@ function PropertyWorkPackages({ propertyId }) {
             <li key={pkg.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-700">
               <a href={`/forge/work/${pkg.id}`} className="min-w-0">
                 <span className="block truncate text-sm font-black text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-300">
-                  {pkg.code} — {pkg.title}
+                  {formatPackageCode(pkg.code)} — {pkg.title}
                 </span>
               </a>
               <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-300">

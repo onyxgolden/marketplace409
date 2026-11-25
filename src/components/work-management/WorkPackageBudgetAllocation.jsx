@@ -23,6 +23,7 @@ import {
   parseBudgetLineAmountToCents,
 } from "@/domains/work-management/budgetAllocations";
 import { formatCents } from "@/domains/work-management/packageCosts.js";
+import { formatPackageCode } from "@/domains/work-management/workPackage.js";
 
 const input = "min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -97,7 +98,7 @@ export default function WorkPackageBudgetAllocation({
   const allocation = data?.allocation || null;
   const packageCode = data?.packageCode || null;
   const packageTitle = data?.packageTitle || null;
-  const packageName = packageCode || packageTitle || packageId;
+  const packageName = (packageCode ? formatPackageCode(packageCode) : null) || packageTitle || packageId;
   const plannedLaborForecastCents = data?.plannedLaborForecastCents ?? null;
   const notApplied = Boolean(data?.notApplied);
   const estimateCents = estimate?.currentControlEstimateCents ?? null;

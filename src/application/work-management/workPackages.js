@@ -11,7 +11,7 @@
 
 import {
   WP_STATUS, WP_GATES, WP_MODES, WP_PACKAGE_TYPES_BY_MODE, validatePackageInput, validateTransition, findTransition,
-  derivePercentComplete, hashScopeMembership, deriveCurrentBaseline, isTerminalStatus, inferEffectiveMode,
+  derivePercentComplete, hashScopeMembership, deriveCurrentBaseline, isTerminalStatus, inferEffectiveMode, formatPackageCode,
 } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 import {
@@ -823,19 +823,25 @@ export async function deleteWorkPackage(db, { ownerId, actor, packageId, confirm
   // RPC runs — the RPC enforces owner authority, not project scope.
   // A package outside the scope reads as not found (non-disclosing).
   // No scope (internal caller only — every HTTP route passes one)
-  // means the owner-only lookup: no extra read, the RPC is the
-  // authority as before.
-  if (scope) {
-    const scopedPkg = await getPackage(db, ownerId, packageId, scope);
-    if (!scopedPkg) {
-      return { ok: false, httpStatus: 404, error: "Work package not found." };
-    }
+  // means the owner-only lookup. The read also carries the stored
+  // code: the delete dialog shows the display form ("0014") and the
+  // owner types what they see, while the RPC compares against the
+  // stored code ("WP-0014") — so accept the display form by
+  // normalizing it back to the stored code here. The RPC stays the
+  // authority and still revalidates the exact stored code at mutation
+  // time; a code matching neither form passes through untouched, so
+  // the RPC still returns code_mismatch for a wrong guess. (Codes
+  // never change after creation, so the read-then-send cannot go stale.)
+  const pkg = await getPackage(db, ownerId, packageId, scope);
+  if (!pkg) {
+    return { ok: false, httpStatus: 404, error: "Work package not found." };
   }
+  const confirmToSend = confirmCode === formatPackageCode(pkg.code) ? pkg.code : confirmCode;
   const { data, error } = await db.rpc("forge_work_delete_empty_draft_package", {
     p_owner_id: ownerId,
     p_package_id: packageId,
     p_expected_version: expectedVersion,
-    p_confirm_code: confirmCode,
+    p_confirm_code: confirmToSend,
   });
   if (error) throw error;
   if (!data || data.ok !== true) {

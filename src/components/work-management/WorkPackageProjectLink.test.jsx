@@ -128,7 +128,7 @@ describe("WorkPackageProjectLink", () => {
     expect(assignButton).toBeTruthy();
     click(assignButton);
     // The confirm step names both ends in plain words before saving.
-    expect(container.textContent).toContain("Move WP-0007 from Acme › Plant 1 › Turnaround to Acme › Plant 1 › Revamp?");
+    expect(container.textContent).toContain("Move 0007 from Acme › Plant 1 › Turnaround to Acme › Plant 1 › Revamp?");
     click(findButton(container, "Confirm"));
     await flush();
     const post = fetchCalls.find((call) => String(call.url).includes("/project-link"));
@@ -139,7 +139,7 @@ describe("WorkPackageProjectLink", () => {
     expect(body.expectedVersion).toBe(3);
     expect(typeof body.requestId).toBe("string");
     expect(body.requestId.length).toBeGreaterThan(0);
-    expect(container.textContent).toContain("WP-0007 is now assigned to Acme › Plant 1 › Revamp.");
+    expect(container.textContent).toContain("0007 is now assigned to Acme › Plant 1 › Revamp.");
     expect(onLinked).toHaveBeenCalledWith(
       expect.objectContaining({ id: "forge_wp_1", forge_project_id: "forge_prj_2" }),
     );

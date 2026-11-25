@@ -76,7 +76,7 @@ describe("WorkPackageListGrid", () => {
   it("renders the package row and ten blank add-rows", async () => {
     setupFetch(async () => ({ body: {} }));
     const { container } = await renderGrid();
-    expect(container.textContent).toContain("WP-0001");
+    expect(container.textContent).toContain("0001");
     expect(container.textContent).toContain("Decker turnover");
     expect(container.textContent).toContain("draft");
     expect(container.textContent).toContain("1900 W. Decker");
@@ -93,12 +93,12 @@ describe("WorkPackageListGrid", () => {
       return { body: {} };
     });
     const { container } = await renderGrid();
-    const cell = container.querySelector('[aria-label="Title for WP-0001"]');
+    const cell = container.querySelector('[aria-label="Title for 0001"]');
     await act(async () => {
       cell.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
-    setInput(container, "Title for WP-0001", "Decker turnover (revised)");
-    await pressEnter(container.querySelector('input[aria-label="Title for WP-0001"]'));
+    setInput(container, "Title for 0001", "Decker turnover (revised)");
+    await pressEnter(container.querySelector('input[aria-label="Title for 0001"]'));
     const patch = calls.find((c) => c.method === "PATCH");
     expect(patch.url).toBe("/api/work-packages/wp_1");
     expect(JSON.parse(patch.body)).toEqual({ title: "Decker turnover (revised)" });
@@ -114,11 +114,11 @@ describe("WorkPackageListGrid", () => {
       return { body: {} };
     });
     const { container } = await renderGrid();
-    const cell = container.querySelector('[aria-label="Status for WP-0001"]');
+    const cell = container.querySelector('[aria-label="Status for 0001"]');
     await act(async () => {
       cell.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
-    setInput(container, "Status for WP-0001", "planned");
+    setInput(container, "Status for 0001", "planned");
     const transition = calls.find((c) => c.url.includes("/transition"));
     expect(transition.method).toBe("POST");
     expect(JSON.parse(transition.body)).toEqual({ to: "planned" });
@@ -143,31 +143,31 @@ describe("WorkPackageListGrid", () => {
     const post = calls.find((c) => c.method === "POST" && c.url === "/api/work-packages");
     expect(JSON.parse(post.body)).toMatchObject({ title: "Kent kitchen" });
     await act(async () => {});
-    expect(container.textContent).toContain("WP-0007");
-    expect(container.textContent).toContain("Package WP-0007 created.");
+    expect(container.textContent).toContain("0007");
+    expect(container.textContent).toContain("Package 0007 created.");
   });
 
   it("keeps a cancelled package's cells read-only", async () => {
     setupFetch(async () => ({ body: {} }));
     const cancelled = { ...PKG, id: "wp_2", code: "WP-0002", title: "Old job", status: "cancelled" };
     const { container } = await renderGrid({ initialPackages: [cancelled] });
-    const cell = container.querySelector('[aria-label="Title for WP-0002"]');
+    const cell = container.querySelector('[aria-label="Title for 0002"]');
     await act(async () => {
       cell.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
-    expect(container.querySelector('input[aria-label="Title for WP-0002"]')).toBe(null);
+    expect(container.querySelector('input[aria-label="Title for 0002"]')).toBe(null);
   });
 
   it("shows an invalid value's message and reverts the cell", async () => {
     setupFetch(async () => ({ ok: false, status: 400, body: { error: "Title is required." } }));
     const { container } = await renderGrid();
-    const cell = container.querySelector('[aria-label="Title for WP-0001"]');
+    const cell = container.querySelector('[aria-label="Title for 0001"]');
     await act(async () => {
       cell.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
     // The cell's own validation blocks an empty title before any fetch.
-    setInput(container, "Title for WP-0001", "   ");
-    await pressEnter(container.querySelector('input[aria-label="Title for WP-0001"]'));
+    setInput(container, "Title for 0001", "   ");
+    await pressEnter(container.querySelector('input[aria-label="Title for 0001"]'));
     expect(container.textContent).toContain("Title is required.");
     expect(container.textContent).toContain("Decker turnover");
   });
@@ -199,11 +199,11 @@ describe("WorkPackageListGrid", () => {
     it("sorts ascending on first click, by Title", async () => {
       setupFetch(async () => ({ body: {} }));
       const { container } = await renderGrid({ initialPackages: [ZETA, ALPHA] });
-      expect(codeOrder(container)).toEqual(["WP-0002", "WP-0001"]); // original order first.
+      expect(codeOrder(container)).toEqual(["0002", "0001"]); // original order first.
       const header = [...container.querySelectorAll("button")].find((b) => b.textContent.includes("Title"));
       const columnheader = header.closest('[role="columnheader"]');
       await act(async () => { header.click(); });
-      expect(codeOrder(container)).toEqual(["WP-0001", "WP-0002"]); // Alpha before Zeta.
+      expect(codeOrder(container)).toEqual(["0001", "0002"]); // Alpha before Zeta.
       expect(columnheader.getAttribute("aria-sort")).toBe("ascending");
     });
 
@@ -214,10 +214,10 @@ describe("WorkPackageListGrid", () => {
       const columnheader = header.closest('[role="columnheader"]');
       await act(async () => { header.click(); }); // asc
       await act(async () => { header.click(); }); // desc
-      expect(codeOrder(container)).toEqual(["WP-0002", "WP-0001"]);
+      expect(codeOrder(container)).toEqual(["0002", "0001"]);
       expect(columnheader.getAttribute("aria-sort")).toBe("descending");
       await act(async () => { header.click(); }); // cleared -- back to original.
-      expect(codeOrder(container)).toEqual(["WP-0001", "WP-0002"]);
+      expect(codeOrder(container)).toEqual(["0001", "0002"]);
       expect(columnheader.getAttribute("aria-sort")).toBe("none");
     });
 
@@ -228,7 +228,7 @@ describe("WorkPackageListGrid", () => {
       await act(async () => { header.click(); });
       const rows = [...container.querySelectorAll('[role="row"]')];
       const draftIndex = rows.findIndex((r) => r.textContent.includes("New package title"));
-      const lastRealIndex = rows.findIndex((r) => r.textContent.includes("WP-0002"));
+      const lastRealIndex = rows.findIndex((r) => r.textContent.includes("0002"));
       expect(draftIndex).toBeGreaterThan(lastRealIndex);
     });
   });
@@ -252,8 +252,8 @@ describe("WorkPackageListGrid", () => {
       const filtered = [PKG];
       const unfiltered = [PKG, WP0006];
       const { container, root } = await renderGrid({ initialPackages: filtered });
-      expect(container.textContent).toContain("WP-0001");
-      expect(container.textContent).not.toContain("WP-0006");
+      expect(container.textContent).toContain("0001");
+      expect(container.textContent).not.toContain("0006");
 
       // "Clear filters": same grid instance, new initialPackages prop.
       await act(async () => {
@@ -261,8 +261,8 @@ describe("WorkPackageListGrid", () => {
       });
       await act(async () => {});
 
-      expect(container.textContent).toContain("WP-0001");
-      expect(container.textContent).toContain("WP-0006"); // previously stuck missing until reload.
+      expect(container.textContent).toContain("0001");
+      expect(container.textContent).toContain("0006"); // previously stuck missing until reload.
     });
 
     it("narrows rows when a filter is applied to an already-mounted grid", async () => {
@@ -270,15 +270,15 @@ describe("WorkPackageListGrid", () => {
       const unfiltered = [PKG, WP0006];
       const filtered = [PKG];
       const { container, root } = await renderGrid({ initialPackages: unfiltered });
-      expect(container.textContent).toContain("WP-0006");
+      expect(container.textContent).toContain("0006");
 
       await act(async () => {
         root.render(<WorkPackageListGrid initialPackages={filtered} properties={PROPERTIES} />);
       });
       await act(async () => {});
 
-      expect(container.textContent).not.toContain("WP-0006");
-      expect(container.textContent).toContain("WP-0001");
+      expect(container.textContent).not.toContain("0006");
+      expect(container.textContent).toContain("0001");
     });
 
     it("regrows blank add-rows when blankRowCount goes from 0 back to BLANK_ROWS on the same instance", async () => {
@@ -319,10 +319,10 @@ describe("WorkPackageListGrid", () => {
       });
       const sameRef = [PKG];
       const { container, root } = await renderGrid({ initialPackages: sameRef });
-      const cell = container.querySelector('[aria-label="Title for WP-0001"]');
+      const cell = container.querySelector('[aria-label="Title for 0001"]');
       await act(async () => { cell.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); });
-      setInput(container, "Title for WP-0001", "Decker turnover (revised)");
-      await pressEnter(container.querySelector('input[aria-label="Title for WP-0001"]'));
+      setInput(container, "Title for 0001", "Decker turnover (revised)");
+      await pressEnter(container.querySelector('input[aria-label="Title for 0001"]'));
       expect(calls.some((c) => c.method === "PATCH")).toBe(true);
       expect(container.textContent).toContain("Decker turnover (revised)");
 
@@ -373,7 +373,7 @@ describe("WorkPackageListGrid mode selector", () => {
     expect(container2.textContent).toContain("1900 W. Decker");
     // The industrial row shows its Unit/Area/System, not a Property select.
     expect(container2.textContent).toContain("A-12 / Unit 3 / Piping");
-    expect(container2.querySelector('[aria-label="Property for WP-0002"]')).toBeNull();
+    expect(container2.querySelector('[aria-label="Property for 0002"]')).toBeNull();
   });
 
   it("the blank quick-add row's location slot follows the active filter mode", async () => {

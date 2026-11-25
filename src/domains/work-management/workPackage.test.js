@@ -4,7 +4,7 @@ import {
   defaultGatesFor, isTerminalStatus, findTransition, allowedTransitionsFrom,
   validateTransition, staticTransitionEdges,
   derivePercentComplete, validatePackageInput, hashScopeMembership,
-  deriveCurrentBaseline, inferEffectiveMode,
+  deriveCurrentBaseline, inferEffectiveMode, formatPackageCode,
 } from "./workPackage.js";
 
 const BASE_PKG = {
@@ -281,6 +281,25 @@ describe("inferEffectiveMode", () => {
   it("defaults to industrial for a missing package_type and a missing mode", () => {
     expect(inferEffectiveMode({})).toBe("industrial");
     expect(inferEffectiveMode(null)).toBe("industrial");
+  });
+});
+
+describe("formatPackageCode", () => {
+  it("shows the bare zero-padded number: WP-0014 and 14 both read 0014", () => {
+    expect(formatPackageCode("WP-0014")).toBe("0014");
+    expect(formatPackageCode("14")).toBe("0014");
+    expect(formatPackageCode(14)).toBe("0014");
+  });
+  it("keeps four digits once the number reaches a thousand, and never truncates longer numbers", () => {
+    expect(formatPackageCode("WP-1000")).toBe("1000");
+    expect(formatPackageCode("1000")).toBe("1000");
+    expect(formatPackageCode("WP-12345")).toBe("12345");
+  });
+  it("passes non-numeric codes through unchanged and blanks nothing", () => {
+    expect(formatPackageCode("SYN-A")).toBe("SYN-A");
+    expect(formatPackageCode("")).toBe("");
+    expect(formatPackageCode(null)).toBe("");
+    expect(formatPackageCode(undefined)).toBe("");
   });
 });
 
