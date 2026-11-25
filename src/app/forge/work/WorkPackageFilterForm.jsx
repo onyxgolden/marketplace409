@@ -128,9 +128,9 @@ export default function WorkPackageFilterForm({
         </select>
       </div>
       <div className="flex items-center gap-2">
-        <label className="text-xs font-medium text-slate-600" htmlFor="filter-mode">Mode</label>
+        <label className="text-xs font-medium text-slate-600 dark:text-slate-300" htmlFor="filter-mode">Mode</label>
         <select id="filter-mode" name="mode" defaultValue={filters.mode}
-          className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white">
           <option value="all">All modes</option>
           {modeOptions.map((option) => (
             <option key={option} value={option} className="capitalize">{option}</option>
