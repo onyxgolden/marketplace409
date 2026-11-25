@@ -33,6 +33,37 @@ const SEVERITY_RANK = { error: 0, warning: 1 };
 const MAX_IMPLICATED_PER_SIGNAL = 3;
 const MAX_FAILURE_REASONS = 5;
 
+// Known-red findings: documented, by-design failures that must not keep the
+// scan red forever. An allowlisted group is still reported (visible in the
+// JSON report and the CLI text) but excluded from error_count, so the scan
+// can go green and keep detecting NEW undiscovered errors.
+//
+// Matching is exact and fail-closed: a signal matches only when its kind and
+// its evidence.workflow_name both equal the entry. A signal with no workflow
+// evidence is never allowlisted. Add an entry only with a recorded reason;
+// never allowlist a whole kind, and remove an entry the moment its cause is
+// fixed for real (provisioned, not papered over).
+export const KNOWN_RED_ALLOWLIST = [
+  {
+    kind: "ci_failed",
+    workflowName: "E2E Smoke",
+    reason:
+      "Pre-provisioning: the 7 E2E_* env vars are absent, so E2E Smoke fails by design until they are provisioned. Allowlisted 2026-11-24 (Brain scan fix) so the scan can go green; remove this entry when the vars are provisioned and Smoke goes green for real — never provision secrets here to satisfy the scan.",
+  },
+];
+
+// The allowlist entry a signal matches, or null. Pure.
+export function findAllowlistEntry(signal) {
+  if (!signal || typeof signal !== "object") return null;
+  const workflowName = signal.evidence?.workflow_name;
+  if (typeof workflowName !== "string" || !workflowName) return null;
+  return (
+    KNOWN_RED_ALLOWLIST.find(
+      (entry) => entry.kind === signal.kind && entry.workflowName === workflowName,
+    ) || null
+  );
+}
+
 // Which code does this signal point at? Uses the Brain's pass-1 retrieval (metadata +
 // indexed content tokens, zero I/O) so the correlation works anywhere the manifest loads --
 // including environments with no git checkout and no credentials.
@@ -59,7 +90,8 @@ function severityRank(severity) {
 
 // Group signals into distinct undiscovered errors and rank them: errors before warnings,
 // then by signal count (a problem hitting 5 deliveries outranks a one-off), then by recency.
-export function detectUndiscoveredErrors({ signals, manifestRecords }) {
+// Pure; the returned groups carry the same shape as detectUndiscoveredErrors' errors.
+export function groupSignals(signals, manifestRecords) {
   const groups = new Map();
 
   for (const signal of signals || []) {
@@ -109,11 +141,36 @@ export function detectUndiscoveredErrors({ signals, manifestRecords }) {
       b.signal_count - a.signal_count ||
       String(b.last_seen || "").localeCompare(String(a.last_seen || "")),
   );
+  return errors;
+}
+
+export function detectUndiscoveredErrors({ signals, manifestRecords }) {
+  // Allowlisted signals are set aside BEFORE grouping: they are reported
+  // under `allowlisted` (still visible) but never counted in error_count,
+  // so one known-red failure cannot keep the scan red forever.
+  const liveSignals = [];
+  const allowlistedSignals = [];
+  for (const signal of signals || []) {
+    (findAllowlistEntry(signal) ? allowlistedSignals : liveSignals).push(signal);
+  }
+
+  const errors = groupSignals(liveSignals, manifestRecords);
+  const allowlisted = groupSignals(allowlistedSignals, manifestRecords).map((group) => {
+    const reasons = [];
+    for (const signal of allowlistedSignals) {
+      if (!group.signal_ids.includes(signal.signal_id)) continue;
+      const entry = findAllowlistEntry(signal);
+      if (entry && !reasons.includes(entry.reason)) reasons.push(entry.reason);
+    }
+    return { ...group, allowlist_reasons: reasons };
+  });
 
   return {
     generated_at: new Date().toISOString(),
     signal_count: (signals || []).length,
     error_count: errors.length,
     errors,
+    allowlisted_count: allowlisted.length,
+    allowlisted,
   };
 }

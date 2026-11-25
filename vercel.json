@@ -33,6 +33,10 @@
       "schedule": "0 14 * * *"
     },
     {
+      "path": "/api/rental/notifications/deliver",
+      "schedule": "0 15 * * *"
+    },
+    {
       "path": "/api/private-financing/cron/payment-receipt-notifications",
       "schedule": "0 16 * * *"
     },

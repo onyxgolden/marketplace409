@@ -63,30 +63,46 @@ export function loadSignals(signalsPath) {
   throw new Error(`malformed signals file: ${signalsPath} (expected an array or { signals: [...] })`);
 }
 
+function renderGroup(lines, error, extraLines = []) {
+  lines.push(`[${error.severity.toUpperCase()}] ${error.title}  (x${error.signal_count})`);
+  lines.push(`  first seen: ${error.first_seen || "unknown"}, last seen: ${error.last_seen || "unknown"}`);
+  if (error.failure_reasons.length > 0) {
+    lines.push(`  failure reasons: ${error.failure_reasons.join(" | ")}`);
+  }
+  if (error.implicated_code.length > 0) {
+    lines.push("  implicated code:");
+    for (const code of error.implicated_code) {
+      const symbol = code.symbol_or_section ? ` (${code.symbol_or_section})` : "";
+      lines.push(`    - ${code.source_path}${symbol}`);
+    }
+  }
+  for (const extra of extraLines) lines.push(extra);
+  lines.push(`  investigate: npm run forge:diagnose -- "${error.diagnose_query}"`);
+  lines.push("");
+}
+
 function renderText(report) {
   const lines = [];
+  const allowlisted = report.allowlisted || [];
   lines.push("Undiscovered errors from runtime signals");
-  lines.push(`  signals scanned: ${report.signal_count}, distinct errors: ${report.error_count}`);
+  lines.push(
+    `  signals scanned: ${report.signal_count}, distinct errors: ${report.error_count}` +
+      (allowlisted.length > 0 ? `, allowlisted known-red: ${allowlisted.length}` : ""),
+  );
   lines.push("");
   if (report.error_count === 0) {
     lines.push("No runtime signals indicate an undiscovered error.");
-    return lines.join("\n");
+  } else {
+    for (const error of report.errors) renderGroup(lines, error);
   }
-  for (const error of report.errors) {
-    lines.push(`[${error.severity.toUpperCase()}] ${error.title}  (x${error.signal_count})`);
-    lines.push(`  first seen: ${error.first_seen || "unknown"}, last seen: ${error.last_seen || "unknown"}`);
-    if (error.failure_reasons.length > 0) {
-      lines.push(`  failure reasons: ${error.failure_reasons.join(" | ")}`);
-    }
-    if (error.implicated_code.length > 0) {
-      lines.push("  implicated code:");
-      for (const code of error.implicated_code) {
-        const symbol = code.symbol_or_section ? ` (${code.symbol_or_section})` : "";
-        lines.push(`    - ${code.source_path}${symbol}`);
-      }
-    }
-    lines.push(`  investigate: npm run forge:diagnose -- "${error.diagnose_query}"`);
+  if (allowlisted.length > 0) {
+    // Allowlisted findings stay visible: the scan goes green without
+    // pretending the known-red failure went away.
     lines.push("");
+    lines.push("Allowlisted known-red findings (reported, not counted toward errors):");
+    for (const group of allowlisted) {
+      renderGroup(lines, group, [`  allowlist: ${(group.allowlist_reasons || []).join(" | ")}`]);
+    }
   }
   return lines.join("\n");
 }
