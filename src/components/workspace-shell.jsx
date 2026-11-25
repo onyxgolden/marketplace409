@@ -314,7 +314,7 @@ export default function WorkspaceShell({ children, forgeCommandPalette = false, 
   }, [mobileOpen]);
 
   return (
-    <div data-workspace-shell className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-950 lg:flex">
+    <div data-workspace-shell className="flex min-h-screen flex-col bg-slate-100 dark:bg-slate-950 text-slate-950 lg:flex-row">
       <aside
         data-workspace-app-switcher
         data-expanded={expanded ? "true" : "false"}
@@ -362,7 +362,14 @@ export default function WorkspaceShell({ children, forgeCommandPalette = false, 
         <WorkspaceLinks pathname={pathname} expanded={expanded} showDeveloper={isProgrammer} />
       </aside>
 
-      <div className="min-w-0 flex-1">
+      {/* The content column fills the viewport below the sticky mobile
+         header (flex-1 in the column shell), so a full-screen page like
+         the Designer fits exactly instead of running h-screen under the
+         header and scrolling the page — which slid its hint bar under
+         the sticky header on phones (Jason's S26+ report, 2026-11-23).
+         Taller pages still grow the shell (min-h-screen is a minimum)
+         and scroll normally. */}
+      <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-40 flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur lg:hidden">
           <Link href="/" className="order-1 font-black tracking-[0.16em] text-slate-950">
             409 MARKETPLACE
@@ -445,7 +452,7 @@ export default function WorkspaceShell({ children, forgeCommandPalette = false, 
           </div>
         )}
 
-        <div data-workspace-content className="min-w-0">
+        <div data-workspace-content className="flex min-h-0 min-w-0 flex-1 flex-col">
           {children}
         </div>
       </div>

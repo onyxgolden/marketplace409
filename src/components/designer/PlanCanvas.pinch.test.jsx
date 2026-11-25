@@ -8,7 +8,7 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import PlanCanvas, { autoPanViewForPoint } from "./PlanCanvas";
-import { createEmptyDesign } from "@/domains/roomDesigner/designerDocument";
+import { addWall, createEmptyDesign, placeFurniture, placeSymbol } from "@/domains/roomDesigner/designerDocument";
 
 // PlanCanvas uses a ResizeObserver for its wrapper size; jsdom has none.
 // Capture the observe callback so tests can drive a measured canvas size.
@@ -56,18 +56,45 @@ describe("PlanCanvas two-finger touch gestures", () => {
   let dispatch;
   let svg;
 
-  const renderCanvas = (tool) => {
+  const renderCanvas = (tool, selection = null, design = createEmptyDesign()) => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     dispatch = vi.fn();
     act(() => {
       root.render(
-        <PlanCanvas design={createEmptyDesign()} tool={tool} selection={null} dispatch={dispatch} />
+        <PlanCanvas design={design} tool={tool} selection={selection} dispatch={dispatch} />
       );
     });
     svg = container.querySelector("svg");
     expect(svg).not.toBeNull();
+  };
+
+  // 7680 x 5280 in of content: two horizontal walls at the extremes
+  // (same shape as the open-fit suite).
+  function largeDesign() {
+    let design = addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 7680, y: 0 });
+    design = addWall(design, { x: 0, y: 5280 }, { x: 7680, y: 5280 });
+    return design;
+  }
+
+  // Renders a large design on a 390x700 phone pane and lets the open-time
+  // fit land: fitted scale = 342/7680 = 0.0445, far below MIN_SCALE 0.35,
+  // so fitFloor is the fitted scale.
+  const renderFittedCanvas = (design, selection = null) => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    dispatch = vi.fn();
+    act(() => {
+      root.render(
+        <PlanCanvas design={design} tool="select" selection={selection} dispatch={dispatch} autoFitKey="p1:level1" />
+      );
+    });
+    svg = container.querySelector("svg");
+    expect(svg).not.toBeNull();
+    measureCanvas(390, 700);
+    expect(scaleFromGrid(svg)).toBeCloseTo(342 / 7680, 4);
   };
 
   afterEach(() => {
@@ -358,6 +385,158 @@ describe("PlanCanvas two-finger touch gestures", () => {
     const end = gridTranslate(svg);
     expect(end.x).toBeCloseTo(12, 4);
     expect(end.y).toBeCloseTo(12, 4);
+  });
+
+  // --- S26+ phone fixes (2026-11-23): pinch from a below-MIN_SCALE fit ---
+
+  it("pinch-in from a below-MIN_SCALE fitted view holds the fitted floor", () => {
+    renderFittedCanvas(largeDesign());
+    // Fitted scale 342/7680 = 0.0445; fingers together 200px → 100px.
+    touch(svg, "pointerdown", 1, 140, 350);
+    touch(svg, "pointerdown", 2, 340, 350);
+    touch(svg, "pointermove", 1, 190, 350);
+    touch(svg, "pointermove", 2, 290, 350);
+    touch(svg, "pointerup", 1, 190, 350);
+    touch(svg, "pointerup", 2, 290, 350);
+    // Zooming out past the fit would show empty space, so the floor holds
+    // the scale at the fitted value — NOT the MIN_SCALE snap to 0.35 the
+    // old clamp produced on the first step (the FCCU plot flying
+    // off-screen). Engagement is proven by the pinch-out sibling (the
+    // same fitted state zooms to 3x).
+    expect(scaleFromGrid(svg)).toBeCloseTo(342 / 7680, 4);
+    expect(scaleFromGrid(svg)).toBeLessThan(0.1);
+  });
+
+  it("pinch-out from a below-MIN_SCALE fitted view respects the fitted floor", () => {
+    renderFittedCanvas(largeDesign());
+    // Fitted scale 0.0445; fingers apart 50px → 150px (3x zoom).
+    touch(svg, "pointerdown", 1, 170, 350);
+    touch(svg, "pointerdown", 2, 220, 350);
+    touch(svg, "pointermove", 1, 120, 350);
+    touch(svg, "pointermove", 2, 270, 350);
+    touch(svg, "pointerup", 1, 120, 350);
+    touch(svg, "pointerup", 2, 270, 350);
+    expect(scaleFromGrid(svg)).toBeCloseTo((342 / 7680) * 3, 3);
+    expect(scaleFromGrid(svg)).toBeLessThan(0.35);
+  });
+
+  it("pinch engages when a finger lands on a phone-overview tag", () => {
+    // One equipment symbol inside the large design: at the fitted phone
+    // scale its plan label hides and the phone-overview tag renders.
+    let design = largeDesign();
+    design = placeSymbol(design, "processEquipment", "column", 3300, 2820, {
+      layer: "equipment",
+      tag: "T-101",
+    });
+    renderFittedCanvas(design);
+    const tag = container.querySelector('[data-label-kind="equipment-tag"]');
+    expect(tag).not.toBeNull();
+    const tagX = Number(tag.getAttribute("x"));
+    const tagY = Number(tag.getAttribute("y"));
+    expect(Number.isFinite(tagX)).toBe(true);
+    expect(Number.isFinite(tagY)).toBe(true);
+    // Finger 1 lands ON the tag (its handler stops propagation — the
+    // old code never registered that pointer, so the pinch never
+    // started); finger 2 lands on plain canvas; spread 100px → 200px.
+    act(() => {
+      tag.dispatchEvent(
+        new window.PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          pointerId: 1,
+          pointerType: "touch",
+          clientX: tagX,
+          clientY: tagY,
+        })
+      );
+    });
+    touch(svg, "pointerdown", 2, tagX + 100, tagY);
+    touch(svg, "pointermove", 1, tagX - 50, tagY);
+    touch(svg, "pointermove", 2, tagX + 150, tagY);
+    touch(svg, "pointerup", 1, tagX - 50, tagY);
+    touch(svg, "pointerup", 2, tagX + 150, tagY);
+    // 2x zoom from the fitted scale — the pinch ran.
+    expect(scaleFromGrid(svg)).toBeCloseTo((342 / 7680) * 2, 3);
+    // And the tag tap still selects its equipment (unchanged behavior).
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SELECT",
+      selection: { kind: "symbol", id: design.symbols[0].id },
+    });
+  });
+
+  it("touch drag on unselected furniture pans instead of moving it", () => {
+    const d = placeFurniture(createEmptyDesign("T"), "bed-queen", 200, 200, 0);
+    renderCanvas("select", null, d);
+    // Bed centre: screen = 60 + 1.6 * 200 = 380.
+    touch(svg, "pointerdown", 1, 380, 380);
+    touch(svg, "pointermove", 1, 430, 410);
+    touch(svg, "pointerup", 1, 430, 410);
+    const t = gridTranslate(svg);
+    expect(t.x).toBeCloseTo(14, 4); // (60 + 50) % 48
+    expect(t.y).toBeCloseTo(42, 4); // (60 + 30) % 48
+    expect(scaleFromGrid(svg)).toBeCloseTo(1.6, 5); // pan never zooms
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SELECT",
+      selection: { kind: "furniture", id: d.furniture[0].id },
+    });
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "MOVE_FURNITURE" })
+    );
+  });
+
+  it("touch drag starting on a phone-overview tag pans instead of doing nothing", () => {
+    // Same fitted setup as the tag pinch test: the tag is the commonest
+    // drag origin on a phone, and its pointerdown is swallowed for
+    // tap-select, so without the tag move handler no drag ever starts.
+    let design = largeDesign();
+    design = placeSymbol(design, "processEquipment", "column", 3300, 2820, {
+      layer: "equipment",
+      tag: "T-101",
+    });
+    renderFittedCanvas(design);
+    const tag = container.querySelector('[data-label-kind="equipment-tag"]');
+    expect(tag).not.toBeNull();
+    const tagX = Number(tag.getAttribute("x"));
+    const tagY = Number(tag.getAttribute("y"));
+    const wall = () =>
+      [...svg.querySelectorAll("line")].find((l) => l.getAttribute("stroke") === "#e5e7eb");
+    const x1Before = Number(wall().getAttribute("x1"));
+    act(() => {
+      tag.dispatchEvent(
+        new window.PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          pointerId: 1,
+          pointerType: "touch",
+          clientX: tagX,
+          clientY: tagY,
+        })
+      );
+    });
+    touch(tag, "pointermove", 1, tagX + 20, tagY); // arms the pan (>6px)
+    touch(svg, "pointermove", 1, tagX + 70, tagY); // pans +50px from the arm point
+    touch(svg, "pointerup", 1, tagX + 70, tagY);
+    expect(Number(wall().getAttribute("x1"))).toBeCloseTo(x1Before + 50, 3);
+    expect(scaleFromGrid(svg)).toBeCloseTo(342 / 7680, 4); // pan never zooms
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SELECT",
+      selection: { kind: "symbol", id: design.symbols[0].id },
+    });
+  });
+
+  it("touch drag on the selected furniture still moves it", () => {
+    const d = placeFurniture(createEmptyDesign("T"), "bed-queen", 200, 200, 0);
+    renderCanvas("select", { kind: "furniture", id: d.furniture[0].id }, d);
+    touch(svg, "pointerdown", 1, 380, 380);
+    touch(svg, "pointermove", 1, 430, 410);
+    touch(svg, "pointerup", 1, 430, 410);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "MOVE_FURNITURE", furnitureId: d.furniture[0].id })
+    );
+    // The view did not pan.
+    const t = gridTranslate(svg);
+    expect(t.x).toBeCloseTo(12, 4);
+    expect(t.y).toBeCloseTo(12, 4);
   });
 
   // mouse events (pointerType defaults to "" — not touch)
