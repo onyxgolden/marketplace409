@@ -697,29 +697,74 @@ const DELETION_BLOCKER_INFO = Object.freeze({
     label: "Progress entries",
     action: "Progress entries are kept for audit and can't be removed.",
   },
+  // Added for the 20261111000000 retired-records cleanup (permit
+  // annotations, craft assignments, control estimate, change orders,
+  // craft rates): retire-only, no delete path, but unlike the generic
+  // fallback these five now have a real retire action once retired rows
+  // stop blocking -- mirrors the steps/drawings precedent above.
   permit_annotations: {
     label: "Permit annotations",
-    action: "Permit annotations are kept for audit and can't be removed.",
+    action: "Retire the permit annotation(s) in Permits, then try again.",
   },
   craft_assignments: {
     label: "Craft assignments",
-    action: "Craft assignments are kept for audit and can't be removed.",
+    action: "Retire the craft assignment(s) in Work steps, then try again.",
   },
   control_estimates: {
     label: "Control estimate",
-    action: "The control estimate is kept for audit and can't be removed.",
+    action: "Retire the control estimate in Budget & Change Orders, then try again.",
   },
   change_orders: {
     label: "Change orders",
-    action: "Change orders are kept for audit and can't be removed.",
+    action: "Retire the change order(s) in Budget & Change Orders, then try again.",
   },
   craft_rates: {
     label: "Craft rates",
-    action: "Craft rate history is kept for audit and can't be removed.",
+    action: "Retire the craft rate(s) in Budget & Change Orders, then try again.",
   },
   step_revisions: {
     label: "Work step history",
     action: "Retire the work step(s) in Work Steps, then try again.",
+  },
+  permit_annotation_revisions: {
+    label: "Permit annotation history",
+    action: "Retire the permit annotation(s) in Permits, then try again.",
+  },
+  craft_assignment_revisions: {
+    label: "Craft assignment history",
+    action: "Retire the craft assignment(s) in Work steps, then try again.",
+  },
+  control_estimate_revisions: {
+    label: "Control estimate history",
+    action: "Retire the control estimate in Budget & Change Orders, then try again.",
+  },
+  change_order_revisions: {
+    label: "Change order history",
+    action: "Retire the change order(s) in Budget & Change Orders, then try again.",
+  },
+  craft_rate_revisions: {
+    label: "Craft rate history",
+    action: "Retire the craft rate(s) in Budget & Change Orders, then try again.",
+  },
+  // Fix round for the 20261111000000 review (PR #784): bust links,
+  // verification links, and budget allocations reference a retired change
+  // order or control estimate with ON DELETE RESTRICT and are never
+  // hard-deleted, so they keep blocking with a clean 409 instead of
+  // purging. No user action clears them -- unlinking or retiring a link
+  // only soft-retires the row, and the FK fires on the row in any soft
+  // state -- so the copy says so plainly instead of promising a next
+  // step that does not work.
+  bust_change_order_links: {
+    label: "Bust change-order links",
+    action: "Bust change-order links are kept for audit and can't be removed.",
+  },
+  field_verification_change_order_links: {
+    label: "Field verification change-order links",
+    action: "Field verification links are kept for audit and can't be removed.",
+  },
+  budget_allocations: {
+    label: "Budget allocations",
+    action: "Budget allocations are kept for audit and can't be removed.",
   },
 });
 
