@@ -17,7 +17,10 @@
 #      The correlator is pure and deterministic. No production data is written by this workflow.
 #   4. Fails loudly when undiscovered errors are found -- a green run with findings nobody reads
 #      would defeat the purpose. The human-readable report is printed into the failed step's log
-#      and the full JSON report is kept as an artifact either way.
+#      and the full JSON report is kept as an artifact either way. "Errors" here means
+#      error_count, which excludes allowlisted known-red findings (see KNOWN_RED_ALLOWLIST in
+#      scripts/engineering-brain/signals/detectUndiscoveredErrors.mjs): an allowlisted finding
+#      stays visible in the report but does not keep the scan red forever.
 #   5. A collection failure (fetcher exits nonzero, missing/malformed signals file) also fails
 #      the run: a missing signals file is a collection failure, never an all-clear.
 #   6. After the scan, the evidence collector pulls the failed job's log for each ci_failed
