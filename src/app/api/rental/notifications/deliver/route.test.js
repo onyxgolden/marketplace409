@@ -3,7 +3,7 @@ vi.mock("@/lib/supabase/createRentalWebhookClient", () => ({ createRentalWebhook
 vi.mock("@/infrastructure/notifications/ResendRentalEmailProvider", () => ({ createResendRentalEmailProvider: vi.fn() }));
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
 const notification={id:"notice_1",owner_id:"owner_1",recipient:"tenant@example.com",subject:"Rent reminder",body_text:"Rent is due."};
 // Claim-once semantics, like the real RPC: each queued row is claimed at most
@@ -40,4 +40,19 @@ describe("rental email delivery", () => {
   });
   it("fails closed and releases a claimed message when the provider is not approved",async()=>{const db=database("http");createRentalWebhookClient.mockReturnValue(db);const response=await POST(new Request("https://test",{method:"POST",headers:{authorization:"Bearer secret"}}));expect(response.status).toBe(502);expect(createResendRentalEmailProvider).not.toHaveBeenCalled();expect(db.rpc).toHaveBeenCalledWith("complete_rental_email_delivery",expect.objectContaining({p_succeeded:false}))});
   it("delivers a guest confirmation with an absolute private access link when the tenant outbox is empty",async()=>{const confirmation={...notification,id:"confirmation_1",recipient:"guest@example.com",body_text:"Access: /book/stay-safe/access/private"};const db=database();let claimed=false;db.rpc=vi.fn(async name=>{if(name==="claim_rental_email_notification")return{data:null,error:null};if(name==="claim_reservation_confirmation"){if(claimed)return{data:null,error:null};claimed=true;return{data:confirmation,error:null};}return{data:null,error:null};});createRentalWebhookClient.mockReturnValue(db);const send=vi.fn(async()=>({messageId:"email_2"}));createResendRentalEmailProvider.mockReturnValue({send});const response=await POST(new Request("https://test",{method:"POST",headers:{authorization:"Bearer secret"}}));expect(response.status).toBe(200);expect(send).toHaveBeenCalledTimes(1);expect(send).toHaveBeenCalledWith(expect.objectContaining({bodyText:"Access: https://409marketplace.online/book/stay-safe/access/private"}));expect(db.rpc).toHaveBeenCalledWith("complete_reservation_confirmation",expect.objectContaining({p_id:"confirmation_1",p_succeeded:true}))});
+  // Vercel Cron triggers its configured paths with GET, so the scheduled
+  // invocation enters through GET — these fail on pre-fix code (no GET
+  // export) and prove the cron path drains under the CRON_SECRET bearer.
+  it("drains multiple queued rows over GET with the Vercel cron secret",async()=>{
+    process.env.CRON_SECRET="cron-secret";delete process.env.RENTAL_NOTIFICATION_DELIVERY_SECRET;
+    const second={...notification,id:"notice_2",recipient:"other@example.com"};
+    const db=database("resend",[notification,second]);
+    const send=vi.fn(async()=>({messageId:"email_1"}));createRentalWebhookClient.mockReturnValue(db);createResendRentalEmailProvider.mockReturnValue({send});
+    const response=await GET(new Request("https://test/api/rental/notifications/deliver",{method:"GET",headers:{authorization:"Bearer cron-secret"}}));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(expect.objectContaining({delivered:true,deliveredCount:2,notificationIds:["notice_1","notice_2"]}));
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+  it("rejects GET callers with the wrong secret",async()=>expect((await GET(new Request("https://test/api/rental/notifications/deliver",{method:"GET",headers:{authorization:"Bearer nope"}}))).status).toBe(401));
+  it("rejects GET callers with no secret",async()=>expect((await GET(new Request("https://test/api/rental/notifications/deliver",{method:"GET"}))).status).toBe(401));
 });

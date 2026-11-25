@@ -18,6 +18,11 @@ export const MAX_DELIVERIES_PER_RUN = 10;
 // for the Vercel cron (vercel.json), RENTAL_NOTIFICATION_DELIVERY_SECRET
 // for the documented manual/authenticated-scheduler path. A secret that is
 // unset never matches (an empty Bearer value is not a match).
+//
+// Vercel Cron triggers its configured paths with an HTTP GET request, so the
+// cron entry point is GET. POST is retained for the documented manual
+// scheduler path (docs/product/RENTAL_EMAIL_DELIVERY_ACTIVATION.md); both
+// methods share the same fail-closed authorized handler below.
 function isAuthorized(request) {
   const header = request.headers.get("authorization");
   if (!header) return false;
@@ -50,7 +55,7 @@ async function deliverClaimed(db, notification, reservationConfirmation) {
   }
 }
 
-export async function POST(request) {
+async function handleDeliver(request) {
   if (!isAuthorized(request)) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   try {
     const db = createRentalWebhookClient();
@@ -73,4 +78,14 @@ export async function POST(request) {
     console.error("Rental email delivery error", error);
     return NextResponse.json({ error: "Unable to process rental email delivery." }, { status: 500 });
   }
+}
+
+// Vercel Cron invokes this path with GET; the documented manual scheduler
+// path invokes it with POST. Both share the same handler.
+export async function GET(request) {
+  return handleDeliver(request);
+}
+
+export async function POST(request) {
+  return handleDeliver(request);
 }
