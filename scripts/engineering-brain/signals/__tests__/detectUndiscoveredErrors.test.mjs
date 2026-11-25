@@ -106,3 +106,65 @@ describe("detectUndiscoveredErrors", () => {
     expect(JSON.stringify({ ...a, generated_at: null })).toBe(JSON.stringify({ ...b, generated_at: null }));
   });
 });
+
+function smokeSignal(runId) {
+  return {
+    signal_id: `github:actions:ci_failed:${runId}`,
+    source: "github",
+    kind: "ci_failed",
+    severity: "error",
+    title: "CI failed on main: E2E Smoke",
+    group_title: "CI failed on main: E2E Smoke",
+    detected_at: "2026-11-23T21:50:00.000Z",
+    correlation_query: "E2E Smoke failed",
+    evidence: {
+      workflow_name: "E2E Smoke",
+      run_url: `https://github.com/onyxgolden/marketplace409/actions/runs/${runId}`,
+      head_sha: "05138d86",
+      conclusion: "failure",
+    },
+  };
+}
+
+describe("known-red allowlist (E2E Smoke, pre-provisioning)", () => {
+  it("excludes E2E Smoke signals from error_count but still reports them", () => {
+    const report = detectUndiscoveredErrors({
+      signals: [smokeSignal(1), smokeSignal(2)],
+      manifestRecords: RECORDS,
+    });
+    expect(report.error_count).toBe(0);
+    expect(report.errors).toEqual([]);
+    expect(report.allowlisted_count).toBe(1);
+    expect(report.allowlisted).toHaveLength(1);
+    const [group] = report.allowlisted;
+    expect(group.signal_count).toBe(2);
+    expect(group.title).toBe("CI failed on main: E2E Smoke");
+    expect(group.allowlist_reasons).toHaveLength(1);
+    expect(group.allowlist_reasons[0]).toMatch(/pre-provisioning/i);
+  });
+
+  it("still counts a new undiscovered error alongside the allowlisted smoke failure", () => {
+    const report = detectUndiscoveredErrors({
+      signals: [smokeSignal(1), failedDelivery("a")],
+      manifestRecords: RECORDS,
+    });
+    expect(report.error_count).toBe(1);
+    expect(report.allowlisted_count).toBe(1);
+    expect(report.signal_count).toBe(2);
+  });
+
+  it("does not allowlist a ci_failed signal from another workflow", () => {
+    const other = { ...smokeSignal(1), title: "CI failed on main: Nightly Sync", group_title: "CI failed on main: Nightly Sync", evidence: { workflow_name: "Nightly Sync" } };
+    const report = detectUndiscoveredErrors({ signals: [other], manifestRecords: RECORDS });
+    expect(report.error_count).toBe(1);
+    expect(report.allowlisted_count).toBe(0);
+    expect(report.allowlisted).toEqual([]);
+  });
+
+  it("does not allowlist a ci_failed signal with no workflow evidence (fail-closed)", () => {
+    const bare = { ...smokeSignal(1), evidence: {} };
+    const report = detectUndiscoveredErrors({ signals: [bare], manifestRecords: RECORDS });
+    expect(report.error_count).toBe(1);
+    expect(report.allowlisted_count).toBe(0);
+  });
+});
