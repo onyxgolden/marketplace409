@@ -4,12 +4,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockCreateServerAuthClient = vi.fn();
 const mockCheckAdmission = vi.fn();
 
+// Turnstile activation flag for gatewaySupport.js, which imports
+// isTurnstileEnabled from this module. Defaults to false so every
+// pre-existing test below exercises the exact pre-Turnstile behavior; the
+// "Turnstile enabled" describe block flips it to true.
+const { turnstileEnabled } = vi.hoisted(() => ({ turnstileEnabled: { current: false } }));
+
 vi.mock("@/lib/auth/serverAuthTransport.js", () => ({
   createServerAuthClient: (...args) => mockCreateServerAuthClient(...args),
 }));
 vi.mock("@/lib/auth/authRateLimit.js", () => ({
   AUTH_ACTIONS: { SIGNUP: "signup" },
   checkAdmission: (...args) => mockCheckAdmission(...args),
+}));
+vi.mock("@/lib/auth/turnstilePolicy.js", () => ({
+  MAX_TURNSTILE_TOKEN_LENGTH: 2048,
+  MESSAGE_TURNSTILE_REQUIRED: "Please complete the human-verification check and try again.",
+  isTurnstileEnabled: () => turnstileEnabled.current,
 }));
 
 const { POST } = await import("./route.js");
@@ -35,8 +46,8 @@ function fakeAdmin({ signUpResult } = {}) {
     },
     calls,
     auth: {
-      signUp: async ({ email }) => {
-        calls.push({ method: "signUp", email });
+      signUp: async ({ email, options }) => {
+        calls.push({ method: "signUp", email, captchaToken: options?.captchaToken ?? null });
         return signUpResult ?? { data: {}, error: null };
       },
     },
@@ -55,6 +66,7 @@ function post(body) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  turnstileEnabled.current = false;
   mockCheckAdmission.mockResolvedValue(allowAdmission);
 });
 
@@ -105,4 +117,54 @@ it("returns a generic 500 on provider failure without leaking account state", as
   const json = await res.json();
   expect(json.error).toBe("Unable to process sign-up. Please try again later.");
   expect(JSON.stringify(json)).not.toContain("Database error");
+});
+
+describe("turnstile human verification", () => {
+  it("ignores a stray captchaToken while disabled and does not forward it to the provider", async () => {
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    const res = await POST(
+      post({ email: "new@example.com", password: "pw", operationId: OP_ID, captchaToken: "0.AQStray" })
+    );
+    expect(res.status).toBe(200);
+    expect(admin.calls).toHaveLength(1);
+    expect(admin.calls[0].captchaToken).toBeNull();
+  });
+
+  it("returns 400 with zero provider calls and zero admission checks when enabled and the token is missing", async () => {
+    turnstileEnabled.current = true;
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    const res = await POST(post({ email: "new@example.com", password: "pw", operationId: OP_ID }));
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toBe("Please complete the human-verification check and try again.");
+    expect(admin.calls).toHaveLength(0);
+    expect(mockCheckAdmission).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when enabled and the token is malformed (empty / over-long)", async () => {
+    turnstileEnabled.current = true;
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    for (const captchaToken of ["", "   ", "x".repeat(2049)]) {
+      const res = await POST(
+        post({ email: "new@example.com", password: "pw", operationId: OP_ID, captchaToken })
+      );
+      expect(res.status).toBe(400);
+    }
+    expect(admin.calls).toHaveLength(0);
+  });
+
+  it("forwards the token to the provider as captchaToken when enabled", async () => {
+    turnstileEnabled.current = true;
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    const res = await POST(
+      post({ email: "new@example.com", password: "pw", operationId: OP_ID, captchaToken: "0.AQRealToken" })
+    );
+    expect(res.status).toBe(200);
+    expect(admin.calls).toHaveLength(1);
+    expect(admin.calls[0].captchaToken).toBe("0.AQRealToken");
+  });
 });

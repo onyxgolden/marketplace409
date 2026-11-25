@@ -24,6 +24,11 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { ACTIVATION_CONFIG, isMfaLayer2Activated } from "@/lib/auth/securityPolicy.js";
 import { AUTH_ACTIONS, checkAdmission } from "@/lib/auth/authRateLimit.js";
+import {
+  MAX_TURNSTILE_TOKEN_LENGTH,
+  MESSAGE_TURNSTILE_REQUIRED,
+  isTurnstileEnabled,
+} from "@/lib/auth/turnstilePolicy.js";
 
 export { ACTIVATION_CONFIG, AUTH_ACTIONS };
 
@@ -44,6 +49,7 @@ export const MESSAGE_RESET_FAILED = "Unable to process the password-reset reques
 export const MESSAGE_REFRESH_FAILED = "Session refresh failed. Please sign in again.";
 export const MESSAGE_MFA_FAILED = "Verification failed. Please try again.";
 export const MESSAGE_RECOVERY_FAILED = "Recovery failed. Check your details and try again.";
+export { MESSAGE_TURNSTILE_REQUIRED };
 
 const UUID_RE =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -86,6 +92,53 @@ export function extractEmail(body) {
 
 export function extractPassword(body) {
   return typeof body?.password === "string" && body.password !== "" ? body.password : null;
+}
+
+/**
+ * Extract the Turnstile token (cf-turnstile-response) from the body.
+ * Returns the token string, or null when missing/malformed. The token is
+ * an opaque short string; length is bounded so junk cannot smuggle
+ * megabytes into a provider call. The token is never logged.
+ */
+export function extractCaptchaToken(body) {
+  const token = body?.captchaToken;
+  if (typeof token !== "string") return null;
+  const trimmed = token.trim();
+  if (trimmed === "" || trimmed.length > MAX_TURNSTILE_TOKEN_LENGTH) return null;
+  return trimmed;
+}
+
+/**
+ * Human-verification gate for the anonymous auth routes (signup / sign-in /
+ * password reset). Call AFTER shape validation and BEFORE gateAdmission, so
+ * a token-less request consumes no limiter budget, claims no execution
+ * lease, and makes zero provider calls.
+ *
+ * When Turnstile is disabled (the shipped state) this is a no-op pass
+ * ({ ok: true, captchaToken: null }) and the route behaves exactly as
+ * before. When enabled, a missing/malformed token is a 400 with the
+ * generic MESSAGE_TURNSTILE_REQUIRED; a present token is returned for the
+ * route to pass to the provider as captchaToken.
+ *
+ * ONE VERIFIER PER TOKEN: the provider (Supabase Auth, via captchaToken)
+ * is the verification authority for auth flows — FORGE must NOT also call
+ * Siteverify on the same token (single-use; the second verification would
+ * fail). turnstileVerify.js is the authority only for custom forms. The
+ * provider enforces the token only once CAPTCHA is enabled in the Supabase
+ * dashboard with the same site key — see the Turnstile runbook for the
+ * activation order (docs/security/turnstile-human-verification-runbook.md).
+ *
+ * @returns {{ ok: true, captchaToken: string|null } | { ok: false, response }}
+ */
+export function requireHumanVerification({ captchaToken }) {
+  if (!isTurnstileEnabled()) return { ok: true, captchaToken: null };
+  if (typeof captchaToken !== "string" || captchaToken === "") {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: MESSAGE_TURNSTILE_REQUIRED }, { status: 400 }),
+    };
+  }
+  return { ok: true, captchaToken };
 }
 
 /**

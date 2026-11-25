@@ -23,6 +23,7 @@ import {
   ACTIVATION_CONFIG,
   MESSAGE_INVALID_REQUEST,
   MESSAGE_SIGNUP_FAILED,
+  extractCaptchaToken,
   extractEmail,
   extractOperationId,
   extractPassword,
@@ -31,6 +32,7 @@ import {
   isActivationEnabled,
   markInert,
   readJsonBody,
+  requireHumanVerification,
   trustedClientIp,
 } from "../_lib/gatewaySupport.js";
 
@@ -50,6 +52,12 @@ export async function POST(request) {
   if (!operationId || !email || !password) {
     return NextResponse.json({ error: MESSAGE_INVALID_REQUEST }, { status: 400 });
   }
+
+  // Turnstile: when enabled, a missing challenge token is refused here —
+  // before admission, lease, or any provider call. When disabled this is a
+  // no-op and the route behaves exactly as before.
+  const human = requireHumanVerification({ captchaToken: extractCaptchaToken(body) });
+  if (!human.ok) return human.response;
   // Optional emailRedirectTo for the invited-borrower flow (see
   // useCredentialAuth.js emailRedirectTo): must be a same-origin relative
   // path or absolute URL on the request's own origin. Anything else is
@@ -97,10 +105,17 @@ export async function POST(request) {
 
   let error;
   try {
+    const options = {};
+    if (emailRedirectTo) options.emailRedirectTo = emailRedirectTo;
+    // Provider is the verification authority for auth tokens (one verifier
+    // per single-use token): the captchaToken is validated by Supabase once
+    // dashboard CAPTCHA is enabled with the same site key. FORGE never
+    // Siteverifies an auth token as well.
+    if (human.captchaToken) options.captchaToken = human.captchaToken;
     ({ error } = await supabaseAdmin.auth.signUp({
       email,
       password,
-      ...(emailRedirectTo ? { options: { emailRedirectTo } } : {}),
+      ...(Object.keys(options).length > 0 ? { options } : {}),
     }));
   } catch {
     // Ambiguous provider outcome: reconcile before any refire.

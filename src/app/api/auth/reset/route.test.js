@@ -4,12 +4,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockCreateServerAuthClient = vi.fn();
 const mockCheckAdmission = vi.fn();
 
+// Turnstile activation flag for gatewaySupport.js, which imports
+// isTurnstileEnabled from this module. Defaults to false so every
+// pre-existing test below exercises the exact pre-Turnstile behavior.
+const { turnstileEnabled } = vi.hoisted(() => ({ turnstileEnabled: { current: false } }));
+
 vi.mock("@/lib/auth/serverAuthTransport.js", () => ({
   createServerAuthClient: (...args) => mockCreateServerAuthClient(...args),
 }));
 vi.mock("@/lib/auth/authRateLimit.js", () => ({
   AUTH_ACTIONS: { RESET_REQUEST: "reset_request" },
   checkAdmission: (...args) => mockCheckAdmission(...args),
+}));
+vi.mock("@/lib/auth/turnstilePolicy.js", () => ({
+  MAX_TURNSTILE_TOKEN_LENGTH: 2048,
+  MESSAGE_TURNSTILE_REQUIRED: "Please complete the human-verification check and try again.",
+  isTurnstileEnabled: () => turnstileEnabled.current,
 }));
 
 const { POST } = await import("./route.js");
@@ -30,7 +40,7 @@ function fakeAdmin({ resetResult } = {}) {
     calls,
     auth: {
       resetPasswordForEmail: async (email, options) => {
-        calls.push({ method: "resetPasswordForEmail", email, redirectTo: options?.redirectTo });
+        calls.push({ method: "resetPasswordForEmail", email, redirectTo: options?.redirectTo, captchaToken: options?.captchaToken ?? null });
         return resetResult ?? { data: {}, error: null };
       },
     },
@@ -53,6 +63,7 @@ function post(body) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  turnstileEnabled.current = false;
   mockCheckAdmission.mockResolvedValue(allowAdmission);
 });
 
@@ -99,4 +110,39 @@ it("returns a generic submitted message with the inert label header and touches 
   // thrown had the route touched any table (mfa_* included).
   expect(admin.calls).toHaveLength(1);
   expect(admin.calls[0].method).toBe("resetPasswordForEmail");
+});
+
+describe("turnstile human verification", () => {
+  it("ignores a stray captchaToken while disabled and does not forward it to the provider", async () => {
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    const res = await POST(post({ email: "user@example.com", operationId: OP_ID, captchaToken: "0.AQStray" }));
+    expect(res.status).toBe(200);
+    expect(admin.calls).toHaveLength(1);
+    expect(admin.calls[0].captchaToken).toBeNull();
+  });
+
+  it("returns 400 with zero provider calls and zero admission checks when enabled and the token is missing", async () => {
+    turnstileEnabled.current = true;
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    const res = await POST(post({ email: "user@example.com", operationId: OP_ID }));
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toBe("Please complete the human-verification check and try again.");
+    expect(admin.calls).toHaveLength(0);
+    expect(mockCheckAdmission).not.toHaveBeenCalled();
+  });
+
+  it("forwards the token to the provider as captchaToken when enabled, keeping the generic response", async () => {
+    turnstileEnabled.current = true;
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    const res = await POST(post({ email: "user@example.com", operationId: OP_ID, captchaToken: "0.AQRealToken" }));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.message).toBe("Check your email for a secure password-reset link.");
+    expect(admin.calls).toHaveLength(1);
+    expect(admin.calls[0].captchaToken).toBe("0.AQRealToken");
+  });
 });

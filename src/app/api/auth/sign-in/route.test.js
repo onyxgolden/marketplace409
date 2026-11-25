@@ -7,6 +7,11 @@ const mockCheckAdmission = vi.fn();
 const mockRequireSecurityAssurance = vi.fn();
 const mockIsActivationEnabled = vi.fn(() => false);
 
+// Turnstile activation flag for gatewaySupport.js, which imports
+// isTurnstileEnabled from this module. Defaults to false so every
+// pre-existing test below exercises the exact pre-Turnstile behavior.
+const { turnstileEnabled } = vi.hoisted(() => ({ turnstileEnabled: { current: false } }));
+
 vi.mock("@/lib/auth/serverAuthTransport.js", () => ({
   createServerAuthClient: (...args) => mockCreateServerAuthClient(...args),
 }));
@@ -18,6 +23,11 @@ vi.mock("@/lib/auth/authRateLimit.js", () => ({
 }));
 vi.mock("@/lib/auth/requireSecurityAssurance.js", () => ({
   requireSecurityAssurance: (...args) => mockRequireSecurityAssurance(...args),
+}));
+vi.mock("@/lib/auth/turnstilePolicy.js", () => ({
+  MAX_TURNSTILE_TOKEN_LENGTH: 2048,
+  MESSAGE_TURNSTILE_REQUIRED: "Please complete the human-verification check and try again.",
+  isTurnstileEnabled: () => turnstileEnabled.current,
 }));
 vi.mock("../_lib/gatewaySupport.js", async (importOriginal) => {
   const actual = await importOriginal();
@@ -47,8 +57,8 @@ function fakeAdmin({ signInResult } = {}) {
     },
     calls,
     auth: {
-      signInWithPassword: async ({ email }) => {
-        calls.push({ method: "signInWithPassword", email });
+      signInWithPassword: async ({ email, options }) => {
+        calls.push({ method: "signInWithPassword", email, captchaToken: options?.captchaToken ?? null });
         return signInResult ?? { data: { session: SESSION, user: USER }, error: null };
       },
     },
@@ -67,6 +77,7 @@ function post(body, headers = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  turnstileEnabled.current = false;
   mockIsActivationEnabled.mockReturnValue(false);
   mockCheckAdmission.mockResolvedValue(allowAdmission);
 });
@@ -135,6 +146,43 @@ describe("credential verification", () => {
     const res = await POST(post({ email: "a@b.c", password: "wrong", operationId: OP_ID }));
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: "Sign-in failed. Check your email and password and try again." });
+  });
+});
+
+describe("turnstile human verification", () => {
+  it("ignores a stray captchaToken while disabled and does not forward it to the provider", async () => {
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    const res = await POST(
+      post({ email: "a@b.c", password: "pw", operationId: OP_ID, captchaToken: "0.AQStray" })
+    );
+    expect(res.status).toBe(200);
+    expect(admin.calls).toHaveLength(1);
+    expect(admin.calls[0].captchaToken).toBeNull();
+  });
+
+  it("returns 400 with zero provider calls and zero admission checks when enabled and the token is missing", async () => {
+    turnstileEnabled.current = true;
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    const res = await POST(post({ email: "a@b.c", password: "pw", operationId: OP_ID }));
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toBe("Please complete the human-verification check and try again.");
+    expect(admin.calls).toHaveLength(0);
+    expect(mockCheckAdmission).not.toHaveBeenCalled();
+  });
+
+  it("forwards the token to the provider as captchaToken when enabled", async () => {
+    turnstileEnabled.current = true;
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    const res = await POST(
+      post({ email: "a@b.c", password: "pw", operationId: OP_ID, captchaToken: "0.AQRealToken" })
+    );
+    expect(res.status).toBe(200);
+    expect(admin.calls).toHaveLength(1);
+    expect(admin.calls[0].captchaToken).toBe("0.AQRealToken");
   });
 });
 
