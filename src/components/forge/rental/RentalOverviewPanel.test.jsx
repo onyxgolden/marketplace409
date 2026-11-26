@@ -293,7 +293,7 @@ describe("RentalOverviewPanel structure and empty state", () => {
   it("embeds Today's Priorities instead of duplicating its logic", async () => {
     const rentalBody = { ...baseData, actingUserId: "user_1", canonicalOwnerId: "owner_1" };
     vi.stubGlobal("fetch", async (url) => {
-      if (url === "/api/rental") return { ok: true, json: async () => rentalBody };
+      if (url === "/api/rental?surface=summary") return { ok: true, json: async () => rentalBody };
       if (url === "/api/rental/reports") return { ok: true, json: async () => ({ report: null }) };
       throw new Error(`unexpected fetch ${url}`);
     });

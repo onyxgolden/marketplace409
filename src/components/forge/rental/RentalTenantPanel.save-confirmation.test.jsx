@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RentalTenantPanel from "./RentalTenantPanel";
 import { clearSWRCache, seedCacheEntry } from "@/hooks/swrCache";
+import { routeTenantSurfaceGet } from "./tenantSurfaceTestUtils";
 
 describe("RentalTenantPanel save confirmation", () => {
   afterEach(() => {
@@ -26,10 +27,10 @@ describe("RentalTenantPanel save confirmation", () => {
         }
         throw new Error(`unexpected POST ${body.operation}`);
       }
-      if (url === "/api/rental") {
-        return { ok: true, json: async () => ({ tenants, leases: [], leaseMemberships: [],
-          units: [{ id: "u1", label: "4225 Barnhill" }], openCharges: [] }) };
-      }
+      // Slice 1: the list and record pages read their narrow surfaces.
+      const routed = routeTenantSurfaceGet(url, { tenants, leases: [], leaseMemberships: [],
+        units: [{ id: "u1", label: "4225 Barnhill" }], openCharges: [] });
+      if (routed) return { ok: true, json: async () => routed };
       if (typeof url === "string" && url.startsWith("/api/rental/custom-field-values")) {
         return { ok: true, json: async () => ({ fields: [], values: {} }) };
       }
@@ -37,7 +38,7 @@ describe("RentalTenantPanel save confirmation", () => {
     }));
 
     clearSWRCache();
-    seedCacheEntry("rental:tenants", { tenants, leases: [], leaseMemberships: [],
+    seedCacheEntry("rental:tenants:v2", { tenants, leases: [], leaseMemberships: [],
       units: [{ id: "u1", label: "4225 Barnhill" }], openCharges: [] });
 
     const container = document.createElement("div");

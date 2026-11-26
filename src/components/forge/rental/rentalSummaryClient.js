@@ -13,14 +13,19 @@
 //      body that won't parse as JSON is retried with a short backoff. An HTTP !ok is the server's
 //      definitive answer and is never retried.
 //
-// Endpoint contract (unchanged from the two previous call sites):
-//   - /api/rental is a hard requirement: !ok throws Error(body.error || "Rental summary could not be loaded.").
+// Endpoint contract (unchanged from the two previous call sites, except the
+// rental read is now the Slice-1 Summary projection, not the monolith):
+//   - /api/rental?surface=summary is a hard requirement: !ok throws
+//     Error(body.error || "Rental summary could not be loaded."). The body
+//     carries exactly the fields buildRentalDashboardSummary reads, plus
+//     actingUserId/canonicalOwnerId for the priorities session — no
+//     collectionSummary (nothing reads it) and no unrelated section rows.
 //   - /api/rental/reports is soft: it never throws. Failure is reported as
 //     { available: false, report: null, error } so callers keep their existing semantics -- the
 //     overview treats an unavailable report as fatal, the priorities hook keeps the other
 //     categories working and marks report-dependent steps unavailable.
 
-const RENTAL_SUMMARY_URL = "/api/rental";
+const RENTAL_SUMMARY_URL = "/api/rental?surface=summary";
 const RENTAL_REPORTS_URL = "/api/rental/reports";
 
 // Two backoff steps => three total attempts per endpoint, under a second of added latency

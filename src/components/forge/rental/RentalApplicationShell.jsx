@@ -1,31 +1,104 @@
 "use client";
+import { Component } from "react";
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { SlidersHorizontal } from "lucide-react";
 import { resolveActiveFunction } from "@/components/forge/workspace/ApplicationShell";
 import { useSidebarHiddenItems } from "@/components/forge/workspace/useSidebarHiddenItems";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
-import RentalSetupWizardPanel, { fetchSetupWizardStatus, readSetupWizardDismissal, writeSetupWizardDismissal } from "./RentalSetupWizardPanel";
+import { fetchSetupWizardStatus, readSetupWizardDismissal, writeSetupWizardDismissal } from "./rentalSetupWizardStatus";
+import { ForgeLoadingState } from "@/components/forge/ForgeStates";
 import SidebarCustomizePopover from "@/components/forge/workspace/SidebarCustomizePopover";
 import RentalContextualSurface from "./RentalContextualSurface";
-import RentalOverviewPanel from "./RentalOverviewPanel"; import RentalSetupPanel from "./RentalSetupPanel"; import RentalTenantPanel from "./RentalTenantPanel"; import RentalLeasePanel from "./RentalLeasePanel"; import RentalPaymentsPanel from "./RentalPaymentsPanel"; import RentalInsurancePanel from "./RentalInsurancePanel"; import RentalInsuranceAddonsPanel from "./RentalInsuranceAddonsPanel"; import RentalMaintenancePanel from "./RentalMaintenancePanel"; import RentalDocumentsPanel from "./RentalDocumentsPanel"; import RentalCommunicationsPanel from "./RentalCommunicationsPanel"; import MessagesPanel from "./MessagesPanel"; import RentalReconciliationPanel from "./RentalReconciliationPanel"; import BankLedgerPage from "./BankLedgerPage"; import ChartOfAccountsPage from "./ChartOfAccountsPage"; import BatchExpenseForm from "./BatchExpenseForm"; import RentalReportsPanel from "./RentalReportsPanel"; import RentalDepositsPanel from "./RentalDepositsPanel"; import RentalInspectionsPanel from "./RentalInspectionsPanel"; import RentalLeaseLifecyclePanel from "./RentalLeaseLifecyclePanel"; import RentalLeasePreparationPanel from "./RentalLeasePreparationPanel"; import RentalAutopayPanel from "./RentalAutopayPanel"; import RentalAnimalsPanel from "./RentalAnimalsPanel"; import RentalSupportPanel from "./RentalSupportPanel"; import RentalVendorsPanel from "./RentalVendorsPanel"; import BankingToolsPanel from "./BankingToolsPanel"; import OwnerStatementsPanel from "./OwnerStatementsPanel"; import ListingsPanel from "./ListingsPanel"; import ApplicationsPanel from "./ApplicationsPanel"; import Tax1099Panel from "./Tax1099Panel";
-import TaxStrategiesPanel from "./TaxStrategiesPanel"; import FindingTheMoneyPanel from "./FindingTheMoneyPanel";
-import RentalOwnersHomePanel from "./RentalOwnersHomePanel";
-import RentalReceiptsPanel from "./RentalReceiptsPanel";
-import RentalMailingPanel from "./RentalMailingPanel";
-import RentecMigrationPanel from "./RentecMigrationPanel";
-import RentecFileInventoryPanel from "./RentecFileInventoryPanel";
-import RentecPaymentImportPanel from "./RentecPaymentImportPanel";
-import RentecFinancialHistoryImportPanel from "./RentecFinancialHistoryImportPanel";
-import PropertyFinancialSetupPanel from "./PropertyFinancialSetupPanel";
 import RentalHelpModal from "./RentalHelpModal";
 import { RentalTerminologyProvider, useRentalTerminology } from "./rentalTerminologyContext";
 import { termLabel as resolveTermLabel } from "@/domains/rental-terminology/rentalTerminology";
-import RentalTerminologyPanel from "./RentalTerminologyPanel";
-import RentalTeamPanel from "./RentalTeamPanel";
 import RentalPreviewBanner from "./RentalPreviewBanner";
-import RentalTodaysPrioritiesPanel from "./guided-workflow/RentalTodaysPrioritiesPanel";
-import RentalFirstTenantReadinessPanel from "./guided-workflow/RentalFirstTenantReadinessPanel";
-import RentalLeaseRenewalPanel from "./guided-workflow/RentalLeaseRenewalPanel";
+// Slice 1 (Rental Partial Open): the initial route ships the shell, the
+// navigation, the active Summary or Tenants panel, and shared context — not
+// every banking, inspections, mailing, import, reports and settings panel.
+// Overview + Tenants stay static (the Slice-1 active panels); every other
+// surface loads on demand with next/dynamic + a stable skeleton. Navigation
+// ids, deep links, history/back, terminology, permissions and layout are
+// unchanged — only the import timing moves.
+import RentalOverviewPanel from "./RentalOverviewPanel";
+import RentalTenantPanel from "./RentalTenantPanel";
+const RentalSetupWizardPanel = dynamic(() => import("./RentalSetupWizardPanel"), { loading: () => <RentalSurfaceLoading label="Setup guide" /> });
+const RentalTodaysPrioritiesPanel = dynamic(() => import("./guided-workflow/RentalTodaysPrioritiesPanel"), { loading: () => <RentalSurfaceLoading label="Today's priorities" /> });
+const RentalFirstTenantReadinessPanel = dynamic(() => import("./guided-workflow/RentalFirstTenantReadinessPanel"), { loading: () => <RentalSurfaceLoading label="First tenant readiness" /> });
+const RentalLeaseRenewalPanel = dynamic(() => import("./guided-workflow/RentalLeaseRenewalPanel"), { loading: () => <RentalSurfaceLoading label="Lease renewal" /> });
+const RentalMailingPanel = dynamic(() => import("./RentalMailingPanel"), { loading: () => <RentalSurfaceLoading label="Mailing" /> });
+const RentalOwnersHomePanel = dynamic(() => import("./RentalOwnersHomePanel"), { loading: () => <RentalSurfaceLoading label="Owners" /> });
+const OwnerStatementsPanel = dynamic(() => import("./OwnerStatementsPanel"), { loading: () => <RentalSurfaceLoading label="Owner statements" /> });
+const RentalSetupPanel = dynamic(() => import("./RentalSetupPanel"), { loading: () => <RentalSurfaceLoading label="Properties" /> });
+const RentalLeasePanel = dynamic(() => import("./RentalLeasePanel"), { loading: () => <RentalSurfaceLoading label="Leases" /> });
+const RentecMigrationPanel = dynamic(() => import("./RentecMigrationPanel"), { loading: () => <RentalSurfaceLoading label="Rentec migration" /> });
+const RentecFileInventoryPanel = dynamic(() => import("./RentecFileInventoryPanel"), { loading: () => <RentalSurfaceLoading label="Rentec files" /> });
+const RentalPaymentsPanel = dynamic(() => import("./RentalPaymentsPanel"), { loading: () => <RentalSurfaceLoading label="Rent & payments" /> });
+const RentalInsurancePanel = dynamic(() => import("./RentalInsurancePanel"), { loading: () => <RentalSurfaceLoading label="Insurance" /> });
+const RentalInsuranceAddonsPanel = dynamic(() => import("./RentalInsuranceAddonsPanel"), { loading: () => <RentalSurfaceLoading label="Insurance add-ons" /> });
+const RentalMaintenancePanel = dynamic(() => import("./RentalMaintenancePanel"), { loading: () => <RentalSurfaceLoading label="Maintenance" /> });
+const RentalDocumentsPanel = dynamic(() => import("./RentalDocumentsPanel"), { loading: () => <RentalSurfaceLoading label="Documents" /> });
+const RentalCommunicationsPanel = dynamic(() => import("./RentalCommunicationsPanel"), { loading: () => <RentalSurfaceLoading label="Communications" /> });
+const MessagesPanel = dynamic(() => import("./MessagesPanel"), { loading: () => <RentalSurfaceLoading label="Messages" /> });
+const RentalReconciliationPanel = dynamic(() => import("./RentalReconciliationPanel"), { loading: () => <RentalSurfaceLoading label="Reconciliation" /> });
+const BankLedgerPage = dynamic(() => import("./BankLedgerPage"), { loading: () => <RentalSurfaceLoading label="Bank ledger" /> });
+const RentalVendorsPanel = dynamic(() => import("./RentalVendorsPanel"), { loading: () => <RentalSurfaceLoading label="Vendors" /> });
+const RentalReceiptsPanel = dynamic(() => import("./RentalReceiptsPanel"), { loading: () => <RentalSurfaceLoading label="Receipts" /> });
+const ChartOfAccountsPage = dynamic(() => import("./ChartOfAccountsPage"), { loading: () => <RentalSurfaceLoading label="Chart of accounts" /> });
+const BatchExpenseForm = dynamic(() => import("./BatchExpenseForm"), { loading: () => <RentalSurfaceLoading label="Batch entry" /> });
+const RentecPaymentImportPanel = dynamic(() => import("./RentecPaymentImportPanel"), { loading: () => <RentalSurfaceLoading label="Rentec payment import" /> });
+const RentecFinancialHistoryImportPanel = dynamic(() => import("./RentecFinancialHistoryImportPanel"), { loading: () => <RentalSurfaceLoading label="Rentec financial history import" /> });
+const RentalReportsPanel = dynamic(() => import("./RentalReportsPanel"), { loading: () => <RentalSurfaceLoading label="Reports" /> });
+const Tax1099Panel = dynamic(() => import("./Tax1099Panel"), { loading: () => <RentalSurfaceLoading label="Tax 1099" /> });
+const TaxStrategiesPanel = dynamic(() => import("./TaxStrategiesPanel"), { loading: () => <RentalSurfaceLoading label="Tax strategies" /> });
+const FindingTheMoneyPanel = dynamic(() => import("./FindingTheMoneyPanel"), { loading: () => <RentalSurfaceLoading label="Finding the money" /> });
+const PropertyFinancialSetupPanel = dynamic(() => import("./PropertyFinancialSetupPanel"), { loading: () => <RentalSurfaceLoading label="Financial setup" /> });
+const RentalDepositsPanel = dynamic(() => import("./RentalDepositsPanel"), { loading: () => <RentalSurfaceLoading label="Deposits" /> });
+const BankingToolsPanel = dynamic(() => import("./BankingToolsPanel"), { loading: () => <RentalSurfaceLoading label="Banking tools" /> });
+const RentalInspectionsPanel = dynamic(() => import("./RentalInspectionsPanel"), { loading: () => <RentalSurfaceLoading label="Inspections" /> });
+const RentalLeaseLifecyclePanel = dynamic(() => import("./RentalLeaseLifecyclePanel"), { loading: () => <RentalSurfaceLoading label="Lease lifecycle" /> });
+const RentalLeasePreparationPanel = dynamic(() => import("./RentalLeasePreparationPanel"), { loading: () => <RentalSurfaceLoading label="Lease preparation" /> });
+const RentalAutopayPanel = dynamic(() => import("./RentalAutopayPanel"), { loading: () => <RentalSurfaceLoading label="Autopay" /> });
+const RentalAnimalsPanel = dynamic(() => import("./RentalAnimalsPanel"), { loading: () => <RentalSurfaceLoading label="Animals" /> });
+const RentalSupportPanel = dynamic(() => import("./RentalSupportPanel"), { loading: () => <RentalSurfaceLoading label="Support" /> });
+const RentalTerminologyPanel = dynamic(() => import("./RentalTerminologyPanel"), { loading: () => <RentalSurfaceLoading label="Terminology" /> });
+const RentalTeamPanel = dynamic(() => import("./RentalTeamPanel"), { loading: () => <RentalSurfaceLoading label="Team" /> });
+const ListingsPanel = dynamic(() => import("./ListingsPanel"), { loading: () => <RentalSurfaceLoading label="Listings" /> });
+const ApplicationsPanel = dynamic(() => import("./ApplicationsPanel"), { loading: () => <RentalSurfaceLoading label="Applications" /> });
+
+// Stable section skeleton: the same loading state every demand-loaded panel
+// shows while its chunk arrives, so a section click paints feedback on the
+// next frame instead of a blank panel. data-rental-surface-loading is the
+// guard's hook: a click must produce this (or the selected nav state)
+// synchronously.
+export function RentalSurfaceLoading({ label = "section" }) {
+  return <div data-rental-surface-loading={label}><ForgeLoadingState label={`Loading ${label}…`} /></div>;
+}
+
+// A chunk failure must show an honest retry state, never a silently empty
+// panel. Retry remounts the surface subtree (keyed div) so the chunk loader
+// runs again instead of re-rendering a rejected loadable.
+export class RentalSurfaceErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null, retryCount: 0 };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return <section role="alert" className="rounded-3xl border border-red-200 bg-white p-6 shadow-sm dark:border-red-900 dark:bg-slate-900">
+        <h2 className="text-lg font-black text-slate-950 dark:text-white">This section failed to load</h2>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">The section&apos;s code didn&apos;t arrive (usually a network blip or a deploy mid-navigation). Nothing was changed — try loading it again.</p>
+        <button type="button" onClick={() => this.setState((state) => ({ error: null, retryCount: state.retryCount + 1 }))}
+          className="mt-4 rounded-xl bg-slate-950 px-5 py-3 text-sm font-black text-white dark:bg-amber-400 dark:text-slate-950">Try again</button>
+      </section>;
+    }
+    return <div key={this.state.retryCount}>{this.props.children}</div>;
+  }
+}
 
 // Seven-section Rentec-style information architecture (Rentec-parity R8,
 // 2026-10-01): Summary landing, then Properties / Tenants / Banking / Owners /
@@ -313,7 +386,7 @@ function RentalApplicationShellView({ activeFunctionId, activeRecordContext = nu
     <div className="mx-auto grid max-w-[1800px] grid-cols-1 gap-5 p-4 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-6 lg:p-8">
       <label className="lg:hidden"><span className="sr-only">Rental function</span><select value={activeId} onChange={(event) => handleFunctionChange?.(event.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 p-3 font-bold text-slate-950 dark:text-slate-100">{navigation.map((group) => ({ key: group.defaultLabel ?? group.label, label: group.label, items: group.items.filter((item) => !isItemHidden(group, item.id, sidebarPrefs.hiddenItemIds)) })).filter((entry) => entry.items.length > 0).map((entry) => <optgroup key={entry.key} label={entry.label}>{entry.items.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</optgroup>)}</select></label>
       <RentalNavSidebar activeId={activeId} onFunctionChange={handleFunctionChange} sidebarPrefs={sidebarPrefs} navigation={navigation} hideableSections={hideableSections} />
-      <main data-active-function-surface={activeId} data-record-context={activeRecordContext?.recordId || undefined} className="min-w-0">{showFirstRunWizard?<RentalSetupWizardPanel mode="first-run" onNavigate={handleFunctionChange} onExit={handleWizardExit}/>:<>{activeRecordContext?<div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950 px-4 py-3" role="status"><p className="text-sm font-bold text-sky-950 dark:text-sky-100">Working with {activeRecordContext.recordType === "tenant" ? termLabel("tenant") : termLabel("property")}: {activeRecordContext.recordLabel}</p><button type="button" onClick={()=>onFunctionChange?.(activeRecordContext.recordType === "tenant" ? "tenants" : "setup")} className="text-sm font-black text-sky-800 dark:text-sky-300 underline">Back to {activeRecordContext.recordType === "tenant" ? termLabel("tenant", { plural: true }) : termLabel("property", { plural: true })}</button></div>:null}{buildRentalSurface(activeId, { onNavigate: handleFunctionChange, recordContext: activeRecordContext, viewFilter: activeViewFilter })}</>}</main>
+      <main data-active-function-surface={activeId} data-record-context={activeRecordContext?.recordId || undefined} className="min-w-0"><RentalSurfaceErrorBoundary key={activeId}>{showFirstRunWizard?<RentalSetupWizardPanel mode="first-run" onNavigate={handleFunctionChange} onExit={handleWizardExit}/>:<>{activeRecordContext?<div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950 px-4 py-3" role="status"><p className="text-sm font-bold text-sky-950 dark:text-sky-100">Working with {activeRecordContext.recordType === "tenant" ? termLabel("tenant") : termLabel("property")}: {activeRecordContext.recordLabel}</p><button type="button" onClick={()=>onFunctionChange?.(activeRecordContext.recordType === "tenant" ? "tenants" : "setup")} className="text-sm font-black text-sky-800 dark:text-sky-300 underline">Back to {activeRecordContext.recordType === "tenant" ? termLabel("tenant", { plural: true }) : termLabel("property", { plural: true })}</button></div>:null}{buildRentalSurface(activeId, { onNavigate: handleFunctionChange, recordContext: activeRecordContext, viewFilter: activeViewFilter })}</>}</RentalSurfaceErrorBoundary></main>
     </div>
     {showHelp && <RentalHelpModal activeFunctionId={activeId} onClose={() => setShowHelp(false)} />}
   </section>;

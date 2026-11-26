@@ -276,6 +276,33 @@ export function fetchWithDedupe(key, fetcher) {
   return promise;
 }
 
+/**
+ * Patch a cached entry in place without a network round trip. The updater
+ * receives the current data and returns the next data (or undefined to
+ * decline the patch — e.g. the row it would touch is not in this cache).
+ * Returns false when there is no entry/data to patch, so the caller can
+ * fall back to a targeted refetch instead of silently showing stale data.
+ * Notifies subscribers and persists like a normal write.
+ *
+ * Authoritative write barrier (PR #863 fix round 1): a confirmed mutation
+ * must win over any read that started before it. A successful patch bumps
+ * the key's generation and orphans the in-flight fetch WITHOUT deleting the
+ * patched entry, so a late resolution fails the version check in
+ * fetchWithDedupe and is dropped instead of overwriting the confirmed
+ * state. The identity-checked cleanup there keeps an older promise from
+ * untracking a newer request started after this patch.
+ */
+export function patchCacheEntry(key, updater) {
+  const entry = getCacheEntry(key);
+  if (!entry || entry.data == null) return false;
+  const next = updater(entry.data);
+  if (next === undefined) return false;
+  versions.set(key, (versions.get(key) ?? 0) + 1);
+  inflight.delete(key);
+  setEntry(key, { data: next, error: "", updatedAt: Date.now() });
+  return true;
+}
+
 /** Drop the cached entry so the next read refetches. In-flight work is orphaned. */
 export function invalidate(key) {
   versions.set(key, (versions.get(key) ?? 0) + 1);

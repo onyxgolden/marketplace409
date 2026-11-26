@@ -3,7 +3,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RentalTenantPanel from "./RentalTenantPanel";
-import { invalidate } from "@/hooks/swrCache";
+import { invalidate, invalidatePrefix } from "@/hooks/swrCache";
+import { routeTenantSurfaceGet } from "./tenantSurfaceTestUtils";
 
 const tenants = [
   { id: "tenant_1", display_name: "Ashley George", email: "ashley@example.com" },
@@ -17,7 +18,8 @@ describe("RentalTenantPanel tenant selection", () => {
   afterEach(() => {
     if (root) act(() => root.unmount());
     container?.remove();
-    invalidate("rental:tenants");
+    invalidate("rental:tenants:v2");
+    invalidatePrefix("rental:tenant-detail:");
     vi.unstubAllGlobals();
   });
 
@@ -30,7 +32,11 @@ describe("RentalTenantPanel tenant selection", () => {
   }
 
   it("shows the record tenant's own portal email", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ tenants, leases: [], leaseMemberships: [], units: [], openCharges: [] }) })));
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const routed = routeTenantSurfaceGet(url, { tenants, leases: [], leaseMemberships: [], units: [], openCharges: [] });
+      if (routed) return { ok: true, json: async () => routed };
+      return { ok: true, json: async () => ({ tenants, leases: [], leaseMemberships: [], units: [], openCharges: [] }) };
+    }));
     await mountPanel({ recordContext: { recordType: "tenant", recordId: "tenant_1" } });
 
     // Details-first (Rentec parity): the record page opens on the details tab; profile fields are visible immediately.
@@ -54,6 +60,8 @@ describe("RentalTenantPanel tenant selection", () => {
         savedTenants = [...tenants, paula];
         return { ok: true, json: async () => ({ tenant: paula }) };
       }
+      const routed = routeTenantSurfaceGet(url, { tenants: savedTenants, leases: [], leaseMemberships: [], units: [], openCharges: [] });
+      if (routed) return { ok: true, json: async () => routed };
       return { ok: true, json: async () => ({ tenants: savedTenants, leases: [], leaseMemberships: [], units: [], openCharges: [] }) };
     });
     vi.stubGlobal("fetch", fetch);
@@ -90,6 +98,8 @@ describe("RentalTenantPanel tenant selection", () => {
         }
         return { ok: false, json: async () => ({ error: "unexpected operation" }) };
       }
+      const routed = routeTenantSurfaceGet(url, { tenants: liveTenants, leases: [], leaseMemberships: [], units: [], openCharges: [] });
+      if (routed) return { ok: true, json: async () => routed };
       return { ok: true, json: async () => ({ tenants: liveTenants, leases: [], leaseMemberships: [], units: [], openCharges: [] }) };
     });
     vi.stubGlobal("fetch", fetch);
@@ -134,6 +144,8 @@ describe("RentalTenantPanel tenant selection", () => {
     const fetch = vi.fn(async (url, options) => {
       if (String(url).includes("tenant-ledger")) return { ok: true, json: async () => emptyHistory };
       if (options?.method === "POST") { posts.push(JSON.parse(options.body)); return { ok: true, json: async () => ({}) }; }
+      const routed = routeTenantSurfaceGet(url, { tenants: [duplicate], leases: [], leaseMemberships: [], units: [], openCharges: [] });
+      if (routed) return { ok: true, json: async () => routed };
       return { ok: true, json: async () => ({ tenants: [duplicate], leases: [], leaseMemberships: [], units: [], openCharges: [] }) };
     });
     vi.stubGlobal("fetch", fetch);
@@ -155,6 +167,8 @@ describe("RentalTenantPanel tenant selection", () => {
     const fetch = vi.fn(async (url, options) => {
       if (String(url).includes("tenant-ledger")) return { ok: true, json: async () => emptyHistory };
       if (options?.method === "POST") { posts.push(JSON.parse(options.body)); return { ok: true, json: async () => ({}) }; }
+      const routed = routeTenantSurfaceGet(url, { tenants: [tenant], leases: [], leaseMemberships: [], units: [], openCharges: [] });
+      if (routed) return { ok: true, json: async () => routed };
       return { ok: true, json: async () => ({ tenants: [tenant], leases: [], leaseMemberships: [], units: [], openCharges: [] }) };
     });
     vi.stubGlobal("fetch", fetch);
@@ -201,6 +215,8 @@ describe("RentalTenantPanel tenant selection", () => {
     const fetch = vi.fn(async (url, options) => {
       if (String(url).includes("tenant-ledger")) return { ok: true, json: async () => emptyHistory };
       if (options?.method === "POST") { posts.push(JSON.parse(options.body)); return { ok: true, json: async () => ({}) }; }
+      const routed = routeTenantSurfaceGet(url, { tenants: [tenant], leases: [], leaseMemberships: [], units: [], openCharges: [] });
+      if (routed) return { ok: true, json: async () => routed };
       return { ok: true, json: async () => ({ tenants: [tenant], leases: [], leaseMemberships: [], units: [], openCharges: [] }) };
     });
     vi.stubGlobal("fetch", fetch);

@@ -7,6 +7,7 @@ import {
   invalidatePrefix,
   isFresh,
   isInflight,
+  patchCacheEntry,
   prefetch,
   subscribe,
 } from "./swrCache";
@@ -366,5 +367,159 @@ describe("cross-identity in-flight protection (PR #417 re-review finding 2)", ()
     await tick();
     expect(mod.getCacheEntry("epoch-1")).toBeUndefined(); // nothing resurrected after the clear
     vi.unstubAllGlobals();
+  });
+});
+
+describe("patchCacheEntry (Slice 1 row-only reconciliation)", () => {
+  beforeEach(() => { clearSWRCache(); });
+
+  it("patches an in-memory entry in place and notifies subscribers", async () => {
+    await fetchWithDedupe("patch-1", () => Promise.resolve({ tenants: [{ id: "t1", email: "old@example.com" }] }));
+    const seen = [];
+    const unsubscribe = subscribe("patch-1", () => seen.push(getCacheEntry("patch-1")?.data));
+    expect(patchCacheEntry("patch-1", (data) => ({ ...data, tenants: data.tenants.map((item) => item.id === "t1" ? { ...item, email: "new@example.com" } : item) }))).toBe(true);
+    expect(getCacheEntry("patch-1").data.tenants[0].email).toBe("new@example.com");
+    expect(seen).toHaveLength(1);
+    expect(seen[0].tenants[0].email).toBe("new@example.com");
+    unsubscribe();
+  });
+
+  it("returns false and changes nothing when there is no entry", () => {
+    expect(patchCacheEntry("patch-missing", () => ({ tenants: [] }))).toBe(false);
+    expect(getCacheEntry("patch-missing")).toBeUndefined();
+  });
+
+  it("returns false and keeps the entry when the updater declines (returns undefined)", async () => {
+    await fetchWithDedupe("patch-2", () => Promise.resolve({ tenants: [{ id: "t1" }] }));
+    const before = getCacheEntry("patch-2").data;
+    expect(patchCacheEntry("patch-2", () => undefined)).toBe(false);
+    expect(getCacheEntry("patch-2").data).toBe(before);
+  });
+
+  it("patches a disk-hydrated entry after a simulated cold boot", async () => {
+    const { store } = installLocalStorageStub();
+    const signed = await signedInModule("patch-user");
+    await signed.fetchWithDedupe("patch-3", () => Promise.resolve({ tenants: [{ id: "t1", email: "old@example.com" }] }));
+    expect(store.size).toBeGreaterThan(0);
+    const cold = await signedInModule("patch-user");
+    expect(cold.getCacheEntry("patch-3")?.data.tenants[0].email).toBe("old@example.com");
+    expect(cold.patchCacheEntry("patch-3", (data) => ({ ...data, tenants: data.tenants.map((item) => ({ ...item, email: "new@example.com" })) }))).toBe(true);
+    expect(cold.getCacheEntry("patch-3").data.tenants[0].email).toBe("new@example.com");
+    const colder = await signedInModule("patch-user");
+    expect(colder.getCacheEntry("patch-3")?.data.tenants[0].email).toBe("new@example.com");
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("patchCacheEntry write barrier (PR #863 fix round 1)", () => {
+  beforeEach(() => { clearSWRCache(); });
+
+  it("a stale GET resolving after a confirmed patch cannot overwrite the patched row", async () => {
+    let resolveStale;
+    const stale = new Promise((resolve) => { resolveStale = resolve; });
+    await fetchWithDedupe("wb-1", () => Promise.resolve({ tenants: [{ id: "t1", email: "old@example.com" }] }));
+    // A refresh starts before the mutation and reads the old server state.
+    const pending = fetchWithDedupe("wb-1", () => stale.then(() => ({ tenants: [{ id: "t1", email: "stale@example.com" }] })));
+    await tick(); // let the stale fetch start
+    expect(isInflight("wb-1")).toBe(true);
+    // The mutation commits and patches the cache to the confirmed new state.
+    expect(patchCacheEntry("wb-1", (data) => ({ ...data, tenants: [{ id: "t1", email: "new@example.com" }] }))).toBe(true);
+    expect(isInflight("wb-1")).toBe(false); // the pre-patch read is orphaned
+    // The stale GET resolves late: the authoritative patch must survive.
+    resolveStale();
+    await expect(pending).resolves.toEqual({ tenants: [{ id: "t1", email: "stale@example.com" }] });
+    await tick();
+    expect(getCacheEntry("wb-1").data.tenants[0].email).toBe("new@example.com");
+    expect(getCacheEntry("wb-1").error).toBe("");
+  });
+
+  it("a stale GET failing after a confirmed patch cannot stain the patched entry", async () => {
+    let rejectStale;
+    const stale = new Promise((_, reject) => { rejectStale = reject; });
+    await fetchWithDedupe("wb-2", () => Promise.resolve({ tenants: [{ id: "t1", email: "old@example.com" }] }));
+    const pending = fetchWithDedupe("wb-2", () => stale);
+    await tick();
+    expect(patchCacheEntry("wb-2", (data) => ({ ...data, tenants: [{ id: "t1", email: "new@example.com" }] }))).toBe(true);
+    rejectStale(new Error("stale boom"));
+    await expect(pending).rejects.toThrow("stale boom");
+    await tick();
+    const entry = getCacheEntry("wb-2");
+    expect(entry.data.tenants[0].email).toBe("new@example.com");
+    expect(entry.error).toBe("");
+  });
+
+  it("an older promise's cleanup cannot untrack a newer request started after the patch", async () => {
+    let resolveStale;
+    let resolveFresh;
+    const stale = new Promise((resolve) => { resolveStale = resolve; });
+    const fresh = new Promise((resolve) => { resolveFresh = resolve; });
+    await fetchWithDedupe("wb-3", () => Promise.resolve("v1"));
+    const pendingStale = fetchWithDedupe("wb-3", () => stale.then(() => "stale"));
+    await tick();
+    expect(patchCacheEntry("wb-3", () => "patched")).toBe(true);
+    // A new explicit revalidation starts after the patch.
+    const pendingFresh = fetchWithDedupe("wb-3", () => fresh.then(() => "v2"));
+    await tick();
+    expect(isInflight("wb-3")).toBe(true);
+    // The stale read resolves: it must not delete the fresh request's entry.
+    resolveStale();
+    await expect(pendingStale).resolves.toBe("stale");
+    await tick();
+    expect(isInflight("wb-3")).toBe(true);
+    expect(getCacheEntry("wb-3")?.data).toBe("patched");
+    // The fresh read lands and wins.
+    resolveFresh();
+    await expect(pendingFresh).resolves.toBe("v2");
+    expect(getCacheEntry("wb-3")?.data).toBe("v2");
+    expect(isInflight("wb-3")).toBe(false);
+  });
+
+  it("a later explicit revalidation still writes after a patch", async () => {
+    await fetchWithDedupe("wb-4", () => Promise.resolve("v1"));
+    expect(patchCacheEntry("wb-4", () => "patched")).toBe(true);
+    await fetchWithDedupe("wb-4", () => Promise.resolve("v2"));
+    expect(getCacheEntry("wb-4")?.data).toBe("v2");
+  });
+
+  it("an identity change after a patch still wipes the patched entry", async () => {
+    installLocalStorageStub();
+    const mod = await signedInModule("wb-user");
+    await mod.fetchWithDedupe("wb-5", () => Promise.resolve("v1"));
+    expect(mod.patchCacheEntry("wb-5", () => "patched")).toBe(true);
+    mod.setCacheIdentity("other-user");
+    expect(mod.getCacheEntry("wb-5")).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
+  it("a declined patch still leaves a stale in-flight read alone (no barrier without a write)", async () => {
+    let resolveStale;
+    const stale = new Promise((resolve) => { resolveStale = resolve; });
+    await fetchWithDedupe("wb-6", () => Promise.resolve("v1"));
+    const pending = fetchWithDedupe("wb-6", () => stale.then(() => "stale"));
+    await tick();
+    expect(patchCacheEntry("wb-6", () => undefined)).toBe(false);
+    expect(isInflight("wb-6")).toBe(true); // nothing was written, so nothing was orphaned
+    resolveStale();
+    await expect(pending).resolves.toBe("stale");
+    expect(getCacheEntry("wb-6")?.data).toBe("stale");
+  });
+
+  it("the barrier holds on a paged list key (rental:tenants:v2:page:2)", async () => {
+    // PR #863 fix round 2, residual 3: Load more reads page 2 through
+    // fetchWithDedupe under its own key, and row mutations patch that key --
+    // a stale page-2 GET must not overwrite the patched page either.
+    let resolveStale;
+    const stale = new Promise((resolve) => { resolveStale = resolve; });
+    await fetchWithDedupe("rental:tenants:v2:page:2", () => Promise.resolve({ tenants: [{ id: "t71", email: "old@example.com" }], totalCount: 75, page: 2, pageSize: 50 }));
+    const pending = fetchWithDedupe("rental:tenants:v2:page:2", () => stale.then(() => ({ tenants: [{ id: "t71", email: "stale@example.com" }], totalCount: 75, page: 2, pageSize: 50 })));
+    await tick();
+    expect(isInflight("rental:tenants:v2:page:2")).toBe(true);
+    expect(patchCacheEntry("rental:tenants:v2:page:2", (data) => ({ ...data, tenants: [{ id: "t71", email: "new@example.com" }] }))).toBe(true);
+    expect(isInflight("rental:tenants:v2:page:2")).toBe(false);
+    resolveStale();
+    await expect(pending).resolves.toEqual({ tenants: [{ id: "t71", email: "stale@example.com" }], totalCount: 75, page: 2, pageSize: 50 });
+    await tick();
+    expect(getCacheEntry("rental:tenants:v2:page:2").data.tenants[0].email).toBe("new@example.com");
+    expect(getCacheEntry("rental:tenants:v2:page:2").error).toBe("");
   });
 });

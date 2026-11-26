@@ -3,7 +3,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RentalTenantPanel from "./RentalTenantPanel";
-import { invalidate } from "@/hooks/swrCache";
+import { invalidate, invalidatePrefix } from "@/hooks/swrCache";
+import { routeTenantSurfaceGet } from "./tenantSurfaceTestUtils";
 
 const emptyHistory = { ledger: { entries: [], last3: [], unassigned: [], totals: { chargedCents: 0, paidCents: 0, refundedCents: 0 }, balanceCents: 0 }, deposits: { entries: [], heldCents: 0, requiredCents: 0 } };
 
@@ -14,7 +15,8 @@ describe("RentalTenantPanel controls sweep — G1 cancelled-lease membership gua
   afterEach(() => {
     if (root) act(() => root.unmount());
     container?.remove();
-    invalidate("rental:tenants");
+    invalidate("rental:tenants:v2");
+    invalidatePrefix("rental:tenant-detail:");
     vi.unstubAllGlobals();
   });
 
@@ -25,6 +27,8 @@ describe("RentalTenantPanel controls sweep — G1 cancelled-lease membership gua
   async function mountRecord(dataset, recordId) {
     vi.stubGlobal("fetch", vi.fn(async (url, options) => {
       if (String(url).includes("tenant-ledger")) return { ok: true, json: async () => emptyHistory };
+      const routed = routeTenantSurfaceGet(url, dataset);
+      if (routed) return { ok: true, json: async () => routed };
       if (options?.method === "POST") return { ok: false, json: async () => ({ error: "unexpected operation" }) };
       return { ok: true, json: async () => dataset };
     }));
@@ -101,6 +105,8 @@ describe("RentalTenantPanel controls sweep — G5 claimed-tenant email form", ()
     const dataset = claimedDataset();
     vi.stubGlobal("fetch", vi.fn(async (url, options) => {
       if (String(url).includes("tenant-ledger")) return { ok: true, json: async () => emptyHistory };
+      const routed = routeTenantSurfaceGet(url, dataset);
+      if (routed) return { ok: true, json: async () => routed };
       if (options?.method === "POST") return { ok: false, json: async () => ({ error: "unexpected operation" }) };
       return { ok: true, json: async () => dataset };
     }));

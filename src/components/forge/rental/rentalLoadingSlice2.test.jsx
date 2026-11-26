@@ -88,7 +88,7 @@ describe("slice 2 warm-switch behavior", () => {
   });
 
   it("renders the cached tenant list instantly with no loading flash", async () => {
-    await fetchWithDedupe("rental:tenants", () => Promise.resolve(masterPayload));
+    await fetchWithDedupe("rental:tenants:v2", () => Promise.resolve(masterPayload));
     const html = renderClientMarkup(<RentalTenantPanel initialTenants={[]} />);
     expect(html).toContain("Jane Tenant");
     expect(html).not.toContain("Loading tenants");

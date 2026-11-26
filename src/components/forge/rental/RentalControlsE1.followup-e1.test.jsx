@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearSWRCache } from "../../../hooks/swrCache";
 import RentalLeasePanel from "./RentalLeasePanel";
 import RentalTenantPanel from "./RentalTenantPanel";
+import { routeTenantSurfaceGet } from "./tenantSurfaceTestUtils";
 import RentalPaymentsPanel from "./RentalPaymentsPanel";
 import TenantCreditSection from "./TenantCreditSection";
 import PropertyLedgerPage from "./PropertyLedgerPage";
@@ -59,7 +60,7 @@ describe("controls-sweep follow-up E1 explanation pass", () => {
       units: [{ id: "unit_1", label: "Unit A" }, { id: "unit_2", label: "Unit B" }],
       openCharges: [],
     };
-    vi.stubGlobal("fetch", vi.fn(async () => response(data)));
+    vi.stubGlobal("fetch", vi.fn(async (url) => response(routeTenantSurfaceGet(url, data) || data)));
     const container = mount(<RentalTenantPanel initialTenants={tenants} recordContext={{ recordType: "tenant", recordId: "tenant_1" }} />);
     await flush();
     expect(container.textContent).toContain("The primary tenant cannot be removed from a lease. Change the primary tenant first.");
@@ -69,7 +70,7 @@ describe("controls-sweep follow-up E1 explanation pass", () => {
   it("L-15: no lease means create-a-lease guidance; all-on-lease means create-a-tenant guidance", async () => {
     const noLeaseTenants = [{ id: "tenant_3", display_name: "Tenant Three", email: "three@example.test" }];
     const noLeaseData = { tenants: noLeaseTenants, leases: [], leaseMemberships: [], units: [], openCharges: [] };
-    vi.stubGlobal("fetch", vi.fn(async () => response(noLeaseData)));
+    vi.stubGlobal("fetch", vi.fn(async (url) => response(routeTenantSurfaceGet(url, noLeaseData) || noLeaseData)));
     const containerA = mount(<RentalTenantPanel initialTenants={noLeaseTenants} recordContext={{ recordType: "tenant", recordId: "tenant_3" }} />);
     await flush();
     expect(containerA.textContent).toContain("Create a lease first");
@@ -83,7 +84,7 @@ describe("controls-sweep follow-up E1 explanation pass", () => {
       units: [{ id: "unit_1", label: "Unit A" }],
       openCharges: [],
     };
-    vi.stubGlobal("fetch", vi.fn(async () => response(soloData)));
+    vi.stubGlobal("fetch", vi.fn(async (url) => response(routeTenantSurfaceGet(url, soloData) || soloData)));
     const containerB = mount(<RentalTenantPanel initialTenants={soloTenants} recordContext={{ recordType: "tenant", recordId: "tenant_1" }} />);
     await flush();
     expect(containerB.textContent).toContain("create a new tenant record first");
@@ -91,7 +92,7 @@ describe("controls-sweep follow-up E1 explanation pass", () => {
 
   it("L-14: delete-unused-duplicate dialog names the portal-claimed exclusion", async () => {
     const tenants = [{ id: "tenant_3", display_name: "Tenant Three", email: "three@example.test" }];
-    vi.stubGlobal("fetch", vi.fn(async () => response({ tenants, leases: [], leaseMemberships: [], units: [], openCharges: [] })));
+    vi.stubGlobal("fetch", vi.fn(async (url) => response(routeTenantSurfaceGet(url, { tenants, leases: [], leaseMemberships: [], units: [], openCharges: [] }) || { tenants, leases: [], leaseMemberships: [], units: [], openCharges: [] })));
     const container = mount(<RentalTenantPanel initialTenants={tenants} recordContext={{ recordType: "tenant", recordId: "tenant_3" }} />);
     await flush();
     const deleteButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Delete unused duplicate");

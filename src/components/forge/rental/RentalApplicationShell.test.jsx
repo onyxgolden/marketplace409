@@ -2,7 +2,6 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { clearSWRCache, fetchWithDedupe, seedCacheEntry } from "../../../hooks/swrCache";
 import RentalApplicationShell, { applyTerminologyToNavigation, buildRentalSurface, HIDEABLE_SIDEBAR_SECTIONS, RENTAL_FUNCTIONS, RENTAL_NAVIGATION, resolveRentalSectionParam } from "./RentalApplicationShell.jsx";
 import { resolveRentalRecordContextParam } from "./rentalRecordParam.js";
@@ -37,7 +36,7 @@ async function seedSWR() {
   await Promise.all(Object.entries(SWR_SEEDS).map(([key, payload]) => fetchWithDedupe(key, () => Promise.resolve(payload))));
 }
 beforeEach(async () => { await seedSWR(); });
-afterEach(() => { clearSWRCache(); });
+afterEach(() => { clearSWRCache(); vi.unstubAllGlobals(); });
 
 const EXPECTED_FUNCTION_IDS = [
   "overview",
@@ -63,6 +62,24 @@ function unmount({ container, root }) {
   container.remove();
 }
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); }); }
+
+// Slice 1: surfaces are demand-loaded, so a synchronous markup render only
+// sees the section skeleton. Mount, wait for the chunk to resolve (the
+// skeleton marker disappears), then read. For statically rendered content
+// there is never a skeleton, so this returns immediately.
+async function renderSurfaceMarkup(element) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  await act(async () => { root.render(element); });
+  for (let attempt = 0; attempt < 500 && container.innerHTML.includes("data-rental-surface-loading"); attempt += 1) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  }
+  const html = container.innerHTML;
+  act(() => { root.unmount(); });
+  container.remove();
+  return html;
+}
 
 describe("RentalApplicationShell navigation reachability (quieted nav rail)", () => {
   let mounted;
@@ -165,13 +182,24 @@ describe("RentalApplicationShell ten-section Rentec-style registry", () => {
     expect(banking.items.find(({ id }) => id === "charges").label).toBe("Rent & Payments");
   });
 
-  it("gives Owners its own section home as the R9 mount point", () => {
+  it("gives Owners its own section home as the R9 mount point", async () => {
     const owners = RENTAL_NAVIGATION.find((group) => group.label === "Owners");
     expect(owners.items.map(({ id }) => id)).toEqual(["owners"]);
-    const markup = renderClientMarkup(buildRentalSurface("owners"));
-    expect(markup).toContain("data-rental-owners-home");
-    expect(markup).toContain("data-owner-statements-mount");
-    expect(markup).toContain("Owner statements");
+    // Slice 1: Owners is demand-loaded, so the first paint is the section
+    // skeleton; the real panel arrives once its chunk resolves.
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => { root.render(buildRentalSurface("owners")); });
+    expect(container.innerHTML).toContain("data-rental-surface-loading");
+    for (let attempt = 0; attempt < 20 && !container.innerHTML.includes("data-rental-owners-home"); attempt += 1) {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    }
+    expect(container.innerHTML).toContain("data-rental-owners-home");
+    expect(container.innerHTML).toContain("data-owner-statements-mount");
+    expect(container.innerHTML).toContain("Owner statements");
+    act(() => { root.unmount(); });
+    container.remove();
   });
 
   it("places animals under Tenants and the combined owner inbox under Tenants, not under a property split", () => {
@@ -228,19 +256,54 @@ describe("resolveRentalSectionParam", () => {
 });
 
 describe("RentalPageClient section deep-linking", () => {
-  it("honors ?section=properties by landing on the Properties section's first destination", () => {
-    const markup = renderClientMarkup(<RentalPageClient initialSection="properties" />);
+  it("honors ?section=properties by landing on the Properties section's first destination", async () => {
+    const markup = await renderSurfaceMarkup(<RentalPageClient initialSection="properties" />);
     expect(markup).toContain('data-active-function="setup"');
   });
 
-  it("falls back to the dashboard overview for a retired id", () => {
-    const markup = renderClientMarkup(<RentalPageClient initialSection="guide" />);
+  it("falls back to the dashboard overview for a retired id", async () => {
+    const markup = await renderSurfaceMarkup(<RentalPageClient initialSection="guide" />);
     expect(markup).toContain('data-active-function="overview"');
   });
 
-  it("defaults to the dashboard overview with no section", () => {
-    const markup = renderClientMarkup(<RentalPageClient />);
+  it("defaults to the dashboard overview with no section", async () => {
+    const markup = await renderSurfaceMarkup(<RentalPageClient />);
     expect(markup).toContain('data-active-function="overview"');
+  });
+});
+
+describe("Slice 1 guard: next-frame navigation feedback (brief section 4 condition 3)", () => {
+  it("a section click paints the new selection synchronously, before the chunk arrives", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => { root.render(<RentalPageClient />); });
+    await flush();
+    // Leases lives in a collapsed group -- expand every group toggle first.
+    let toggles;
+    do {
+      toggles = Array.from(container.querySelectorAll('nav[aria-label="Rental Manager functions"] button[aria-expanded="false"]'));
+      toggles.forEach((toggle) => act(() => { toggle.click(); }));
+    } while (toggles.length > 0);
+    const leasesButton = Array.from(container.querySelectorAll('nav[aria-label="Rental Manager functions"] button'))
+      .filter((button) => !button.hasAttribute("aria-expanded"))
+      .find((button) => button.textContent.includes("Leases"));
+    expect(leasesButton).not.toBeUndefined();
+    // The click itself: navigate() sets state synchronously, so the selected
+    // paint must be in the DOM the moment the click's act() returns -- no
+    // await, no frame wait. A regression that defers the state update (or
+    // fetches before painting) fails here. The pending paint is the skeleton
+    // on a cold chunk, or the panel itself when the chunk is already warm in
+    // this test run -- either way the overview is gone synchronously.
+    act(() => { leasesButton.click(); });
+    expect(leasesButton.getAttribute("aria-current")).toBe("page");
+    expect(container.querySelector('[data-active-function="leases"]')).not.toBeNull();
+    expect(
+      container.querySelector("[data-rental-surface-loading]") !== null
+        || container.querySelector('main')?.textContent.includes("Leases"),
+    ).toBe(true);
+    act(() => { root.unmount(); });
+    container.remove();
   });
 });
 
@@ -326,96 +389,103 @@ describe("RentalPageClient record-context URL sync", () => {
 });
 
 describe("RentalApplicationShell retired-id fallback", () => {
-  it("resolves a stored retired id to overview instead of crashing", () => {
+  it("resolves a stored retired id to overview instead of crashing", async () => {
     for (const retired of ["guide", "private-financing", "reservable-inventory"]) {
-      const markup = renderClientMarkup(<RentalApplicationShell activeFunctionId={retired} onFunctionChange={() => {}} />);
+      const markup = await renderSurfaceMarkup(<RentalApplicationShell activeFunctionId={retired} onFunctionChange={() => {}} />);
       expect(markup).toContain('data-active-function="overview"');
     }
   });
 });
 
 describe("RentalApplicationShell", () => {
-  it("renders an exception-first summary in grouped navigation", () => {
-    const markup = renderClientMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
+  it("renders an exception-first summary in grouped navigation", async () => {
+    const markup = await renderSurfaceMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
     expect(markup).toContain("Rental operations");
     expect(markup).toContain("Loading rental summary");
     expect(markup).toContain('aria-label="Rental Manager functions"');
     expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual(["Summary", "Properties", "Tenants", "Leasing", "Banking", "Owners", "Reports", "Tax", "Learn", "Settings"]);
   });
-  it("renders the first-tenant readiness surface as its own reachable function", () => {
-    const markup = renderClientMarkup(buildRentalSurface("readiness"));
+  it("renders the first-tenant readiness surface as its own reachable function", async () => {
+    const markup = await renderSurfaceMarkup(buildRentalSurface("readiness"));
     expect(markup).toContain("Prepare a tenant for move-in");
   });
-  it("renders the lease-renewal surface as its own reachable function", () => {
-    const markup = renderClientMarkup(buildRentalSurface("renewal"));
+  it("renders the lease-renewal surface as its own reachable function", async () => {
+    const markup = await renderSurfaceMarkup(buildRentalSurface("renewal"));
     expect(markup).toContain("Renew an expiring lease");
   });
-  it("renders today's priorities as the retired guide surface, now absorbed into the dashboard", () => {
+  it("renders today's priorities as the retired guide surface, now absorbed into the dashboard", async () => {
     // Client render with no seeded data: the retired guide id renders
     // RentalTodaysPrioritiesPanel, whose loading copy is distinct from the other surfaces.
     // (innerHTML does not escape apostrophes the way renderToStaticMarkup did.)
-    const markup = renderClientMarkup(buildRentalSurface("guide"));
+    const markup = await renderSurfaceMarkup(buildRentalSurface("guide"));
     expect(markup).toContain("today's priorities");
   });
-  it("renders a preview-only Rentec migration surface",()=>{const markup=renderClientMarkup(buildRentalSurface("rentec-migration"));expect(markup).toContain("Import from Rentec Direct");expect(markup).toContain("cannot write Rentec or FORGE records");});
-  it("renders a metadata-only Rentec file inventory",()=>{const markup=renderClientMarkup(buildRentalSurface("rentec-files"));expect(markup).toContain("Rentec files and renter photos");expect(markup).toContain("Inspect Rentec files");expect(markup).toContain("file names and contents are not returned");});
-  it("preserves selected-record context while navigating between rental surfaces",()=>{const markup=renderClientMarkup(<RentalApplicationShell activeFunctionId="charges" activeRecordContext={{recordType:"tenant",recordId:"tenant_1",recordLabel:"Test Tenant"}} onFunctionChange={()=>{}}/>);expect(markup).toContain('data-record-context="tenant_1"');expect(markup).toContain("Working with tenant: Test Tenant");expect(markup).toContain("Back to tenants")});
-  it("requires persisted unit and tenant selections instead of manual ids", () => {
-    const markup = renderClientMarkup(buildRentalSurface("leases"));
+  it("renders a preview-only Rentec migration surface",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("rentec-migration"));expect(markup).toContain("Import from Rentec Direct");expect(markup).toContain("cannot write Rentec or FORGE records");});
+  it("renders a metadata-only Rentec file inventory",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("rentec-files"));expect(markup).toContain("Rentec files and renter photos");expect(markup).toContain("Inspect Rentec files");expect(markup).toContain("file names and contents are not returned");});
+  it("preserves selected-record context while navigating between rental surfaces",async () =>{const markup=await renderSurfaceMarkup(<RentalApplicationShell activeFunctionId="charges" activeRecordContext={{recordType:"tenant",recordId:"tenant_1",recordLabel:"Test Tenant"}} onFunctionChange={()=>{}}/>);expect(markup).toContain('data-record-context="tenant_1"');expect(markup).toContain("Working with tenant: Test Tenant");expect(markup).toContain("Back to tenants")});
+  it("requires persisted unit and tenant selections instead of manual ids", async () => {
+    const markup = await renderSurfaceMarkup(buildRentalSurface("leases"));
     expect(markup).toContain("Select a saved unit");
     expect(markup).toContain("Select a saved tenant");
     expect(markup).not.toContain("Tenant ID");
   });
-  it("routes tenant-scoped lease navigation directly to RentalLeasePanel instead of the tenant-filtered contextual surface, so the full unit list stays available", () => {
+  it("routes tenant-scoped lease navigation directly to RentalLeasePanel instead of the tenant-filtered contextual surface, so the full unit list stays available", async () => {
     const recordContext = { recordType: "tenant", recordId: "tenant_brandy", recordLabel: "Brandy Morgan" };
     const element = buildRentalSurface("leases", { recordContext });
-    expect(element.type).toBe(RentalLeasePanel);
     expect(element.props.recordContext).toEqual(recordContext);
+    // Slice 1: the surface is demand-loaded, so identity is proven by rendering
+    // the lease panel (full unit picker) rather than by the component reference.
+    const markup = await renderSurfaceMarkup(element);
+    expect(markup).toContain("Select a saved unit");
   });
-  it("keeps lease activation and first-charge controls in secondary billing setup", () => {
-    const markup = renderClientMarkup(buildRentalSurface("charges"));
+  it("keeps lease activation and first-charge controls in secondary billing setup", async () => {
+    const markup = await renderSurfaceMarkup(buildRentalSurface("charges"));
     expect(markup).toContain("Rent &amp; payments");
     expect(markup).toContain("Billing setup");
     expect(markup).not.toContain("Activate lease and schedule");
   });
-  it("renders the maintenance request operations surface", () => {
-    const markup = renderClientMarkup(buildRentalSurface("maintenance"));
+  it("renders the maintenance request operations surface", async () => {
+    const markup = await renderSurfaceMarkup(buildRentalSurface("maintenance"));
     expect(markup).toContain("Requests and work orders");
     expect(markup).toContain("No maintenance requests have been submitted");
   });
-  it("renders the secure rental document library", () => {
-    const markup = renderClientMarkup(buildRentalSurface("documents"));
+  it("renders the secure rental document library", async () => {
+    const markup = await renderSurfaceMarkup(buildRentalSurface("documents"));
     expect(markup).toContain("Lease documents and notices");
     expect(markup).toContain("Upload document");
     expect(markup).not.toContain("Publish this document to the tenant portal");
   });
-  it("renders the auditable notification outbox with reminder setup hidden",()=>{const markup=renderClientMarkup(buildRentalSurface("communications"));expect(markup).toContain("Notification outbox");expect(markup).toContain("Email delivery is not active");expect(markup).toContain("Queue reminder");expect(markup).not.toContain("Maximum attempts");});
-  it("renders the combined owner inbox without filtering to rental-only messaging",()=>{
-    // renderToStaticMarkup captures only the pre-effect state; the MessagesPanel loading state
-    // proves the messages id routes to the inbox panel rather than a rental-only surface.
-    const markup=renderClientMarkup(buildRentalSurface("messages"));expect(markup).toContain("Loading messages");
+  it("renders the auditable notification outbox with reminder setup hidden",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("communications"));expect(markup).toContain("Notification outbox");expect(markup).toContain("Email delivery is not active");expect(markup).toContain("Queue reminder");expect(markup).not.toContain("Maximum attempts");});
+  it("renders the combined owner inbox without filtering to rental-only messaging",async () =>{
+    // Slice 1: the surface mounts for real, so pin the panel's fetch pending and
+    // assert its loading state -- that proves the messages id routes to the
+    // inbox panel rather than a rental-only surface.
+    vi.stubGlobal("fetch", () => new Promise(() => {}));
+    const markup=await renderSurfaceMarkup(buildRentalSurface("messages"));expect(markup).toContain("Loading messages");
   });
-  it("renders payment reconciliation boundaries",()=>{const markup=renderClientMarkup(buildRentalSurface("reconciliation"));expect(markup).toContain("Payment reconciliation");expect(markup).toContain("gross rental income posting is implemented");});
-  it("renders the Rentec payment import surface as preview-only",()=>{const markup=renderClientMarkup(buildRentalSurface("rentec-payment-import"));expect(markup).toContain("Import Rentec payments");expect(markup).toContain("Preview only");});
-  it("renders the Rentec financial history import surface as preview-only",()=>{const markup=renderClientMarkup(buildRentalSurface("rentec-financial-history-import"));expect(markup).toContain("Import Rentec financial history");expect(markup).toContain("Preview only");});
-  it("renders rent roll and tenant ledger reporting",()=>{const markup=renderClientMarkup(buildRentalSurface("reports"));expect(markup).toContain("Rent roll and tenant ledger");expect(markup).toContain("Loading report");});
-  it("renders a separate security-deposit liability ledger",()=>{const markup=renderClientMarkup(buildRentalSurface("deposits"));expect(markup).toContain("Security deposits");expect(markup).toContain("never treated as rent or NOI");});
-  it("renders the checks and deposits banking tools",()=>{const markup=renderClientMarkup(buildRentalSurface("checks-deposits"));expect(markup).toContain("Print recorded check payments");expect(markup).toContain("Print checks");expect(markup).toContain("Bank deposits");});
-  it("renders controlled move-in and move-out inspections",()=>{const markup=renderClientMarkup(buildRentalSurface("inspections"));expect(markup).toContain("Move-in, move-out, and periodic inspections");expect(markup).toContain("never creates a deduction");});
-  it("renders auditable lease changes and owner-controlled late fees",()=>{const markup=renderClientMarkup(buildRentalSurface("lease-lifecycle"));expect(markup).toContain("Renewals, amendments, and prorating");expect(markup).toContain("Owner-controlled late fees");});
-  it("renders editable lease preparation without claiming a licensed form",()=>{const markup=renderClientMarkup(buildRentalSurface("lease-preparation"));expect(markup).toContain("Editable terms and version history");expect(markup).toContain("not the Texas REALTORS® form");expect(markup).toContain("Save immutable draft version");});
-  it("shows owner autopay authorization without claiming consent activates a debit",()=>{const markup=renderClientMarkup(buildRentalSurface("autopay"));expect(markup).toContain("Tenant authorizations");expect(markup).toContain("Consent alone never activates a debit");});
-  it("separates pet fees from assistance-animal review",()=>{const markup=renderClientMarkup(buildRentalSurface("animals"));expect(markup).toContain("Pet approvals and assistance review");expect(markup).toContain("can never receive a pet fee");});
-  it("renders support cases without automatic money movement",()=>{const markup=renderClientMarkup(buildRentalSurface("support"));expect(markup).toContain("Support and incident cases");expect(markup).toContain("without automatically moving money");});
-  it("renders the property financial setup surface scoped to the selected property's exact property_id", () => {
-    // renderToStaticMarkup captures only the pre-effect state, so this is the loading state --
-    // the panel's own tests cover the post-fetch "Financial setup — {propertyId}" render.
+  it("renders payment reconciliation boundaries",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("reconciliation"));expect(markup).toContain("Payment reconciliation");expect(markup).toContain("gross rental income posting is implemented");});
+  it("renders the Rentec payment import surface as preview-only",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("rentec-payment-import"));expect(markup).toContain("Import Rentec payments");expect(markup).toContain("Preview only");});
+  it("renders the Rentec financial history import surface as preview-only",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("rentec-financial-history-import"));expect(markup).toContain("Import Rentec financial history");expect(markup).toContain("Preview only");});
+  it("renders rent roll and tenant ledger reporting",async () =>{vi.stubGlobal("fetch", () => new Promise(() => {}));const markup=await renderSurfaceMarkup(buildRentalSurface("reports"));expect(markup).toContain("Rent roll and tenant ledger");expect(markup).toContain("Loading report");});
+  it("renders a separate security-deposit liability ledger",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("deposits"));expect(markup).toContain("Security deposits");expect(markup).toContain("never treated as rent or NOI");});
+  it("renders the checks and deposits banking tools",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("checks-deposits"));expect(markup).toContain("Print recorded check payments");expect(markup).toContain("Print checks");expect(markup).toContain("Bank deposits");});
+  it("renders controlled move-in and move-out inspections",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("inspections"));expect(markup).toContain("Move-in, move-out, and periodic inspections");expect(markup).toContain("never creates a deduction");});
+  it("renders auditable lease changes and owner-controlled late fees",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("lease-lifecycle"));expect(markup).toContain("Renewals, amendments, and prorating");expect(markup).toContain("Owner-controlled late fees");});
+  it("renders editable lease preparation without claiming a licensed form",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("lease-preparation"));expect(markup).toContain("Editable terms and version history");expect(markup).toContain("not the Texas REALTORS® form");expect(markup).toContain("Save immutable draft version");});
+  it("shows owner autopay authorization without claiming consent activates a debit",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("autopay"));expect(markup).toContain("Tenant authorizations");expect(markup).toContain("Consent alone never activates a debit");});
+  it("separates pet fees from assistance-animal review",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("animals"));expect(markup).toContain("Pet approvals and assistance review");expect(markup).toContain("can never receive a pet fee");});
+  it("renders support cases without automatic money movement",async () =>{const markup=await renderSurfaceMarkup(buildRentalSurface("support"));expect(markup).toContain("Support and incident cases");expect(markup).toContain("without automatically moving money");});
+  it("renders the property financial setup surface scoped to the selected property's exact property_id", async () => {
+    // Slice 1: the surface mounts for real, so pin the panel's fetch pending --
+    // the loading state is the proof, and the panel's own tests cover the
+    // post-fetch "Financial setup — {propertyId}" render.
+    vi.stubGlobal("fetch", () => new Promise(() => {}));
     const recordContext = { recordType: "unit", recordId: "unit_1", propertyId: "930 Highland Drive" };
-    const markup = renderClientMarkup(buildRentalSurface("financial-setup", { recordContext }));
+    const markup = await renderSurfaceMarkup(buildRentalSurface("financial-setup", { recordContext }));
     expect(markup).toContain("Loading financial setup");
-    expect(renderClientMarkup(buildRentalSurface("financial-setup"))).toContain("Select a property before opening financial setup");
+    expect(await renderSurfaceMarkup(buildRentalSurface("financial-setup"))).toContain("Select a property before opening financial setup");
   });
-  it("keeps financial-setup a recognized function id, not just a surface -- resolveActiveFunction falls back to overview for anything outside RENTAL_FUNCTIONS", () => {
+  it("keeps financial-setup a recognized function id, not just a surface -- resolveActiveFunction falls back to overview for anything outside RENTAL_FUNCTIONS", async () => {
     // Regression: adding the surface to buildRentalSurface alone was not enough. The Property
     // actions menu calls onNavigate("financial-setup", context), which sets activeFunctionId --
     // but RentalApplicationShell resolves that id through resolveActiveFunction(RENTAL_FUNCTIONS,
@@ -423,20 +493,21 @@ describe("RentalApplicationShell", () => {
     // id for anything not in RENTAL_FUNCTIONS. Confirmed live: clicking "Financial setup" rendered
     // the Overview dashboard instead, because the id wasn't registered in RENTAL_NAVIGATION.
     expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toContain("financial-setup");
-    const markup = renderClientMarkup(<RentalApplicationShell activeFunctionId="financial-setup" activeRecordContext={{ recordType: "unit", recordId: "unit_1", propertyId: "930 Highland Drive" }} onFunctionChange={() => {}} />);
+    vi.stubGlobal("fetch", () => new Promise(() => {}));
+    const markup = await renderSurfaceMarkup(<RentalApplicationShell activeFunctionId="financial-setup" activeRecordContext={{ recordType: "unit", recordId: "unit_1", propertyId: "930 Highland Drive" }} onFunctionChange={() => {}} />);
     expect(markup).toContain('data-active-function="financial-setup"');
     expect(markup).toContain("Loading financial setup");
   });
-  it("renders the Terminology settings surface under Settings", () => {
-    const markup = renderClientMarkup(buildRentalSurface("terminology"));
+  it("renders the Terminology settings surface under Settings", async () => {
+    const markup = await renderSurfaceMarkup(buildRentalSurface("terminology"));
     expect(markup).toContain("data-rental-terminology-panel");
     expect(markup).toContain("Live preview");
     expect(markup).toContain("Save terminology");
   });
 
-  it("keeps terminology a recognized function id so Settings → Terminology navigates instead of falling back to overview", () => {
+  it("keeps terminology a recognized function id so Settings → Terminology navigates instead of falling back to overview", async () => {
     expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toContain("terminology");
-    const markup = renderClientMarkup(<RentalApplicationShell activeFunctionId="terminology" onFunctionChange={() => {}} />);
+    const markup = await renderSurfaceMarkup(<RentalApplicationShell activeFunctionId="terminology" onFunctionChange={() => {}} />);
     expect(markup).toContain('data-active-function="terminology"');
   });
 });
@@ -527,8 +598,8 @@ describe("R25 terminology — shell nav reflects custom terms", () => {
 });
 
 describe("RentalApplicationShell help control", () => {
-  it("renders a contextual Help control without opening the guide initially", () => {
-    const markup = renderClientMarkup(<RentalApplicationShell activeFunctionId="maintenance" onFunctionChange={() => {}} />);
+  it("renders a contextual Help control without opening the guide initially", async () => {
+    const markup = await renderSurfaceMarkup(<RentalApplicationShell activeFunctionId="maintenance" onFunctionChange={() => {}} />);
     expect(markup).toContain('title="Rental Manager workflows and button guide"');
     expect(markup).not.toContain("data-rental-help");
   });
@@ -638,9 +709,12 @@ describe("RentalApplicationShell first-run setup wizard (R16)", () => {
     expect(visited).toEqual(["setup-guide"]);
   });
 
-  it("maps the setup-guide destination to the re-runnable wizard panel", () => {
+  it("maps the setup-guide destination to the re-runnable wizard panel", async () => {
     const element = buildRentalSurface("setup-guide", { onNavigate: () => {} });
-    expect(element.type).toBe(RentalSetupWizardPanel);
     expect(element.props.mode).toBe("guide");
+    // Slice 1: the surface is demand-loaded, so identity is proven by rendering
+    // the wizard in guide mode rather than by the component reference.
+    const markup = await renderSurfaceMarkup(element);
+    expect(markup).toContain("Back to Summary");
   });
 });

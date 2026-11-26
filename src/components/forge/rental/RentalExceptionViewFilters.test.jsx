@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { renderClientMarkup } from "@/test-utils/renderClientMarkup.jsx";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
 import { resetRentalSummaryClient } from "./rentalSummaryClient";
@@ -35,6 +34,24 @@ async function flushEffects() {
     for (let i = 0; i < 10; i++) await Promise.resolve();
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
+}
+
+// Slice 1: surfaces are demand-loaded, so a synchronous markup render only
+// sees the section skeleton. Mount, wait for the chunk to resolve (the
+// skeleton marker disappears), then read. For statically rendered content
+// there is never a skeleton, so this returns immediately.
+async function renderSurfaceMarkup(element) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  await act(async () => { root.render(element); });
+  for (let attempt = 0; attempt < 500 && container.innerHTML.includes("data-rental-surface-loading"); attempt += 1) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  }
+  const html = container.innerHTML;
+  act(() => { root.unmount(); });
+  container.remove();
+  return html;
 }
 
 describe("exception view-filter predicates", () => {
@@ -101,7 +118,7 @@ describe("filtered queue views", () => {
       tenants: [{ id: "t1", display_name: "Tenant One" }],
       openCharges: [],
     }));
-    const markup = renderClientMarkup(<RentalSetupPanel initialViewFilter="vacant" initialUnits={[{ id: "u1" }, { id: "u2" }]} />);
+    const markup = await renderSurfaceMarkup(<RentalSetupPanel initialViewFilter="vacant" initialUnits={[{ id: "u1" }, { id: "u2" }]} />);
     expect(markup).toContain("Vacant units only");
     expect(markup).toContain("Vacant Unit");
     expect(markup).not.toContain("Occupied Unit");
@@ -120,7 +137,7 @@ describe("filtered queue views", () => {
       schedules: [],
       leaseMemberships: [],
     }));
-    const markup = renderClientMarkup(<RentalLeasePanel initialViewFilter="expiring" initialShowCreate={false} />);
+    const markup = await renderSurfaceMarkup(<RentalLeasePanel initialViewFilter="expiring" initialShowCreate={false} />);
     expect(markup).toContain("Leases expiring within 90 days");
     expect(markup).toContain("1 record");
   });
@@ -137,7 +154,7 @@ describe("filtered queue views", () => {
       schedules: [],
       billingEnabled: false,
     }));
-    const markup = renderClientMarkup(<RentalPaymentsPanel initialViewFilter="overdue" initialAccount={null} />);
+    const markup = await renderSurfaceMarkup(<RentalPaymentsPanel initialViewFilter="overdue" initialAccount={null} />);
     expect(markup).toContain("Overdue rent charges");
     expect(markup).toContain("1 record");
     expect(markup).toContain("2026-08");
@@ -155,7 +172,7 @@ describe("filtered queue views", () => {
       workOrders: [],
       workEvents: [],
     }));
-    const markup = renderClientMarkup(<RentalMaintenancePanel initialViewFilter="open" />);
+    const markup = await renderSurfaceMarkup(<RentalMaintenancePanel initialViewFilter="open" />);
     expect(markup).toContain("Open maintenance requests");
     expect(markup).toContain("2 records");
     expect(markup).toContain("Leaky faucet");
@@ -167,7 +184,7 @@ describe("filtered queue views", () => {
     await fetchWithDedupe("rental:maintenance", () => Promise.resolve({
       maintenanceRequests: [], contractors: [], workOrders: [], workEvents: [],
     }));
-    const markup = renderClientMarkup(<RentalMaintenancePanel />);
+    const markup = await renderSurfaceMarkup(<RentalMaintenancePanel />);
     expect(markup).not.toContain("data-view-filter-banner");
   });
 });
@@ -180,7 +197,7 @@ describe("buildRentalSurface view-filter plumbing", () => {
     await fetchWithDedupe("rental:maintenance", () => Promise.resolve({
       maintenanceRequests: [], contractors: [], workOrders: [], workEvents: [],
     }));
-    const markup = renderClientMarkup(buildRentalSurface("maintenance", { viewFilter: "open" }));
+    const markup = await renderSurfaceMarkup(buildRentalSurface("maintenance", { viewFilter: "open" }));
     expect(markup).toContain("Open maintenance requests");
   });
 
@@ -188,7 +205,7 @@ describe("buildRentalSurface view-filter plumbing", () => {
     await fetchWithDedupe("rental:maintenance", () => Promise.resolve({
       maintenanceRequests: [], contractors: [], workOrders: [], workEvents: [],
     }));
-    const markup = renderClientMarkup(buildRentalSurface("maintenance", {}));
+    const markup = await renderSurfaceMarkup(buildRentalSurface("maintenance", {}));
     expect(markup).not.toContain("data-view-filter-banner");
   });
 });
@@ -216,7 +233,7 @@ describe("RentalPageClient exception deep-linking", () => {
       workOrders: [],
     };
     vi.stubGlobal("fetch", async (url) => {
-      if (url === "/api/rental") return { ok: true, json: async () => rentalBody };
+      if (url === "/api/rental?surface=summary") return { ok: true, json: async () => rentalBody };
       if (url === "/api/rental/reports") {
         return { ok: true, json: async () => ({ report: { summary: { overdueBalanceCents: 0, openBalanceCents: 0 } } }) };
       }
@@ -258,7 +275,7 @@ describe("RentalPageClient exception deep-linking", () => {
       workOrders: [],
     };
     vi.stubGlobal("fetch", async (url) => {
-      if (url === "/api/rental") return { ok: true, json: async () => rentalBody };
+      if (url === "/api/rental?surface=summary") return { ok: true, json: async () => rentalBody };
       if (url === "/api/rental/reports") {
         return { ok: true, json: async () => ({ report: { summary: { overdueBalanceCents: 0, openBalanceCents: 0 } } }) };
       }
