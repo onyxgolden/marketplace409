@@ -1267,6 +1267,7 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               dispatch={dispatch}
               zoomRequest={zoomRequest}
               autoFitKey={autoFitKey}
+              labelSourceProjectId={projectId}
               onPlanCenterChange={reportPlanCenter}
               onFloorCenterChange={reportFloorCenter}
               onFileImport={onCanvasFileImport}

@@ -57,6 +57,7 @@ export default function DesignerCanvasArea({
   dispatch,
   zoomRequest,
   autoFitKey = null,
+  labelSourceProjectId = null,
   onPlanCenterChange = null,
   onFloorCenterChange = null,
   onFileImport = null,
@@ -269,6 +270,7 @@ export default function DesignerCanvasArea({
           dispatch={dispatch}
           zoomRequest={zoomRequest}
           autoFitKey={autoFitKey}
+          labelSourceProjectId={labelSourceProjectId}
           onViewCenterChange={onPlanCenterChange}
         />
       </div>

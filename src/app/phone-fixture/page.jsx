@@ -198,6 +198,7 @@ function FccuCase() {
           selection={selection}
           dispatch={dispatch}
           autoFitKey="fccu-fixture:level_1"
+          labelSourceProjectId={loaded.sourceProjectId}
         />
         {detail && (
           <div data-testid="fccu-selection-detail" className="pointer-events-none absolute bottom-2 left-2 right-2 rounded bg-slate-900/90 px-3 py-2 text-sm text-slate-100">
