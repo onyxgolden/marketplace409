@@ -203,6 +203,27 @@ describe("GET /api/rental surface projections", () => {
     ].sort());
     // Guard 2 (columns): no select("*") in any Slice-1 path.
     expect(selectStrings().every((select) => !String(select).includes("*"))).toBe(true);
+    // Guard 6 (columns): every column the Summary builder reads must be in the
+    // projection -- dropping one (e.g. payments.amount_cents) changes a
+    // displayed figure against the golden ledger. Exact strings, not subsets.
+    const selectsByTable = {};
+    for (const call of calls) selectsByTable[call.table] = call.select;
+    expect(selectsByTable).toEqual({
+      rental_units: "id, property_id, label, photo_bucket, photo_object_path",
+      rental_leases: "id, unit_id, status, end_date",
+      rental_payments: "id, status, succeeded_at, received_at, created_at, amount_cents, refunded_amount_cents, deposit_state",
+      rental_settlements: "payment_id, status",
+      rental_maintenance_requests: "id, title, priority, status, submitted_at, unit_id",
+      rental_maintenance_work_orders: "id, status, created_at",
+      renters_insurance_policies: "lease_id, status",
+      rental_security_deposits: "lease_id",
+      rental_inspections: "lease_id, inspection_type, status",
+      rental_support_cases: "id, status",
+      rent_schedules: "collection_mode",
+      rental_billing_settings: "billing_enabled",
+      property_financial_setups: "property_id, purchase_date, purchase_price_cents, down_payment_cents, closing_costs_cents",
+      financial_events: "event_date, amount, transaction_kind, source_system, status, is_deleted, business_scope, property_id, normalized_category, affects_noi, capitalized",
+    });
     // Work orders arrive in the builder's fallback shape.
     expect(body.workOrders).toEqual([{ id: "wo_1", title: null, priority: null, status: "in_progress", submitted_at: null, unit_id: null }]);
     // Only the portfolio-strip/vacant union gets a signed photo URL.
@@ -226,6 +247,14 @@ describe("GET /api/rental surface projections", () => {
       "rent_charges", "rental_leases", "rental_lease_tenants", "rental_tenants", "rental_units",
     ].sort());
     expect(selectStrings().every((select) => !String(select).includes("*"))).toBe(true);
+    // Guard 6 (columns): the list rows must carry exactly the 7 compact
+    // columns -- dropping display_name breaks identity and order.
+    const selectsByTable = {};
+    for (const call of calls) selectsByTable[call.table] = call.select;
+    expect(selectsByTable.rental_tenants).toBe("id, display_name, email, invited_at, auth_user_id, photo_bucket, photo_object_path");
+    expect(selectsByTable.rental_leases).toBe("id, unit_id, status");
+    expect(selectsByTable.rental_units).toBe("id, label");
+    expect(selectsByTable.rent_charges).toBe("id, lease_id, amount_cents, paid_amount_cents");
     // Compact rows: no profile fields leak into the list payload.
     expect(Object.keys(body.tenants[0]).sort()).toEqual([
       "auth_user_id", "display_name", "email", "id", "invited_at",
@@ -249,6 +278,16 @@ describe("GET /api/rental surface projections", () => {
       "rental_leases", "rental_lease_tenants", "rental_tenants", "rental_units",
     ].sort());
     expect(selectStrings().every((select) => !String(select).includes("*"))).toBe(true);
+    // Guard 6 (columns): the record page renders the full profile form, so the
+    // tenant rows must carry all 24 columns -- dropping one empties a profile
+    // field against the golden ledger.
+    const selectsByTable = {};
+    for (const call of calls) selectsByTable[call.table] = call.select;
+    expect(selectsByTable.rental_tenants).toBe("id, display_name, email, phone, work_phone, employer_name, employer_phone, monthly_income_cents, emergency_contact_name, emergency_contact_phone, application_status, application_submitted_at, screening_provider, screening_reference, screening_status, screening_completed_at, ssn_last_four, landlord_notes, status, invited_at, auth_user_id, payment_policy, photo_bucket, photo_object_path");
+    expect(selectsByTable.rental_leases).toBe("id, unit_id, property_id, status, start_date, end_date, monthly_rent_cents");
+    expect(selectsByTable.rent_charges).toBe("id, lease_id, amount_cents, paid_amount_cents");
+    expect(selectsByTable.rental_late_fee_tenant_overrides).toBe("tenant_id, exempt, grace_days, calculation_type, fixed_amount_cents, percentage_basis_points, maximum_amount_cents, updated_at");
+    expect(selectsByTable.rental_billing_settings).toBe("payment_policy");
 
     const missing = await get("/api/rental?surface=tenant-detail&tenantId=tenant_99");
     expect(missing.status).toBe(404);
