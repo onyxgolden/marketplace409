@@ -2,7 +2,7 @@
 //
 // Usage:
 //   node scripts/phone-layout-geometry-check.mjs --tag before|after [--port 3100]
-//     [--widths 360,390,412,430,768,1919] [--cases designer,fccu,room-designs,work-header,app-header,forge-header,rental-23,projects-list]
+//     [--widths 360,390,400,412,430,768,1919] [--cases designer,fccu,room-designs,work-header,app-header,forge-header,rental-23,projects-list]
 //     [--out <evidence-dir>] [--keep-server]
 //
 // Spawns the Next dev server for THIS checkout (unless --keep-server, which
@@ -152,7 +152,7 @@ const outArg = argVal("--out", undefined);
 const keepServer = args.includes("--keep-server");
 const BASE = `http://localhost:${port}/phone-fixture`;
 
-const WIDTHS = widthsArg ? widthsArg.split(",").map(Number) : [360, 390, 412, 430, 768, 1919];
+const WIDTHS = widthsArg ? widthsArg.split(",").map(Number) : [360, 390, 400, 412, 430, 768, 1919];
 const CASES = casesArg ? casesArg.split(",") : ["designer", "fccu", "room-designs", "work-header", "app-header", "forge-header", "rental-23", "projects-list"];
 
 // Evidence goes under the repo by default (git-ignored), or wherever
@@ -179,6 +179,14 @@ try {
 if (!FCCU_MANIFEST.levelDesignSha256 || !FCCU_MANIFEST.counts || FCCU_MANIFEST.sourceProjectId !== "design_mwjvt635_lmexii") {
   throw new Error(`phone-layout-geometry-check: FCCU manifest at ${FCCU_MANIFEST_PATH} has unexpected shape (want levelDesignSha256, counts, sourceProjectId design_mwjvt635_lmexii)`);
 }
+
+// Tier lists for the label-layout engine (brief §2 — mirror of
+// src/domains/roomDesigner/fccuLabelTierOverrides.js). Checked by
+// TEXT, not by data-tier, so the same assertions fail on the old
+// overview rendering (which carries no tier attribute) as on the
+// engine: the fail-before run must trip them on the unmodified base.
+const FCCU_TIER_1 = ["R-101", "R-102", "T-101", "T-102", "E-101", "E-102", "E-103", "E-104", "K-101", "K-102", "V-101", "V-102", "P-101", "FL-101"];
+const FCCU_TIER_2 = ["P-102", "P-103", "P-104", "P-105", "P-106", "PR-101", "SL-101"];
 
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -516,6 +524,7 @@ async function measureFccu(page) {
       errorText: null,
       sha: root ? root.getAttribute("data-fccu-sha") : null,
       counts: null,
+      engineActive: !!document.querySelector('[data-testid="label-engine-controls"]'),
       paneRect: paneRect ? { left: Math.round(paneRect.left), top: Math.round(paneRect.top), width: Math.round(paneRect.width), height: Math.round(paneRect.height) } : null,
       scale: null,
       texts: [],
@@ -577,6 +586,8 @@ async function measureFccu(page) {
         text: text.slice(0, 60),
         kind,
         symbolId: t.getAttribute("data-symbol-id") || null,
+        tier: t.getAttribute("data-tier") || null,
+        fontSize: t.getAttribute("font-size") || null,
         rect: { left: Math.round(Math.min(...xs)), top: Math.round(Math.min(...ys)), right: Math.round(Math.max(...xs)), bottom: Math.round(Math.max(...ys)) },
       };
       out.texts.push(entry);
@@ -708,28 +719,107 @@ async function measureFccuSelection(page) {
   return result;
 }
 
-// Zoom the FCCU plot from its whole-plot fit to just past the tag-gate
-// transition (scale >= 0.12) and re-measure: the overview tags must hand
-// off to the in-glyph tags with no new eligible collisions and no
-// flicker (the same tag set measured twice must be identical).
-async function measureFccuZoom(page) {
+// Whole-plot-fit assertions for the label engine (brief §7). Checked
+// by TEXT against the tier lists so they fail on the old overview
+// rendering too (fail-before). Gated on engineActive: at 1919 the
+// engine is off and the desktop in-glyph inventory is the baseline.
+function assertFccuEngineFit(f, width, fail, warn, label) {
+  if (!f.engineActive) return;
+  const eqTags = f.texts.filter((t) => t.kind === "equipment-tag");
+  const tier1Shown = FCCU_TIER_1.filter((tag) => eqTags.some((t) => t.text === tag));
+  const tier1Withheld = FCCU_TIER_1.length - tier1Shown.length;
+  // Brief §7 binds the ≤4-withheld rule at 390/400; other phone
+  // widths are reported as warnings so a denser 360px fit does not
+  // fail the run on a width the brief does not bind.
+  if (width === 390 || width === 400) {
+    if (tier1Withheld > 4) fail(`${label}: ${tier1Withheld} Tier 1 labels withheld at fit (max 4): ${JSON.stringify(FCCU_TIER_1.filter((tag) => !eqTags.some((t) => t.text === tag)))}`);
+  } else if (tier1Withheld > 4) {
+    warn(`${label}: ${tier1Withheld} Tier 1 labels withheld at fit at ${width}px (brief binds ≤4 at 390/400 only)`);
+  }
+  const tier2Shown = eqTags.filter((t) => FCCU_TIER_2.includes(t.text)).map((t) => t.text);
+  if (tier2Shown.length) fail(`${label}: Tier 2 tags render at fit (Tier 1 only below 1.5x): ${JSON.stringify(tier2Shown)}`);
+  for (const kind of ["pipe-label", "annotation", "room-label", "room-area", "symbol-caption"]) {
+    if ((f.countsByKind[kind] || 0) > 0) fail(`${label}: Tier 3 ${kind} renders at fit (${f.countsByKind[kind]} shown)`);
+  }
+  const small = eqTags.filter((t) => t.fontSize !== null && Number(t.fontSize) < 12).map((t) => `${t.text}@${t.fontSize}px`);
+  if (small.length) fail(`${label}: equipment tags below the 12px Tier 1 minimum at fit: ${JSON.stringify(small)}`);
+  // Only ROUTINE-rendered in-glyph tags count here: the engine itself
+  // renders piping tags as symbol-tag (with data-tier) at Tier 3, so
+  // a bare kind count would false-positive at 2.5x. Routine tags carry
+  // no data-tier attribute.
+  const routineSymbolTags = f.texts.filter((t) => t.kind === "symbol-tag" && !t.tier).length;
+  if (routineSymbolTags > 0) fail(`${label}: in-glyph symbol-tags still render at fit — the engine owns every equipment tag (got ${routineSymbolTags})`);
+}
+
+// Zoom states for the label-layout engine (brief §7): from whole-plot
+// fit, wheel-zoom to the 1.5x reveal (Tier 2 in, Tier 3 out), the 2.5x
+// reveal (pipe dimensions in), an ~8x exchanger close-up, then pan and
+// re-measure, then return to fit. Targets are RELATIVE to the measured
+// fit scale (each wheel step is 1.12x, so 1.5x lands at ~1.57x, 2.5x at
+// ~2.77x, 8x at ~8.6x). The close-up is centred on the pane centre,
+// which is the plot centre — where the E-101..E-104 cluster sits.
+async function measureFccuZoomStates(page, fitScale) {
   const paneBox = await page.evaluate(() => {
     const r = document.querySelector('[data-testid="designer-pane"]').getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, left: r.left, top: r.top, width: r.width, height: r.height };
   });
-  let scale = null;
-  for (let step = 0; step < 14; step += 1) {
-    await page.mouse.move(paneBox.x, paneBox.y);
-    await page.mouse.wheel(0, -240);
-    await page.waitForTimeout(350);
-    const m = await measureFccu(page);
-    scale = m.scale;
-    if (scale && scale >= 0.12) break;
-  }
-  const first = await measureFccu(page);
+  const zOf = (m) => (fitScale && m.scale ? +(m.scale / fitScale).toFixed(2) : null);
+  const wheelTo = async (targetZ, maxSteps = 24) => {
+    let m = await measureFccu(page);
+    for (let step = 0; step < maxSteps; step += 1) {
+      if (m.scale && fitScale && m.scale / fitScale >= targetZ) return m;
+      await page.mouse.move(paneBox.x, paneBox.y);
+      await page.mouse.wheel(0, -240);
+      await page.waitForTimeout(350);
+      m = await measureFccu(page);
+    }
+    return m;
+  };
+  const stableCheck = async (m) => {
+    await page.waitForTimeout(400);
+    const again = await measureFccu(page);
+    return {
+      stable: JSON.stringify(m.eligible.map((t) => t.text).sort()) === JSON.stringify(again.eligible.map((t) => t.text).sort()),
+      second: again,
+    };
+  };
+  const states = {};
+  const reveal15 = await wheelTo(1.5);
+  states.reveal15 = { ...reveal15, z: zOf(reveal15), ...(await stableCheck(reveal15)) };
+  const reveal25 = await wheelTo(2.5);
+  states.reveal25 = { ...reveal25, z: zOf(reveal25), ...(await stableCheck(reveal25)) };
+  const closeup = await wheelTo(8);
+  states.closeup = { ...closeup, z: zOf(closeup), ...(await stableCheck(closeup)) };
+  // Pan then re-measure: drag from a pane corner and confirm the view
+  // actually moved (a label rect shifts) before re-measuring. A
+  // left-button drag with the select tool does NOT pan (PlanCanvas only
+  // starts a pan drag on middle button / pan tool / spacebar), so the
+  // guard drags with the middle button — the pan gesture itself.
+  const beforePan = await measureFccu(page);
+  const beforeRect = beforePan.eligible[0] ? beforePan.eligible[0].rect : null;
+  await page.mouse.move(paneBox.left + 24, paneBox.top + 24);
+  await page.mouse.down({ button: "middle" });
+  await page.mouse.move(paneBox.left + 104, paneBox.top + 64, { steps: 6 });
+  await page.mouse.up({ button: "middle" });
   await page.waitForTimeout(400);
-  const second = await measureFccu(page);
-  return { scale, first, second, stable: JSON.stringify(first.eligible.map((t) => t.text).sort()) === JSON.stringify(second.eligible.map((t) => t.text).sort()) };
+  const afterPan = await measureFccu(page);
+  const afterRect = afterPan.eligible[0] ? afterPan.eligible[0].rect : null;
+  states.pan = {
+    ...afterPan,
+    moved: !!(beforeRect && afterRect && (Math.abs(beforeRect.left - afterRect.left) > 2 || Math.abs(beforeRect.top - afterRect.top) > 2)),
+    ...(await stableCheck(afterPan)),
+  };
+  // Return to fit: reload and let the open-time auto-fit settle.
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.waitForSelector('[data-fixture-ready="true"]', { timeout: 60000 });
+  await page.waitForFunction(() => {
+    const el = document.querySelector("[data-fccu-state]");
+    return el && (el.getAttribute("data-fccu-state") === "ready" || el.getAttribute("data-fccu-state") === "error");
+  }, { timeout: 60000 });
+  await page.waitForTimeout(800);
+  const backToFit = await measureFccu(page);
+  states.returnToFit = { ...backToFit, z: zOf(backToFit) };
+  return states;
 }
 
 // --- Room designs case (Phone Slice 5 follow-up) ---
@@ -892,9 +982,11 @@ async function main() {
             // identity there is the in-glyph tags, proven by the desktop
             // differential below — so the taps run at phone widths only.
             if (width !== 1919) check.fccuSelection = await measureFccuSelection(page);
-            // Second scale near the tag-gate transition (phone widths
-            // only; the 1919 desktop check is the fit-state differential).
-            if (width !== 1919) check.fccuZoom = await measureFccuZoom(page);
+            // Zoom states (brief §7): 1.5x / 2.5x reveals, the ~8x
+            // exchanger close-up, pan + remeasure, return to fit —
+            // phone widths only; the 1919 desktop check is the
+            // fit-state differential.
+            if (width !== 1919) check.fccuZoomStates = await measureFccuZoomStates(page, check.fccu.scale);
           }
         } else if (c === "room-designs") {
           check.roomDesigns = await measureRoomDesigns(page);
@@ -991,6 +1083,9 @@ async function main() {
           const inGlyphCount = f.countsByKind["symbol-tag"] || 0;
           if (width !== 1919 && tagCount === 0 && inGlyphCount === 0) fail("no equipment tags render at whole-plot fit (empty label set is not a pass)");
           if (width === 1919 && inGlyphCount === 0) fail("no in-glyph equipment tags render at 1919 (desktop label inventory changed?)");
+          // Engine fit rules (brief §7): Tier 1 coverage, Tier 2/3
+          // absent at fit, ≥12px tags, engine owns every equipment tag.
+          assertFccuEngineFit(f, width, fail, (m) => results.warnings.push(m), "FCCU fit");
           check.fccuHidden = {
             equipmentTags: { rendered: tagCount + inGlyphCount, total: f.counts ? f.counts.equipment : null },
             pipeLabels: { rendered: f.countsByKind["pipe-label"] || 0, total: f.counts ? f.counts.pipes : null },
@@ -1022,22 +1117,53 @@ async function main() {
               if (!s.disclosures.flare || !s.disclosures.flare.includes("FL-101")) fail(`tap noncrowded equipment did not reveal FL-101: ${JSON.stringify(s.disclosures.flare)}`);
             }
           }
-          // Second scale: overview tags hand off to in-glyph tags, no
-          // new eligible collisions, and the tag set is stable.
-          if (check.fccuZoom) {
-            const z = check.fccuZoom;
-            if (!z.scale || z.scale < 0.12) fail(`FCCU zoom did not reach the transition scale (got ${z.scale})`);
-            if (z.first) {
-              if ((z.first.countsByKind["equipment-tag"] || 0) !== 0) fail(`overview tags still render at zoomed scale ${z.scale} (handoff failed)`);
-              if ((z.first.countsByKind["symbol-tag"] || 0) === 0) fail(`no in-glyph tags render at zoomed scale ${z.scale}`);
-              if (z.first.intersections.length) fail(`zoomed eligible label intersections: ${JSON.stringify(z.first.intersections)}`);
-              // No outside-pane check at zoom: a zoomed view is a window
-              // into a larger plan, so labels legitimately fall outside
-              // the visible pane (the user pans to them). Containment is
-              // a whole-plot-fit rule only (checked above).
-              if (z.first.unclassified.length) fail(`zoomed unclassified SVG texts: ${JSON.stringify(z.first.unclassified.slice(0, 10))}`);
+          // Zoom states (brief §7): the engine owns equipment tags at
+          // every zoom, Tier 2 appears at 1.5–2.5x, pipe dimensions at
+          // ≥2.5x, Tier 3 at the ~8x close-up, pan + return-to-fit
+          // re-measure clean. No outside-pane check at zoom: a zoomed
+          // view is a window into a larger plan, so labels legitimately
+          // fall outside the visible pane (the user pans to them).
+          // Containment is a whole-plot-fit rule only (checked above).
+          if (check.fccuZoomStates) {
+            const zs = check.fccuZoomStates;
+            const zoomStateVerdict = (state, name, extra) => {
+              if (!state) { fail(`FCCU zoom state ${name} missing`); return; }
+              // As at fit: only routine-rendered symbol-tags (no
+              // data-tier) count — the engine's own Tier 3 piping tags
+              // are symbol-tag with data-tier="3".
+              const routineSymbolTags = state.texts.filter((t) => t.kind === "symbol-tag" && !t.tier).length;
+              if (routineSymbolTags !== 0) fail(`FCCU ${name}: in-glyph symbol-tags render at zoom (engine owns equipment tags, got ${routineSymbolTags})`);
+              if ((state.countsByKind["equipment-tag"] || 0) === 0) fail(`FCCU ${name}: no equipment tags render at zoom`);
+              if (state.intersections.length) fail(`FCCU ${name}: eligible label intersections: ${JSON.stringify(state.intersections)}`);
+              if (state.unclassified.length) fail(`FCCU ${name}: unclassified SVG texts: ${JSON.stringify(state.unclassified.slice(0, 10))}`);
+              if (!state.stable) fail(`FCCU ${name}: eligible tag set is not stable across re-measurement (flicker)`);
+              if (extra) extra(state);
+            };
+            zoomStateVerdict(zs.reveal15, "1.5x reveal", (s) => {
+              if (s.z === null || s.z < 1.5 || s.z >= 2.5) fail(`FCCU 1.5x reveal: relative zoom ${s.z} is outside the 1.5–2.5 band`);
+              const tier2 = s.texts.filter((t) => t.kind === "equipment-tag" && FCCU_TIER_2.includes(t.text)).map((t) => t.text);
+              if (!tier2.length) fail("FCCU 1.5x reveal: no Tier 2 tag renders (Tier 2 must appear at 1.5–2.5x)");
+              if ((s.countsByKind["pipe-label"] || 0) > 0) fail(`FCCU 1.5x reveal: pipe dimensions render below 2.5x (${s.countsByKind["pipe-label"]})`);
+              if ((s.countsByKind.annotation || 0) > 0) fail(`FCCU 1.5x reveal: annotations render below 2.5x (${s.countsByKind.annotation})`);
+            });
+            zoomStateVerdict(zs.reveal25, "2.5x reveal", (s) => {
+              if (s.z === null || s.z < 2.5) fail(`FCCU 2.5x reveal: relative zoom ${s.z} is below 2.5`);
+              if ((s.countsByKind["pipe-label"] || 0) === 0) fail("FCCU 2.5x reveal: no pipe dimensions render (Tier 3 must appear at ≥2.5x)");
+            });
+            zoomStateVerdict(zs.closeup, "exchanger close-up", (s) => {
+              if (s.z === null || s.z < 8) fail(`FCCU exchanger close-up: relative zoom ${s.z} is below 8`);
+              const tier3 = (s.countsByKind["pipe-label"] || 0) + (s.countsByKind.annotation || 0) + (s.countsByKind["room-label"] || 0);
+              if (!tier3) fail("FCCU exchanger close-up: no Tier 3 label renders at ~8x");
+            });
+            zoomStateVerdict(zs.pan, "pan", (s) => {
+              if (!s.moved) fail("FCCU pan: the drag did not move the view (pan gesture not working?)");
+            });
+            if (zs.returnToFit) {
+              assertFccuEngineFit(zs.returnToFit, width, fail, (m) => results.warnings.push(m), "FCCU return-to-fit");
+              if (zs.returnToFit.intersections.length) fail(`FCCU return-to-fit: eligible label intersections: ${JSON.stringify(zs.returnToFit.intersections)}`);
+              if (zs.returnToFit.outsidePane.length) fail(`FCCU return-to-fit: eligible labels outside pane: ${JSON.stringify(zs.returnToFit.outsidePane)}`);
+              if (zs.returnToFit.z !== null && zs.returnToFit.z > 1.1) fail(`FCCU return-to-fit: scale did not return to fit (z=${zs.returnToFit.z})`);
             }
-            if (!z.stable) fail("zoomed eligible tag set is not stable across re-measurement (flicker)");
           }
         }
         if (c === "room-designs" && check.roomDesigns) {

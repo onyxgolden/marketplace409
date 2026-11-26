@@ -29,6 +29,8 @@ import {
   fitViewToBounds,
   phoneLabelScreenRectForAnchor,
   phoneOverviewTagCandidates,
+  phonePolicySuppressesIndustrialText,
+  polygonArea,
   selectPhoneLabels,
   showPlanDetailLabels,
   showPlanTagLabels,
@@ -46,7 +48,15 @@ import {
 import { measureAreaSummary } from "@/domains/roomDesigner/measureArea";
 import { formatArea } from "@/domains/roomDesigner/homeQuantities";
 import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
-import { renderSymbol2D, drawOrgChart } from "./symbolDrawRoutines";
+import { renderSymbol2D, centroid, drawOrgChart } from "./symbolDrawRoutines";
+import {
+  TIER_FONT_PX,
+  createTextMeasurer,
+  layoutPlotPlanLabels,
+  maxTierForRelativeZoom,
+  tierForRelativeZoom,
+} from "@/domains/roomDesigner/plotPlanLabelLayout";
+import { tierForEquipmentTag } from "@/domains/roomDesigner/fccuLabelTierOverrides";
 import { effectiveColor, systemLegend } from "@/domains/roomDesigner/designSystems";
 import { nearestVisibleConnectionAnchor } from "@/domains/roomDesigner/temaInstances";
 import { connectionFlanges, segmentElevationsForDesign } from "@/domains/roomDesigner/pipeCrossings";
@@ -150,7 +160,7 @@ export function autoPanViewForPoint(point, size, view, margin = 16) {
   };
 }
 
-export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, dispatch, zoomRequest, autoFitKey = null, onViewCenterChange = null }) {
+export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, dispatch, zoomRequest, autoFitKey = null, onViewCenterChange = null, labelSourceProjectId = null }) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
   const [view, setView] = useState({ ...DEFAULT_VIEW });
@@ -1840,11 +1850,27 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // the routines coordinate with it instead of deciding independently.
   // Desktop is untouched: the policy is null unless the pane is
   // phone-width AND the scale is below the tag gate.
+  //
+  // The plot-plan label engine (below) takes precedence for industrial
+  // designs on a phone-width pane: it owns ALL industrial labels
+  // (equipment, piping, pipes, annotations, rooms) with ranked tiers
+  // and greedy deconfliction, so the overview's 12-tag kind-priority
+  // set never runs alongside it. Non-industrial designs keep the
+  // overview exactly as before.
+  const labelEngineActive =
+    design?.mode === "industrial" &&
+    canvasSize.w > 0 &&
+    canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX;
   const phoneOverviewActive =
+    !labelEngineActive &&
     !showPlanTagLabels(view.scale) &&
     canvasSize.w > 0 &&
     canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX;
-  const phoneLabelPolicy = phoneOverviewActive ? { mode: "phone-overview" } : undefined;
+  const phoneLabelPolicy = labelEngineActive
+    ? { mode: "label-engine" }
+    : phoneOverviewActive
+      ? { mode: "phone-overview" }
+      : undefined;
   const phoneOverviewTags = useMemo(() => {
     if (!phoneOverviewActive) return null;
     const equipment = (design.symbols || []).filter((s) => s.layer === "equipment" && s.tag);
@@ -1870,6 +1896,317 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       });
     return byPriority.slice(0, PHONE_OVERVIEW_TAG_MAX);
   }, [phoneOverviewActive, canvasSize, design, toScreen, selection, view.scale]);
+
+  // ---- Plot-plan label layout engine ----
+  // On a phone-width pane an industrial design's labels are owned by
+  // one deterministic, screen-space ranked greedy layout (see
+  // src/domains/roomDesigner/plotPlanLabelLayout.js): Tier 1 key
+  // equipment at fit, Tier 2 at 1.5x, Tier 3 details at 2.5x, ~5%
+  // hysteresis at the transitions. The collector below is the ONLY
+  // producer of engine candidates — never scraped from rendered SVG.
+  // The symbol routines render NO industrial text of their own while
+  // the engine is active (phoneLabelPolicy.mode === "label-engine");
+  // the engine overlay below renders the placed labels instead.
+  const textMeasurerRef = useRef(null);
+  if (textMeasurerRef.current === null) textMeasurerRef.current = createTextMeasurer();
+  const [labelMode, setLabelMode] = useState("all"); // "all" | "key" (session-only)
+  const [labelSearch, setLabelSearch] = useState("");
+  // The fit scale this pane's open-time auto-fit computes (same bounds,
+  // padding and maxScale as the auto-fit above): the tier thresholds
+  // are relative to it, so a resize re-derives them from the new fit.
+  const labelFitScale = useMemo(() => {
+    if (!labelEngineActive) return null;
+    const bounds = designStructuralBounds(design);
+    if (!bounds || !(canvasSize.w > 0) || !(canvasSize.h > 0)) return null;
+    return fitViewToBounds(bounds, canvasSize, { paddingPx: 24, maxScale: MAX_SCALE })?.scale ?? null;
+  }, [labelEngineActive, design, canvasSize]);
+  const labelRelativeZoom = labelFitScale && view.scale > 0 ? view.scale / labelFitScale : 1;
+  // Hysteresis-aware settled tier (render-time adjustment, same pattern
+  // as prevTool above): a new design/level re-initialises to Tier 1,
+  // then the tier moves only across the 5% bands, so a pinch settling
+  // near a threshold does not flicker tiers.
+  const [labelMaxTier, setLabelMaxTier] = useState(1);
+  const [labelTierKey, setLabelTierKey] = useState(null);
+  if (labelTierKey !== autoFitKey) {
+    setLabelTierKey(autoFitKey);
+    if (labelMaxTier !== 1) setLabelMaxTier(1);
+  } else if (labelEngineActive && labelFitScale) {
+    const nextTier = tierForRelativeZoom(labelRelativeZoom, labelMaxTier);
+    if (nextTier !== labelMaxTier) setLabelMaxTier(nextTier);
+  }
+  const labelEffectiveMaxTier = labelMode === "key" ? Math.min(labelMaxTier, 1) : labelMaxTier;
+  // One collector for every eligible industrial label. Candidate shape
+  // follows plotPlanLabelLayout.js; the stable id is kind + source id +
+  // role, never display text. Excluded, by design: ruler/HUD text,
+  // drag ghosts, selection hints and transient drafting overlays (none
+  // of those are industrial labels). Furniture/building/site/MEP text
+  // is not collected — those routines never check the policy and keep
+  // rendering their own labels (house plans are not industrial).
+  const labelCandidates = useMemo(() => {
+    if (!labelEngineActive) return [];
+    const list = [];
+    const glyphAnchor = (inst, symbol) => {
+      const c = toScreen({ x: inst.x, y: inst.y });
+      return {
+        x: c.x,
+        y: c.y,
+        halfW: (((inst.widthIn ?? symbol.widthIn ?? 24) * view.scale) / 2) || 0,
+        halfH: (((inst.depthIn ?? symbol.depthIn ?? 24) * view.scale) / 2) || 0,
+      };
+    };
+    for (const inst of design.symbols || []) {
+      if (!layerVisible(inst.layer)) continue;
+      const symbol = findSymbol(inst.domain, inst.symbolId) || {
+        id: inst.symbolId || "unknown",
+        label: inst.symbolId || "Unknown",
+        widthIn: 24,
+        depthIn: 24,
+      };
+      const anchor = glyphAnchor(inst, symbol);
+      const plan = { x: inst.x, y: inst.y };
+      if (inst.layer === "equipment" && inst.tag) {
+        const { tier, rank } = tierForEquipmentTag({ sourceProjectId: labelSourceProjectId, tag: inst.tag });
+        const fullLabel = `${inst.tag} — ${symbol.label || inst.symbolId}`;
+        list.push({
+          id: `equipment-tag:${inst.id}`,
+          kind: "equipment-tag",
+          tier,
+          rank,
+          tag: inst.tag,
+          fullLabel,
+          text: inst.tag,
+          fontSizePx: TIER_FONT_PX[tier] || 12,
+          fontWeight: 700,
+          anchor,
+          segment: null,
+          sourceId: inst.id,
+          sourceKind: "symbol",
+          source: { plan },
+        });
+        if (symbol.label && symbol.label !== inst.tag) {
+          list.push({
+            id: `symbol-caption:${inst.id}`,
+            kind: "symbol-caption",
+            tier: 3,
+            rank: 0,
+            tag: inst.tag,
+            fullLabel,
+            text: symbol.label,
+            fontSizePx: 12,
+            fontWeight: 400,
+            anchor,
+            segment: null,
+            sourceId: inst.id,
+            sourceKind: "symbol",
+            source: { plan },
+          });
+        }
+      } else if (inst.tag) {
+        // Piping symbol (valve, hydrant, reducer…): Tier 3 tag + caption.
+        const fullLabel = `${inst.tag} — ${symbol.label || inst.symbolId}`;
+        list.push({
+          id: `symbol-tag:${inst.id}`,
+          kind: "symbol-tag",
+          tier: 3,
+          rank: 0,
+          tag: inst.tag,
+          fullLabel,
+          text: inst.tag.slice(0, 12),
+          fontSizePx: 12,
+          fontWeight: 700,
+          anchor,
+          segment: null,
+          sourceId: inst.id,
+          sourceKind: "symbol",
+          source: { plan },
+        });
+        if (symbol.label && symbol.label !== inst.tag) {
+          list.push({
+            id: `symbol-caption:${inst.id}`,
+            kind: "symbol-caption",
+            tier: 3,
+            rank: 0,
+            tag: inst.tag,
+            fullLabel,
+            text: symbol.label,
+            fontSizePx: 12,
+            fontWeight: 400,
+            anchor,
+            segment: null,
+            sourceId: inst.id,
+            sourceKind: "symbol",
+            source: { plan },
+          });
+        }
+      }
+    }
+    for (const run of design.pipes || []) {
+      if (!layerVisible(run.layer)) continue;
+      const seg = longestPipeSegment(run.points);
+      if (!seg || seg.length < 1) continue;
+      const a = toScreen(seg.a);
+      const b = toScreen(seg.b);
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      let angle = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+      if (angle > 90) angle -= 180;
+      if (angle < -90) angle += 180;
+      const text = `${run.underground ? "UG · " : ""}${feetInchesLabel(seg.length)} ⌀${run.diameterIn}″`;
+      list.push({
+        id: `pipe-label:${run.id}`,
+        kind: "pipe-label",
+        tier: 3,
+        rank: 0,
+        tag: run.id,
+        fullLabel: `Pipe ${run.id} — ${run.service || "pipe"} · ⌀${run.diameterIn ?? "?"}″`,
+        text,
+        fontSizePx: 12,
+        fontWeight: 600,
+        anchor: { x: mid.x, y: mid.y, halfW: 0, halfH: 0 },
+        segment: { angleDeg: angle, lengthPx: Math.hypot(b.x - a.x, b.y - a.y) },
+        sourceId: run.id,
+        sourceKind: "pipe",
+        source: { plan: { x: (seg.a.x + seg.b.x) / 2, y: (seg.a.y + seg.b.y) / 2 } },
+      });
+    }
+    for (const a of design.annotations || []) {
+      if (!a || a.kind !== "label" || !Array.isArray(a.points) || a.points.length === 0) continue;
+      const p = toScreen(a.points[0]);
+      list.push({
+        id: `annotation:${a.id}`,
+        kind: "annotation",
+        tier: 3,
+        rank: 0,
+        tag: a.text || "",
+        fullLabel: a.text || a.id,
+        text: a.text || "",
+        fontSizePx: 13,
+        fontWeight: 400,
+        anchor: { x: p.x, y: p.y, halfW: 0, halfH: 0 },
+        segment: null,
+        sourceId: a.id,
+        sourceKind: "annotation",
+        source: { plan: a.points[0] },
+      });
+    }
+    for (const room of design.rooms || []) {
+      if (!room || !Array.isArray(room.polygon) || room.polygon.length < 3) continue;
+      const c = toScreen(centroid(room.polygon));
+      const area = polygonArea(room.polygon) / 144;
+      const plan = centroid(room.polygon);
+      list.push({
+        id: `room-label:${room.id}`,
+        kind: "room-label",
+        tier: 3,
+        rank: 0,
+        tag: room.label,
+        fullLabel: room.label,
+        text: room.label,
+        fontSizePx: 13,
+        fontWeight: 600,
+        anchor: { x: c.x, y: c.y, halfW: 0, halfH: 0 },
+        segment: null,
+        sourceId: room.id,
+        sourceKind: "room",
+        source: { plan },
+      });
+      list.push({
+        id: `room-area:${room.id}`,
+        kind: "room-area",
+        tier: 3,
+        rank: 0,
+        tag: room.label,
+        fullLabel: `${room.label} — ${area.toFixed(0)} sq ft`,
+        text: `${area.toFixed(0)} sq ft`,
+        fontSizePx: 12,
+        fontWeight: 400,
+        anchor: { x: c.x, y: c.y + 16, halfW: 0, halfH: 0 },
+        segment: null,
+        sourceId: room.id,
+        sourceKind: "room",
+        source: { plan },
+      });
+    }
+    return list;
+  }, [labelEngineActive, design, toScreen, view.scale, labelSourceProjectId, layerVisible]);
+  const labelLayout = useMemo(() => {
+    if (!labelEngineActive || labelCandidates.length === 0) return null;
+    return layoutPlotPlanLabels({
+      candidates: labelCandidates,
+      viewport: { left: 0, top: 0, right: canvasSize.w, bottom: canvasSize.h },
+      maxTier: labelEffectiveMaxTier,
+      measureTextWidth: textMeasurerRef.current.measure,
+    });
+  }, [labelEngineActive, labelCandidates, canvasSize, labelEffectiveMaxTier]);
+  // Every label the layout did not place, with the reason it was
+  // withheld — "collision" (eligible at this zoom, no legal spot) or
+  // "tier" (not eligible at this zoom). The disclosure lists exactly
+  // these, never a count of labels that merely do not exist; the two
+  // reasons are shown separately so a Tier 2 tag hidden by zoom is
+  // never confused with a Tier 1 tag hidden by collision.
+  const labelHidden = useMemo(() => {
+    if (!labelLayout) return [];
+    return [...labelLayout.withheld, ...labelLayout.tierHidden];
+  }, [labelLayout]);
+  const labelHiddenByCollision = useMemo(
+    () => labelHidden.filter((h) => h.reason === "collision"),
+    [labelHidden],
+  );
+  const labelHiddenByTier = useMemo(
+    () => labelHidden.filter((h) => h.reason === "tier"),
+    [labelHidden],
+  );
+  const labelHiddenFiltered = useMemo(() => {
+    const q = labelSearch.trim().toLowerCase();
+    if (!q) return labelHidden;
+    return labelHidden.filter((h) => `${h.fullLabel || ""} ${h.tag || ""}`.toLowerCase().includes(q));
+  }, [labelHidden, labelSearch]);
+  // Find (read-only): select the hidden label's source object and centre
+  // it at a scale that reveals its tier — fit for Tier 1, 1.6x fit for
+  // Tier 2, 2.6x fit for Tier 3 — clamped to [fitScale, MAX_SCALE].
+  // Marks user navigation so the open-time auto-fit never re-fits over
+  // it. No design mutation, no undo entry.
+  const findLabel = useCallback(
+    (candidate) => {
+      const plan = candidate?.source?.plan;
+      if (!plan || !labelFitScale) return;
+      const factor = candidate.tier === 3 ? 2.6 : candidate.tier === 2 ? 1.6 : 1.0;
+      const scale = Math.min(MAX_SCALE, Math.max(labelFitScale, labelFitScale * factor));
+      setView({
+        scale,
+        ox: canvasSize.w / 2 - plan.x * scale,
+        oy: canvasSize.h / 2 - plan.y * scale,
+      });
+      userNavRef.current = true;
+      if (candidate.sourceKind === "symbol" || candidate.sourceKind === "pipe" || candidate.sourceKind === "room") {
+        dispatch({ type: "SELECT", selection: { kind: candidate.sourceKind, id: candidate.sourceId } });
+      }
+    },
+    [labelFitScale, canvasSize, dispatch],
+  );
+  // Shared tap behaviour for engine and overview tags (same as the
+  // overview tags' inline handlers before this): the tag is the touch
+  // target — tapping selects its object (the halo is far larger than
+  // the 1-2px glyph underneath at fit scale). The handler stops
+  // propagation so the canvas hit-test underneath does not re-select
+  // whatever pipe the tag happens to sit over, and arms a touch pan
+  // starting on the tag. Read-only: selection only, no edits.
+  const bindLabelTagTap = useCallback(
+    (selection) => ({
+      onPointerDown: (e) => {
+        e.stopPropagation();
+        tagDragStart.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
+        dispatch({ type: "SELECT", selection });
+      },
+      onPointerMove: (e) => {
+        if (e.pointerType !== "touch" || drag) return;
+        const start = tagDragStart.current;
+        if (!start || start.pointerId !== e.pointerId) return;
+        if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 6) return;
+        setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
+      },
+    }),
+    [dispatch, drag, view.ox, view.oy],
+  );
 
   // Render the accepted overview tags above the glyphs: one short tag per
   // accepted equipment symbol, on a dark halo so it stays legible over the
@@ -1937,6 +2274,75 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             </text>
           </g>
         ))}
+      </g>
+    );
+  };
+
+  // Render the engine's placed labels above the glyphs. Each label is
+  // the text the layout computed, at the font size its tier requires
+  // (Tier 1 13px, Tier 2/3 12px — never smaller), with a narrow ~2px
+  // halo (paintOrder="stroke") so it stays legible over the dense
+  // cluster. data-label-kind classifies each text for the geometry
+  // guard, exactly like the routines' own labels did; data-tier records
+  // the tier that placed it. A label placed below its glyph carries a
+  // thin leader back to a small dot on the glyph's edge (at most four
+  // leaders per viewport — the layout enforces the cap). Rotated pipe
+  // labels carry their angle as an SVG rotate about the text anchor.
+  // Tap behaviour is bindLabelTagTap above (same as the overview tags);
+  // annotations are not selectable, so they carry no handlers.
+  const renderLabelEngineTags = () => {
+    if (!labelLayout || labelLayout.placed.length === 0) return null;
+    return (
+      <g key="label-engine-tags" data-label-engine-tags>
+        {labelLayout.placed.map((p) => {
+          const selectable =
+            p.sourceKind === "symbol" || p.sourceKind === "pipe" || p.sourceKind === "room";
+          const tap = selectable
+            ? bindLabelTagTap({ kind: p.sourceKind, id: p.sourceId })
+            : {};
+          return (
+            <g key={p.id} style={selectable ? { cursor: "pointer" } : undefined} {...tap}>
+              {p.leader && (
+                <g pointerEvents="none">
+                  <line
+                    x1={p.leader.x1}
+                    y1={p.leader.y1}
+                    x2={p.leader.x2}
+                    y2={p.leader.y2}
+                    stroke="#e2e8f0"
+                    strokeWidth={1}
+                  />
+                  <circle cx={p.leader.dotX} cy={p.leader.dotY} r={1.5} fill="#e2e8f0" />
+                </g>
+              )}
+              <text
+                x={p.textX}
+                y={p.textY}
+                textAnchor="middle"
+                fontSize={p.fontSizePx}
+                fontWeight={p.fontWeight}
+                fill={p.kind === "equipment-tag" ? "#fde68a" : p.kind === "annotation" ? "#94a3b8" : "#e0f2fe"}
+                stroke="#0f172a"
+                strokeWidth={2}
+                paintOrder="stroke"
+                strokeLinejoin="round"
+                data-label-kind={p.kind}
+                data-tier={p.tier}
+                data-symbol-id={p.sourceKind === "symbol" ? p.sourceId : undefined}
+                data-run-id={p.sourceKind === "pipe" ? p.sourceId : undefined}
+                data-room-id={p.sourceKind === "room" ? p.sourceId : undefined}
+                data-annotation-id={p.sourceKind === "annotation" ? p.sourceId : undefined}
+                transform={
+                  p.position === "rotated" && Number.isFinite(p.angleDeg)
+                    ? `rotate(${p.angleDeg.toFixed(1)} ${p.textX} ${p.textY})`
+                    : undefined
+                }
+              >
+                {p.text}
+              </text>
+            </g>
+          );
+        })}
       </g>
     );
   };
@@ -2263,8 +2669,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           );
         })}
         {/* Pipe dimension label — a detail label, hidden at fit-to-view
-            scales, where dozens of them stack into an unreadable pile. */}
-        {showDetailLabels && label}
+            scales, where dozens of them stack into an unreadable pile.
+            While a phone label policy owns industrial text, the policy's
+            overlay renders it deconflicted instead. */}
+        {showDetailLabels && !phonePolicySuppressesIndustrialText(phoneLabelPolicy) && label}
         {isSelected &&
           (run.points || []).map((v, i) => {
             const s = toScreen(v);
@@ -2346,7 +2754,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             const p = pts[0];
             // VSDX annotation label — a detail label, hidden at
             // fit-to-view scales; the annotation path itself still draws.
-            return showDetailLabels ? (
+            // While a phone label policy owns industrial text, the
+            // policy's overlay renders it deconflicted instead.
+            return showDetailLabels && !phonePolicySuppressesIndustrialText(phoneLabelPolicy) ? (
               <text key={a.id} x={p.x} y={p.y} fontSize={13} fill="#94a3b8" textAnchor="middle" data-label-kind="annotation" data-annotation-id={a.id}>
                 {a.text || ""}
               </text>
@@ -2855,6 +3265,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {(design.orgCharts || []).map(renderOrgChart)}
         {(design.sheets || []).map(renderSheet)}
         {renderPhoneOverviewTags()}
+        {renderLabelEngineTags()}
         {renderPipePreview()}
         {renderGhost()}
         {renderResizeHandles()}
@@ -2961,6 +3372,75 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {renderCrosshair()}
       </svg>
       <SystemsLegend design={design} narrow={canvasSize.w > 0 && canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX} />
+      {labelEngineActive && labelLayout && (
+        <div
+          className="pointer-events-none absolute right-3 top-3 z-10 flex flex-col items-end gap-2"
+          data-testid="label-engine-controls"
+        >
+          <div className="pointer-events-auto flex items-center gap-1 rounded bg-gray-900/85 px-2 py-1 text-xs text-gray-300">
+            <span className="font-semibold">Labels:</span>
+            <button
+              onClick={() => setLabelMode("all")}
+              aria-pressed={labelMode === "all"}
+              title="Show all label tiers allowed at this zoom"
+              className={`rounded px-2 py-0.5 font-semibold ${
+                labelMode === "all" ? "bg-emerald-600 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+              }`}
+            >
+              All
+            </button>
+            <button
+              onClick={() => setLabelMode("key")}
+              aria-pressed={labelMode === "key"}
+              title="Show key (Tier 1) labels only"
+              className={`rounded px-2 py-0.5 font-semibold ${
+                labelMode === "key" ? "bg-emerald-600 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+              }`}
+            >
+              Key only
+            </button>
+          </div>
+          {labelHidden.length > 0 && (
+            <details className="pointer-events-auto w-64 rounded bg-gray-900/90 px-3 py-2 text-xs text-gray-200 shadow">
+              <summary className="cursor-pointer font-semibold">
+                Hidden labels ({labelHidden.length})
+              </summary>
+              <p className="mt-1 text-gray-400">
+                {labelHiddenByCollision.length} hidden by collision · {labelHiddenByTier.length} hidden by zoom tier
+              </p>
+              <input
+                value={labelSearch}
+                onChange={(e) => setLabelSearch(e.target.value)}
+                placeholder="Search hidden labels"
+                aria-label="Search hidden labels"
+                className="mt-2 w-full rounded bg-gray-800 px-2 py-1 text-xs text-gray-100 placeholder:text-gray-500"
+              />
+              <ul className="mt-2 max-h-80 space-y-1 overflow-y-auto">
+                {labelHiddenFiltered.map((h) => (
+                  <li key={h.id} className="flex items-center gap-2">
+                    <button
+                      onClick={() => findLabel(h)}
+                      title={`Find ${h.fullLabel || h.tag} on the plan`}
+                      className="shrink-0 rounded bg-gray-700 px-2 py-0.5 font-semibold text-gray-200 hover:bg-gray-600"
+                    >
+                      Find
+                    </button>
+                    <span className="min-w-0 flex-1 truncate" title={h.fullLabel || h.tag}>
+                      {h.fullLabel || h.tag}
+                    </span>
+                    <span className="shrink-0 text-gray-500">
+                      {h.reason === "tier" ? "zoom" : "collision"}
+                    </span>
+                  </li>
+                ))}
+                {labelHiddenFiltered.length === 0 && (
+                  <li className="text-gray-500">No hidden labels match “{labelSearch}”.</li>
+                )}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
       {isEmpty && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="max-w-md rounded-lg bg-gray-900/90 p-6 text-center shadow-xl">

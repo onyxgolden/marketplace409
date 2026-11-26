@@ -314,6 +314,22 @@ export const PHONE_LABEL_COLLISION_PAD_PX = 4;
 export const PHONE_LABEL_VIEWPORT_INSET_PX = 2;
 
 /**
+ * Whether a phone label policy owns the industrial text on this pane, so
+ * the symbol routines must NOT render their own in-glyph tags, captions,
+ * room labels, or pipe dimensions — the policy's own overlay renders
+ * those labels, deconflicted. The modes that own industrial text are
+ * listed here, in exactly one place: "phone-overview" (the Slice 5
+ * whole-plot overview tags) and "label-engine" (the plot-plan label
+ * layout engine). Any other policy value — including a policy object
+ * that does not own labels — renders the routines' own text as before.
+ * A null/undefined policy never suppresses.
+ */
+export function phonePolicySuppressesIndustrialText(phoneLabelPolicy) {
+  const mode = phoneLabelPolicy?.mode;
+  return mode === "phone-overview" || mode === "label-engine";
+}
+
+/**
  * Deterministic width estimate (px) for a canvas label string at a font
  * size. Deliberately conservative: measured Chromium widths run ~0.45-0.5
  * em per character for the 12-13px semibold sans used here, and the

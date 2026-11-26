@@ -14,7 +14,7 @@
 import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 import { pieceSize } from "@/domains/roomDesigner/designerDocument";
 import { cabinetCode } from "@/domains/roomDesigner/cabinetCodes";
-import { polygonArea, showPlanDetailLabels, showPlanTagLabels } from "@/domains/roomDesigner/designerGeometry";
+import { phonePolicySuppressesIndustrialText, polygonArea, showPlanDetailLabels, showPlanTagLabels } from "@/domains/roomDesigner/designerGeometry";
 import { ORG_CHART_METRICS, departmentColor, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 import { furniturePlanSymbol } from "@/domains/roomDesigner/furniturePlanSymbols";
 import { PLAN_SYMBOL_PALETTES, renderPlanSymbol } from "./furniturePlanSymbolSvg";
@@ -29,7 +29,7 @@ import { UTILITY_ANCHOR_SPECS, isVesselSymbol } from "@/domains/roomDesigner/uti
 
 export { uprightTextTransform };
 
-function centroid(points) {
+export function centroid(points) {
   const n = points.length;
   if (n === 0) return { x: 0, y: 0 };
   return {
@@ -145,16 +145,16 @@ export function drawRoomSymbol({ instance, toScreen, scale, highlighted, phoneLa
       {/* A photo's own colors make the label unreadable at a glance; give it
           a small dark backing pill, same convention a map legend would use
           over imagery — the plain tint background never needed this. */}
-      {pattern && showPlanTagLabels(scale) && (
+      {pattern && showPlanTagLabels(scale) && !phonePolicySuppressesIndustrialText(phoneLabelPolicy) && (
         <rect x={c.x - 60} y={c.y - 16} width={120} height={30} rx={6} fill="#0f172a" fillOpacity={0.72} />
       )}
       {/* Room name is a short tag; the area line is a detail label. */}
-      {showPlanTagLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+      {showPlanTagLabels(scale) && !phonePolicySuppressesIndustrialText(phoneLabelPolicy) && (
         <text x={c.x} y={c.y} textAnchor="middle" fontSize={13} fontWeight={600} fill={pattern ? "#f1f5f9" : "#93c5fd"} data-label-kind="room-label" data-room-id={instance.id}>
           {instance.label}
         </text>
       )}
-      {showPlanDetailLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+      {showPlanDetailLabels(scale) && !phonePolicySuppressesIndustrialText(phoneLabelPolicy) && (
         <text x={c.x} y={c.y + 16} textAnchor="middle" fontSize={11} fill={pattern ? "#cbd5e1" : "#6b7280"} data-label-kind="room-area" data-room-id={instance.id}>
           {area.toFixed(0)} sq ft
         </text>
@@ -164,7 +164,7 @@ export function drawRoomSymbol({ instance, toScreen, scale, highlighted, phoneLa
 }
 
 /** Fallback routine: plain rect + label for symbols with no domain routine. */
-export function drawDefaultSymbol({ symbol, instance, toScreen, scale, highlighted }) {
+export function drawDefaultSymbol({ symbol, instance, toScreen, scale, highlighted, phoneLabelPolicy }) {
   const c = toScreen({ x: instance.x, y: instance.y });
   const w = (symbol.widthIn || 24) * scale;
   const h = (symbol.depthIn || 24) * scale;
@@ -181,8 +181,10 @@ export function drawDefaultSymbol({ symbol, instance, toScreen, scale, highlight
         stroke={selectionStroke(highlighted, "#374151")}
         strokeWidth={highlighted ? 3 : 1.5}
       />
-      {/* Short tag — hidden only at the lowest scales. */}
-      {showPlanTagLabels(scale) && (
+      {/* Short tag — hidden only at the lowest scales. When a phone label
+          policy owns industrial text, the policy's overlay renders it
+          deconflicted instead — same suppression as the domain routines. */}
+      {showPlanTagLabels(scale) && !phonePolicySuppressesIndustrialText(phoneLabelPolicy) && (
         <text y={Math.max(w, h) / 2 + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(w, h) / 2 + 14)} textAnchor="middle" fontSize={11} fill="#d1d5db" data-label-kind="symbol-tag" data-symbol-id={instance.id}>
           {symbol.label}
         </text>
@@ -342,7 +344,7 @@ export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighte
               fill="#1f2937" stroke={highlighted ? "#f59e0b" : "#fbbf24"} strokeWidth={sw}
             />
             {/* In-glyph tag — a short label, hidden only at the lowest scales. */}
-            {showPlanTagLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+            {showPlanTagLabels(scale) && !phonePolicySuppressesIndustrialText(phoneLabelPolicy) && (
               <text transform={uprightTextTransform(instance.rotationDeg, 0, 0)} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700} fill="#fde68a" data-label-kind="symbol-tag" data-symbol-id={instance.id}>
                 {label}
               </text>
@@ -362,7 +364,7 @@ export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighte
       {glyph}
       {/* Description line — a detail label, hidden at fit-to-view scales
           where dozens of them stack into an unreadable pile. */}
-      {showPlanDetailLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+      {showPlanDetailLabels(scale) && !phonePolicySuppressesIndustrialText(phoneLabelPolicy) && (
         <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af" data-label-kind="symbol-caption" data-symbol-id={instance.id}>
           {symbol.label}
         </text>
@@ -1322,13 +1324,13 @@ export function drawProcessEquipmentSymbol({ symbol, instance, toScreen, scale, 
       {glyph}
       {components}
       {/* Short tag — survives a desktop fit-to-view, hides on a phone fit. */}
-      {instance.tag && showPlanTagLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+      {instance.tag && showPlanTagLabels(scale) && !phonePolicySuppressesIndustrialText(phoneLabelPolicy) && (
         <text y={below + 13} transform={uprightTextTransform(instance.rotationDeg, 0, below + 13)} textAnchor="middle" fontSize={11} fontWeight={700} fill={highlighted ? "#f59e0b" : "#fde68a"} data-label-kind="symbol-tag" data-symbol-id={instance.id}>
           {instance.tag.slice(0, 14)}
         </text>
       )}
       {/* Description line — a detail label, hidden at fit-to-view scales. */}
-      {showPlanDetailLabels(scale) && phoneLabelPolicy?.mode !== "phone-overview" && (
+      {showPlanDetailLabels(scale) && !phonePolicySuppressesIndustrialText(phoneLabelPolicy) && (
         <text y={below + (instance.tag ? 26 : 14)} transform={uprightTextTransform(instance.rotationDeg, 0, below + (instance.tag ? 26 : 14))} textAnchor="middle" fontSize={10} fill="#9ca3af" data-label-kind="symbol-caption" data-symbol-id={instance.id}>
           {symbol.label}
         </text>
