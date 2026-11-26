@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
+import { getRentalSurfaceProjection } from "@/application/rental/rentalReadProjections";
 import { rentalReferenceDate } from "@/application/rental/rentalReferenceDate";
 import { badRequest, now } from "./_actions/shared.js";
 import { saveUnit, setUnitStatus, restoreUnit, archiveUnit, deleteArchivedUnit } from "./_actions/units.js";
@@ -132,10 +133,18 @@ async function withPhotoUrls(supabaseClient, records) {
   }));
 }
 
-export async function GET() {
+export async function GET(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
+    // Slice 1 (Rental Partial Open): a named surface serves only its own
+    // projection. No surface param (or an unknown one) falls through to the
+    // legacy full payload below, which the untouched surfaces still need.
+    // The projection never runs in parallel with the monolith "just in case".
+    const surface = request?.url ? new URL(request.url).searchParams.get("surface") : null;
+    if (surface !== null) {
+      return await getRentalSurfaceProjection({ authenticated, surface, searchParams: new URL(request.url).searchParams });
+    }
     const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, membershipResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, lateAutoSettingsResult, lateTenantOverrideResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, leaseSignatureResult, autopayResult, insurancePolicyResult, insuranceRequirementResult, animalResult, supportResult, propertyFinancialSetupResult, financialEventResult, conversationResult, creditsResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, schedule_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status, charge_type, related_charge_id")
