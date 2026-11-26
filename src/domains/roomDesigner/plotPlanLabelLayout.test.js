@@ -95,6 +95,24 @@ describe("layoutPlotPlanLabels", () => {
     expect(diagnostics.byTier[1].placed).toBe(1);
   });
 
+  it("tries upper-left before upper-right (accepted try-order, PR #862 fix round 1)", () => {
+    // A glyph hard against the pane's left edge: upper-left would fall
+    // outside the viewport, so the label must fall back to upper-right
+    // — proving upper-left was tried first and rejected, not skipped.
+    // The reviewer ACCEPTED upper-left-first 2026-11-26 (upper-right
+    // first withholds 5/14 Tier 1 at fit; upper-left-first places
+    // 10/14): do not revert this order.
+    const edge = cand({ anchor: { x: 10, y: 400, halfW: 4, halfH: 4 } });
+    const { placed, withheld } = layout([edge]);
+    expect(withheld).toHaveLength(0);
+    expect(placed).toHaveLength(1);
+    expect(placed[0].position).toBe("upper-right");
+    // And a lone label with room on both sides still takes upper-left.
+    const again = layout([cand()]);
+    expect(again.placed).toHaveLength(1);
+    expect(again.placed[0].position).toBe("upper-left");
+  });
+
   it("tries the other three corners before withholding a colliding label", () => {
     // Two tags on the same glyph: the second cannot take upper-left
     // (taken), so it must fall back to another corner, not vanish.

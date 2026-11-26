@@ -17,6 +17,7 @@ import { createRoot } from "react-dom/client";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import PlanCanvas from "./PlanCanvas";
 import fccuDesign from "../../../public/phone-fixture/fccu-design-snapshot.json";
+import { dimensionGeometry } from "@/domains/roomDesigner/designerGeometry";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -73,6 +74,30 @@ const textsByKind = (container, kind) =>
   [...container.querySelectorAll(`text[data-label-kind="${kind}"]`)].map((t) => t.textContent);
 const engineTags = (container) =>
   [...container.querySelectorAll('text[data-label-kind="equipment-tag"]')];
+
+// Open the Hidden labels disclosure the way a user does (click the
+// summary — the browser owns the open state). If jsdom ever does not
+// toggle on the click, set it directly, the way Close/Find/Escape do.
+const openHiddenLabels = (details) => {
+  const summary = details.querySelector("summary");
+  act(() => {
+    summary.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  });
+  if (!details.open) {
+    act(() => {
+      details.open = true;
+    });
+  }
+  expect(details.open).toBe(true);
+};
+
+// The first hidden row for a selectable source (symbol/pipe/room):
+// annotations have no selection kind, so a Find test that asserts a
+// SELECT must not pick an annotation row.
+const firstSelectableRow = (details) =>
+  [...details.querySelectorAll("li")].find((li) =>
+    [...TIER_1, ...TIER_2].some((tag) => li.textContent.includes(tag)),
+  );
 
 describe("PlanCanvas label layout engine", () => {
   let container;
@@ -206,10 +231,14 @@ describe("PlanCanvas label layout engine", () => {
     expect(details).not.toBeNull();
     const rows = [...details.querySelectorAll("li")];
     expect(rows.length).toBeGreaterThan(0);
-    // Every row carries a Find button; clicking the first one must
+    // Every selectable row carries a Find button; clicking one must
     // select exactly its source object and nothing else — the only
-    // dispatch the recovery path ever emits is SELECT.
-    const firstFind = rows[0].querySelector("button");
+    // dispatch the recovery path ever emits is SELECT. (Annotation
+    // rows are excluded: they have no selection kind and open the
+    // read-only identity disclosure instead — see the Finding A test.)
+    const row = firstSelectableRow(details);
+    expect(row).toBeDefined();
+    const firstFind = row.querySelector("button");
     expect(firstFind.textContent.trim()).toBe("Find");
     dispatch.mockClear();
     act(() => {
@@ -252,5 +281,204 @@ describe("PlanCanvas label layout engine", () => {
     // The phone overview still owns equipment tags on a home-mode
     // design — the engine never takes over there.
     expect(container.querySelector("[data-phone-overview-tags]")).not.toBeNull();
+  }, 30000);
+
+  // ---- Fix round 1 (PR #862 NEEDS CHANGES) ----
+
+  it("Finding A: Find on a hidden annotation shows its full text immediately and selects nothing", () => {
+    mockSize = { w: 400, h: 800 };
+    const before = JSON.stringify(fccuDesign);
+    renderCanvas();
+    const controls = container.querySelector('[data-testid="label-engine-controls"]');
+    const details = controls.querySelector("details");
+    // The long plot-plan annotation is Tier 3, hidden by zoom tier at
+    // fit — it has no selection kind, so Find must disclose it.
+    const row = [...details.querySelectorAll("li")].find((li) =>
+      li.textContent.includes("FICTIONAL FCCU"),
+    );
+    expect(row).toBeDefined();
+    dispatch.mockClear();
+    act(() => {
+      row.querySelector("button").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+    // The exact full source text is presented IMMEDIATELY on Find,
+    // whether or not the layout can place the label — and no SELECT
+    // is dispatched for a source with no selection kind.
+    const detail = container.querySelector('[data-testid="label-found-detail"]');
+    expect(detail).not.toBeNull();
+    expect(detail.textContent).toContain("FICTIONAL FCCU — GENERIC LAYOUT EXERCISE");
+    expect(dispatch).not.toHaveBeenCalled();
+    // The disclosure closed so it never obstructs the centred object,
+    // and the design document is untouched.
+    expect(details.open).toBe(false);
+    expect(JSON.stringify(fccuDesign)).toBe(before);
+  }, 30000);
+
+  it("Finding A: Find on a label whose source is gone says so and selects nothing", () => {
+    mockSize = { w: 400, h: 800 };
+    // Deep-copy so the fixture itself is never mutated.
+    const designCopy = JSON.parse(JSON.stringify(fccuDesign));
+    renderCanvas({ design: designCopy });
+    const controls = container.querySelector('[data-testid="label-engine-controls"]');
+    const details = controls.querySelector("details");
+    const row = [...details.querySelectorAll("li")].find((li) =>
+      li.textContent.includes("FICTIONAL FCCU"),
+    );
+    expect(row).toBeDefined();
+    // The annotation is deleted between render and click (the race the
+    // scope calls out). The app reducer never mutates in place, so the
+    // test simulates the race by splicing the array the rendered
+    // component captured — the row is still on screen, its source gone.
+    designCopy.annotations.splice(
+      designCopy.annotations.findIndex((a) => a.id === "fccu_label_5"),
+      1,
+    );
+    dispatch.mockClear();
+    act(() => {
+      row.querySelector("button").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+    const detail = container.querySelector('[data-testid="label-found-detail"]');
+    expect(detail).not.toBeNull();
+    expect(detail.textContent).toContain("no longer in the design");
+    expect(detail.textContent).toContain("FICTIONAL FCCU");
+    // A missing source never resolves to a different object.
+    expect(dispatch).not.toHaveBeenCalled();
+  }, 30000);
+
+  it("Finding B: Find rows and label toggles are ≥44px tap targets", () => {
+    mockSize = { w: 400, h: 800 };
+    renderCanvas();
+    const controls = container.querySelector('[data-testid="label-engine-controls"]');
+    // jsdom has no layout engine, so this asserts the 44px minimum
+    // class; the Playwright geometry guard measures real bounding
+    // rectangles at 360/390/400px.
+    const toggles = [...controls.querySelectorAll("button")].filter((b) =>
+      ["All", "Key only"].includes(b.textContent.trim()),
+    );
+    expect(toggles).toHaveLength(2);
+    for (const b of toggles) expect(b.className).toContain("min-h-[44px]");
+    const details = controls.querySelector("details");
+    expect(details.querySelector("summary").className).toContain("min-h-[44px]");
+    expect(
+      controls.querySelector('input[aria-label="Search hidden labels"]').className,
+    ).toContain("min-h-[44px]");
+    const findButtons = [...details.querySelectorAll("li button")].filter(
+      (b) => b.textContent.trim() === "Find",
+    );
+    expect(findButtons.length).toBeGreaterThan(0);
+    for (const b of findButtons) {
+      expect(b.className).toContain("min-h-[44px]");
+      expect(b.closest("li").className).toContain("min-h-[44px]");
+    }
+  }, 30000);
+
+  it("Finding B: Escape closes the disclosure and returns focus to the summary", () => {
+    mockSize = { w: 400, h: 800 };
+    renderCanvas();
+    const controls = container.querySelector('[data-testid="label-engine-controls"]');
+    const details = controls.querySelector("details");
+    const summary = details.querySelector("summary");
+    openHiddenLabels(details);
+    const input = controls.querySelector('input[aria-label="Search hidden labels"]');
+    act(() => {
+      input.focus();
+    });
+    act(() => {
+      input.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(details.open).toBe(false);
+    expect(document.activeElement).toBe(summary);
+  }, 30000);
+
+  it("Finding B: Close button closes the disclosure and returns focus to the summary", () => {
+    mockSize = { w: 400, h: 800 };
+    renderCanvas();
+    const controls = container.querySelector('[data-testid="label-engine-controls"]');
+    const details = controls.querySelector("details");
+    const summary = details.querySelector("summary");
+    openHiddenLabels(details);
+    const close = controls.querySelector('button[aria-label="Close hidden labels"]');
+    expect(close).not.toBeNull();
+    act(() => {
+      close.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+    expect(details.open).toBe(false);
+    expect(document.activeElement).toBe(summary);
+  }, 30000);
+
+  it("Finding B: Find closes the disclosure so it never obstructs the centred object", () => {
+    mockSize = { w: 400, h: 800 };
+    renderCanvas();
+    const controls = container.querySelector('[data-testid="label-engine-controls"]');
+    const details = controls.querySelector("details");
+    const summary = details.querySelector("summary");
+    openHiddenLabels(details);
+    const row = firstSelectableRow(details);
+    expect(row).toBeDefined();
+    act(() => {
+      row.querySelector("button").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+    expect(details.open).toBe(false);
+    expect(document.activeElement).toBe(summary);
+  }, 30000);
+
+  // A small industrial document for Finding C: one wall whose dimension
+  // label sits on an equipment glyph (placed via dimensionGeometry, the
+  // same helper renderWall uses) and one deck beside it. Small bounds
+  // keep the fit scale above the 0.25 detail-label gate, so the legacy
+  // labels WOULD render without the engine gate.
+  const mixedDesign = () => {
+    const wall = { id: "wall-1", a: { x: 0, y: 0 }, b: { x: 120, y: 0 } };
+    const labelPos = dimensionGeometry(wall, 4.5 / 2 + 10).labelPos;
+    return {
+      ...fccuDesign,
+      symbols: [
+        {
+          id: "sym-1",
+          domain: "processEquipment",
+          symbolId: "fluidized-bed-reactor",
+          layer: "equipment",
+          tag: "E-101",
+          x: labelPos.x,
+          y: labelPos.y,
+          widthIn: 24,
+          depthIn: 24,
+        },
+      ],
+      pipes: [],
+      rooms: [],
+      annotations: [],
+      openings: [],
+      walls: [wall],
+      decks: [{ id: "deck-1", a: { x: 40, y: -40 }, b: { x: 100, y: 20 }, material: "wood", dropIn: 6 }],
+    };
+  };
+
+  it("Finding C: legacy wall/deck labels stay off while the engine is active", () => {
+    mockSize = { w: 400, h: 800 };
+    renderCanvas({ design: mixedDesign() });
+    // The engine is active and owns the equipment tag.
+    expect(container.querySelector('[data-testid="label-engine-controls"]')).not.toBeNull();
+    expect(engineTags(container).map((t) => t.textContent)).toContain("E-101");
+    // No second, independently collision-free set: the wall dimension
+    // and the deck label are gated off while the engine is active.
+    expect(textsByKind(container, "wall-label")).toEqual([]);
+    expect(textsByKind(container, "deck-label")).toEqual([]);
+    // The objects themselves still render — their identities stay
+    // recoverable by tapping the wall/deck (selection panel shows
+    // length/material, the pre-existing recovery path).
+    const svg = container.querySelector("svg");
+    expect(svg.querySelector('rect[fill="rgba(160,116,74,0.12)"]')).not.toBeNull();
+    expect(svg.querySelectorAll("line").length).toBeGreaterThan(0);
+  }, 30000);
+
+  it("Finding C: wall/deck labels still render on a wide pane (engine inactive)", () => {
+    mockSize = { w: 1919, h: 800 };
+    renderCanvas({ design: mixedDesign() });
+    expect(container.querySelector('[data-testid="label-engine-controls"]')).toBeNull();
+    expect(textsByKind(container, "wall-label").length).toBeGreaterThan(0);
+    expect(textsByKind(container, "deck-label").length).toBeGreaterThan(0);
   }, 30000);
 });

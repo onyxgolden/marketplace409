@@ -1782,6 +1782,16 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // symbol routines (see symbolDrawRoutines.jsx), which receive `scale`.
   const showDetailLabels = showPlanDetailLabels(view.scale);
 
+  // The plot-plan label engine is active for EVERY industrial design
+  // on a phone-width pane (defined here, ahead of the legacy wall/deck
+  // selector, because the engine owns ALL industrial labels while
+  // active — Finding C, PR #862 fix round 1). The full engine comment
+  // lives below with the collector; this is the same condition.
+  const labelEngineActive =
+    design?.mode === "industrial" &&
+    canvasSize.w > 0 &&
+    canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX;
+
   // Phone label deconfliction (Phone Slice 5): on a phone-width pane the
   // fit scale (~0.35-0.7) stays ABOVE the 0.25 hide gate, so the fixed-size
   // labels of adjacent walls still pile up (144/216/168/24/60/84/72 and the
@@ -1792,7 +1802,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // lost: tapping its wall/deck selects it (selected-first) and the
   // selection panel shows its length/material. Null on non-phone panes
   // and when detail labels are hidden — desktop behavior is untouched.
+  // Null also while the label engine is active (Finding C): the engine
+  // owns every industrial label then, and the legacy wall/deck pass
+  // must not paint a second, independently collision-free set that can
+  // overlap the engine's labels. Wall/deck identities stay recoverable
+  // by tapping the wall/deck itself (selection panel).
   const phoneLabelAccepted = useMemo(() => {
+    if (labelEngineActive) return null;
     if (!showDetailLabels) return null;
     if (!(canvasSize.w > 0 && canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX)) return null;
     const candidates = [];
@@ -1835,7 +1851,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       });
     }
     return selectPhoneLabels(candidates, { left: 0, top: 0, right: canvasSize.w, bottom: canvasSize.h });
-  }, [showDetailLabels, canvasSize, design, toScreen, selection]);
+  }, [labelEngineActive, showDetailLabels, canvasSize, design, toScreen, selection]);
 
   // Phone whole-plot overview equipment tags (Phone Slice 5 follow-up):
   // on a phone-width pane at far-out plot scale the in-glyph symbol tags
@@ -1856,11 +1872,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // (equipment, piping, pipes, annotations, rooms) with ranked tiers
   // and greedy deconfliction, so the overview's 12-tag kind-priority
   // set never runs alongside it. Non-industrial designs keep the
-  // overview exactly as before.
-  const labelEngineActive =
-    design?.mode === "industrial" &&
-    canvasSize.w > 0 &&
-    canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX;
+  // overview exactly as before. (labelEngineActive is defined above,
+  // ahead of the legacy wall/deck selector — Finding C.)
   const phoneOverviewActive =
     !labelEngineActive &&
     !showPlanTagLabels(view.scale) &&
@@ -1911,6 +1924,33 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   if (textMeasurerRef.current === null) textMeasurerRef.current = createTextMeasurer();
   const [labelMode, setLabelMode] = useState("all"); // "all" | "key" (session-only)
   const [labelSearch, setLabelSearch] = useState("");
+  // Hidden-labels disclosure (Finding B, PR #862 fix round 1): the
+  // browser owns the <details> open state — no `open` prop and no
+  // onToggle state sync. A controlled `open` prop plus onToggle
+  // re-sync loses to the toggle event's timing: a summary-click
+  // toggle queued before a programmatic close re-opens the panel
+  // after Close/Find/Escape set state false (proven in jsdom, and
+  // the toggle event is queued the same way in Chromium). Escape,
+  // Close and Find therefore close the panel imperatively through
+  // this ref and return focus to the summary trigger.
+  const labelHiddenDetailsRef = useRef(null);
+  const labelHiddenSummaryRef = useRef(null);
+  const closeLabelHidden = useCallback(() => {
+    if (labelHiddenDetailsRef.current) labelHiddenDetailsRef.current.open = false;
+    labelHiddenSummaryRef.current?.focus();
+  }, []);
+  // Read-only identity disclosure for a hidden label whose source has
+  // no selection kind (annotations — Finding A, PR #862 fix round 1):
+  // { id, kind, tag, fullLabel, reason, unavailable } | null. It is
+  // set by Find, never by selection, and shows the exact full source
+  // text whether or not the layout can place the label.
+  const [labelFoundDetail, setLabelFoundDetail] = useState(null);
+  const labelFoundDetailRef = useRef(null);
+  // Focus the identity disclosure as soon as Find opens it, so a
+  // keyboard/screen-reader user lands on the recovered text.
+  useEffect(() => {
+    if (labelFoundDetail && labelFoundDetailRef.current) labelFoundDetailRef.current.focus();
+  }, [labelFoundDetail]);
   // The fit scale this pane's open-time auto-fit computes (same bounds,
   // padding and maxScale as the auto-fit above): the tier thresholds
   // are relative to it, so a resize re-derives them from the new fit.
@@ -1930,6 +1970,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   if (labelTierKey !== autoFitKey) {
     setLabelTierKey(autoFitKey);
     if (labelMaxTier !== 1) setLabelMaxTier(1);
+    // A new design/level invalidates any recovered identity — never
+    // show one design's label text against another design.
+    if (labelFoundDetail) setLabelFoundDetail(null);
   } else if (labelEngineActive && labelFitScale) {
     const nextTier = tierForRelativeZoom(labelRelativeZoom, labelMaxTier);
     if (nextTier !== labelMaxTier) setLabelMaxTier(nextTier);
@@ -2165,6 +2208,15 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // Tier 2, 2.6x fit for Tier 3 — clamped to [fitScale, MAX_SCALE].
   // Marks user navigation so the open-time auto-fit never re-fits over
   // it. No design mutation, no undo entry.
+  //
+  // Finding A (PR #862 fix round 1): not every persistent label has
+  // a selection kind. Annotations have no reducer SELECT kind (do not
+  // invent one), so for them — and any other nonselectable persistent
+  // label — Find shows a read-only identity disclosure with the exact
+  // full source text instead of selecting, whether or not the layout
+  // can place the label. If the source is gone from the design, the
+  // disclosure says so honestly and nothing is selected: a
+  // missing-source label never resolves to a different object.
   const findLabel = useCallback(
     (candidate) => {
       const plan = candidate?.source?.plan;
@@ -2179,9 +2231,23 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       userNavRef.current = true;
       if (candidate.sourceKind === "symbol" || candidate.sourceKind === "pipe" || candidate.sourceKind === "room") {
         dispatch({ type: "SELECT", selection: { kind: candidate.sourceKind, id: candidate.sourceId } });
+        setLabelFoundDetail(null);
+        return;
       }
+      const stillExists =
+        candidate.sourceKind === "annotation"
+          ? (design.annotations || []).some((a) => a.id === candidate.sourceId)
+          : false;
+      setLabelFoundDetail({
+        id: candidate.id,
+        kind: candidate.kind,
+        tag: candidate.tag,
+        fullLabel: candidate.fullLabel || candidate.tag,
+        reason: candidate.reason,
+        unavailable: !stillExists,
+      });
     },
-    [labelFitScale, canvasSize, dispatch],
+    [labelFitScale, canvasSize, dispatch, design.annotations],
   );
   // Shared tap behaviour for engine and overview tags (same as the
   // overview tags' inline handlers before this): the tag is the touch
@@ -2406,8 +2472,11 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           fill="rgba(160,116,74,0.12)" stroke={color} strokeWidth={thicknessPx} strokeDasharray="10 6" />
         {/* Deck label — a detail label, hidden at fit-to-view scales; on a
             phone pane the selector may withhold it when it would collide or
-            clip (tapping the deck selects it, selected-first). */}
-        {showDetailLabels && (!phoneLabelAccepted || phoneLabelAccepted.has(`deck:${deck.id}`)) && (
+            clip (tapping the deck selects it, selected-first). While the
+            label engine is active the deck text stays off entirely
+            (Finding C): the engine owns every industrial label and the
+            legacy pass must not paint a second set that can overlap it. */}
+        {showDetailLabels && !labelEngineActive && (!phoneLabelAccepted || phoneLabelAccepted.has(`deck:${deck.id}`)) && (
           <text x={x + 6} y={y + 16} fontSize={13} fontWeight={600} fill={color} data-label-kind="deck-label" data-deck-id={deck.id}>
             {`${DECK_MATERIALS[deck.material]?.label || "Deck"}, top ${deck.dropIn}″ below threshold`}
           </text>
@@ -2465,8 +2534,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
               <line x1={t2a.x} y1={t2a.y} x2={t2b.x} y2={t2b.y} strokeWidth={1.5} />
               {/* Dimension text — on a phone pane the selector may withhold
                   it when it would collide or clip; the line stays, and
-                  tapping the wall selects it (selected-first). */}
-              {(!phoneLabelAccepted || phoneLabelAccepted.has(`wall:${wall.id}`)) && (
+                  tapping the wall selects it (selected-first). While the
+                  label engine is active the dimension text stays off
+                  entirely (Finding C): the engine owns every industrial
+                  label and the legacy pass must not paint a second set
+                  that can overlap it. */}
+              {!labelEngineActive && (!phoneLabelAccepted || phoneLabelAccepted.has(`wall:${wall.id}`)) && (
               <text
                 x={lp.x} y={lp.y}
                 textAnchor="middle"
@@ -3383,7 +3456,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
               onClick={() => setLabelMode("all")}
               aria-pressed={labelMode === "all"}
               title="Show all label tiers allowed at this zoom"
-              className={`rounded px-2 py-0.5 font-semibold ${
+              className={`min-h-[44px] rounded px-3 font-semibold ${
                 labelMode === "all" ? "bg-emerald-600 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"
               }`}
             >
@@ -3393,7 +3466,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
               onClick={() => setLabelMode("key")}
               aria-pressed={labelMode === "key"}
               title="Show key (Tier 1) labels only"
-              className={`rounded px-2 py-0.5 font-semibold ${
+              className={`min-h-[44px] rounded px-3 font-semibold ${
                 labelMode === "key" ? "bg-emerald-600 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"
               }`}
             >
@@ -3401,10 +3474,38 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             </button>
           </div>
           {labelHidden.length > 0 && (
-            <details className="pointer-events-auto w-64 rounded bg-gray-900/90 px-3 py-2 text-xs text-gray-200 shadow">
-              <summary className="cursor-pointer font-semibold">
+            // Finding B (PR #862 fix round 1): the disclosure is
+            // closed imperatively — Escape and the Close button shut it
+            // and return focus to the summary trigger, and Find closes
+            // it so the panel never obstructs the newly centred object.
+            // Every tap target in it is ≥44px. The panel is
+            // width/height capped so it stays inside a 360px pane and
+            // scrolls. (The browser owns the open state — see the
+            // closeLabelHidden comment above — so there is no `open`
+            // prop and no onToggle here.)
+            <details
+              ref={labelHiddenDetailsRef}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.stopPropagation();
+                  closeLabelHidden();
+                }
+              }}
+              className="pointer-events-auto max-h-[min(22rem,62vh)] w-[min(16rem,calc(100vw-5rem))] overflow-y-auto rounded bg-gray-900/90 px-3 py-2 text-xs text-gray-200 shadow"
+            >
+              <summary ref={labelHiddenSummaryRef} className="flex min-h-[44px] cursor-pointer items-center font-semibold">
                 Hidden labels ({labelHidden.length})
               </summary>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={closeLabelHidden}
+                  aria-label="Close hidden labels"
+                  className="min-h-[44px] rounded bg-gray-700 px-3 font-semibold text-gray-200 hover:bg-gray-600"
+                >
+                  Close
+                </button>
+              </div>
               <p className="mt-1 text-gray-400">
                 {labelHiddenByCollision.length} hidden by collision · {labelHiddenByTier.length} hidden by zoom tier
               </p>
@@ -3413,15 +3514,27 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
                 onChange={(e) => setLabelSearch(e.target.value)}
                 placeholder="Search hidden labels"
                 aria-label="Search hidden labels"
-                className="mt-2 w-full rounded bg-gray-800 px-2 py-1 text-xs text-gray-100 placeholder:text-gray-500"
+                className="mt-2 min-h-[44px] w-full rounded bg-gray-800 px-2 py-1 text-xs text-gray-100 placeholder:text-gray-500"
               />
               <ul className="mt-2 max-h-80 space-y-1 overflow-y-auto">
                 {labelHiddenFiltered.map((h) => (
-                  <li key={h.id} className="flex items-center gap-2">
+                  <li key={h.id} className="flex min-h-[44px] items-center gap-2">
                     <button
-                      onClick={() => findLabel(h)}
+                      onClick={() => {
+                        findLabel(h);
+                        // Close the panel so it never obstructs the
+                        // newly centred object. Selectable kinds return
+                        // focus to the disclosure trigger; annotations
+                        // open the identity disclosure instead, which
+                        // the focus effect above moves focus into.
+                        if (h.sourceKind === "symbol" || h.sourceKind === "pipe" || h.sourceKind === "room") {
+                          closeLabelHidden();
+                        } else if (labelHiddenDetailsRef.current) {
+                          labelHiddenDetailsRef.current.open = false;
+                        }
+                      }}
                       title={`Find ${h.fullLabel || h.tag} on the plan`}
-                      className="shrink-0 rounded bg-gray-700 px-2 py-0.5 font-semibold text-gray-200 hover:bg-gray-600"
+                      className="min-h-[44px] shrink-0 rounded bg-gray-700 px-3 font-semibold text-gray-200 hover:bg-gray-600"
                     >
                       Find
                     </button>
@@ -3438,6 +3551,42 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
                 )}
               </ul>
             </details>
+          )}
+          {labelFoundDetail && (
+            // Finding A (PR #862 fix round 1): read-only identity
+            // disclosure for a hidden label whose source has no
+            // selection kind (annotations). Shows the exact full source
+            // text immediately on Find, whether or not the layout can
+            // place the label; the drawing is untouched and no SELECT
+            // is ever dispatched for it.
+            <div
+              ref={labelFoundDetailRef}
+              tabIndex={-1}
+              role="status"
+              data-testid="label-found-detail"
+              className="pointer-events-auto w-[min(16rem,calc(100vw-5rem))] rounded bg-gray-900/90 px-3 py-2 text-xs text-gray-200 shadow outline-none"
+            >
+              {labelFoundDetail.unavailable ? (
+                <p className="break-words">
+                  “{labelFoundDetail.fullLabel}” is no longer in the design — nothing was selected.
+                </p>
+              ) : (
+                <>
+                  <p className="font-semibold break-words">{labelFoundDetail.fullLabel}</p>
+                  <p className="mt-1 text-gray-400">
+                    {labelFoundDetail.kind} · hidden by {labelFoundDetail.reason === "tier" ? "zoom tier" : "collision"}
+                  </p>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => setLabelFoundDetail(null)}
+                aria-label="Close label detail"
+                className="mt-2 min-h-[44px] rounded bg-gray-700 px-3 font-semibold text-gray-200 hover:bg-gray-600"
+              >
+                Close
+              </button>
+            </div>
           )}
         </div>
       )}

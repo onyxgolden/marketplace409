@@ -766,6 +766,199 @@ async function measureFccuSelection(page) {
   return result;
 }
 
+// Fix round 1 (Finding D): reload the FCCU fixture and wait for the
+// open-time auto-fit to settle — the same load the runner uses for
+// the first fit measurement, factored so every phase can start from
+// a known fit instead of inheriting a previous phase's view.
+async function reloadFccuFixture(page) {
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.waitForSelector('[data-fixture-ready="true"]', { timeout: 60000 });
+  await page.waitForFunction(() => {
+    const el = document.querySelector("[data-fccu-state]");
+    return el && (el.getAttribute("data-fccu-state") === "ready" || el.getAttribute("data-fccu-state") === "error");
+  }, { timeout: 60000 });
+  await page.waitForTimeout(800);
+}
+
+// Fix round 1 (Finding D): after the selection proofs (whose FL-101
+// Find jump recentres the view on the flare), independently reload
+// and verify the original whole-plot fit BEFORE the zoom-state tests
+// run — the zoom states must zoom around the plot centre, not around
+// the flare. Returns the fit measurement plus a scale-match flag.
+async function resetFccuFit(page, fitScale) {
+  await reloadFccuFixture(page);
+  const m = await measureFccu(page);
+  return {
+    ...m,
+    fitScaleMatch: fitScale && m.scale ? Math.abs(m.scale - fitScale) / fitScale < 0.05 : null,
+    z: fitScale && m.scale ? +(m.scale / fitScale).toFixed(2) : null,
+  };
+}
+
+// Fix round 1 (Finding D): the screen centre of the known E-101–
+// E-104 exchanger cluster, from the CURRENTLY rendered equipment
+// tags — source geometry, never the selected flare. Falls back to
+// null (caller uses the pane centre) when no exchanger tag renders.
+async function exchangerClusterCenter(page) {
+  return page.evaluate(() => {
+    const pane = document.querySelector('[data-testid="designer-pane"]');
+    const svg = pane ? pane.querySelector("svg") : null;
+    if (!svg) return null;
+    const rects = [];
+    for (const label of ["E-101", "E-102", "E-103", "E-104"]) {
+      const t = [...svg.querySelectorAll('text[data-label-kind="equipment-tag"]')].find(
+        (el) => (el.textContent || "").trim() === label,
+      );
+      if (!t) continue;
+      const r = t.getBoundingClientRect();
+      rects.push({ label, x: r.left + r.width / 2, y: r.top + r.height / 2 });
+    }
+    if (rects.length === 0) return null;
+    return {
+      x: rects.reduce((s, r) => s + r.x, 0) / rects.length,
+      y: rects.reduce((s, r) => s + r.y, 0) / rects.length,
+      tagsUsed: rects.map((r) => r.label),
+    };
+  });
+}
+
+// Finding B (PR #862 fix round 1): browser 360/390/400px check of
+// the Labels control — REAL bounding rectangles (the guard's SVG
+// measurements never certified the HTML panel's touch sizes), plus
+// touch, focus, Find and close behavior. Runs at whole-plot fit,
+// after the zoom states' return-to-fit, when the hidden list is
+// fullest. Its own Find click recentres the view; the runner reloads
+// back to fit afterwards for the screenshot.
+async function measureFccuLabelControls(page) {
+  const out = {
+    ran: true,
+    opened: false,
+    geometry: null,
+    escape: {},
+    closeButton: {},
+    findAnnotation: {},
+    tap: {},
+  };
+  const snapshot = () => page.evaluate(() => {
+    const c = document.querySelector('[data-testid="label-engine-controls"]');
+    if (!c) return null;
+    const details = c.querySelector("details");
+    if (!details) return null;
+    const rect = (el) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom), width: Math.round(r.width), height: Math.round(r.height) };
+    };
+    return {
+      detailsOpen: details.open,
+      detailsRect: rect(details),
+      summaryRect: rect(details.querySelector("summary")),
+      toggleRects: [...c.querySelectorAll("button")]
+        .filter((b) => ["All", "Key only"].includes(b.textContent.trim()))
+        .map((b) => ({ label: b.textContent.trim(), rect: rect(b) })),
+      searchRect: rect(c.querySelector('input[aria-label="Search hidden labels"]')),
+      closeRect: rect(c.querySelector('button[aria-label="Close hidden labels"]')),
+      rows: [...details.querySelectorAll("li")].map((li) => {
+        const btn = li.querySelector("button");
+        return { text: (li.textContent || "").slice(0, 80), findRect: rect(btn), rowRect: rect(li) };
+      }),
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+    };
+  });
+  const openDetails = async () => {
+    await page.evaluate(() => {
+      const details = document.querySelector('[data-testid="label-engine-controls"] details');
+      if (details && !details.open) details.querySelector("summary")?.click();
+    });
+    await page.waitForTimeout(200);
+  };
+  const activeIsSummary = () => page.evaluate(() => {
+    const summary = document.querySelector('[data-testid="label-engine-controls"] details summary');
+    return document.activeElement === summary;
+  });
+  // Open and measure real rects (a closed <details> renders its
+  // body display:none, so rects are only meaningful while open).
+  await openDetails();
+  out.geometry = await snapshot();
+  out.opened = !!out.geometry && out.geometry.detailsOpen;
+  if (!out.opened) return out;
+  // Escape closes the disclosure and returns focus to the summary.
+  await page.evaluate(() => {
+    document.querySelector('[data-testid="label-engine-controls"] input[aria-label="Search hidden labels"]')?.focus();
+  });
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(200);
+  out.escape = {
+    closed: (await snapshot())?.detailsOpen === false,
+    focusOnSummary: await activeIsSummary(),
+  };
+  // The Close button does the same.
+  await openDetails();
+  await page.evaluate(() => {
+    document.querySelector('[data-testid="label-engine-controls"] button[aria-label="Close hidden labels"]')?.click();
+  });
+  await page.waitForTimeout(200);
+  out.closeButton = {
+    closed: (await snapshot())?.detailsOpen === false,
+    focusOnSummary: await activeIsSummary(),
+  };
+  // Find on a hidden annotation: closes the disclosure (no panel left
+  // obstructing the centred object) and shows the exact full source
+  // text in the read-only identity disclosure immediately.
+  await openDetails();
+  const annotationRow = await page.evaluate(() => {
+    const details = document.querySelector('[data-testid="label-engine-controls"] details');
+    if (!details) return false;
+    const row = [...details.querySelectorAll("li")].find((li) => (li.textContent || "").includes("FICTIONAL FCCU"));
+    if (!row) return false;
+    row.querySelector("button")?.click();
+    return true;
+  });
+  await page.waitForTimeout(400);
+  const afterFind = await snapshot();
+  const foundDetail = await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="label-found-detail"]');
+    return el ? el.textContent.trim() : null;
+  });
+  out.findAnnotation = {
+    rowFound: annotationRow,
+    detailsClosed: afterFind ? afterFind.detailsOpen === false : false,
+    detailText: foundDetail,
+    focusOnDetail: await page.evaluate(() => document.activeElement?.getAttribute?.("data-testid") === "label-found-detail"),
+  };
+  // Touch: tap a Find button centre with the touchscreen — the 44px
+  // target must take a real tap, not only a mouse click.
+  await openDetails();
+  const tapTarget = await page.evaluate(() => {
+    const details = document.querySelector('[data-testid="label-engine-controls"] details');
+    if (!details) return null;
+    const btn = details.querySelector("li button");
+    if (!btn) return null;
+    const r = btn.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  if (!tapTarget) {
+    out.tap = { skipped: "no hidden rows left to tap" };
+  } else {
+    // The context must have touch enabled (newPage hasTouch at phone
+    // widths); if the tap itself throws, record it — the verdict
+    // fails on it rather than letting the whole guard run die.
+    try {
+      await page.touchscreen.tap(tapTarget.x, tapTarget.y);
+      await page.waitForTimeout(400);
+      const afterTap = await snapshot();
+      out.tap = {
+        tapped: true,
+        detailsClosed: afterTap ? afterTap.detailsOpen === false : false,
+      };
+    } catch (err) {
+      out.tap = { attempted: true, error: String(err?.message || err) };
+    }
+  }
+  return out;
+}
+
 // Whole-plot-fit assertions for the label engine (brief §7). Checked
 // by TEXT against the tier lists so they fail on the old overview
 // rendering too (fail-before). Gated on the PANE being phone-width
@@ -807,19 +1000,24 @@ function assertFccuEngineFit(f, width, fail, warn, label) {
 // reveal (pipe dimensions in), an ~8x exchanger close-up, then pan and
 // re-measure, then return to fit. Targets are RELATIVE to the measured
 // fit scale (each wheel step is 1.12x, so 1.5x lands at ~1.57x, 2.5x at
-// ~2.77x, 8x at ~8.6x). The close-up is centred on the pane centre,
-// which is the plot centre — where the E-101..E-104 cluster sits.
+// ~2.77x, 8x at ~8.6x).
+//
+// Fix round 1 (Finding D): the close-up is centred on the E-101–E-104
+// cluster by source geometry (the live tag rects at 2.5x), NOT on the
+// pane centre — after a Find jump the pane centre is the flare, and a
+// close-up there never exercises the known exchanger pile. The wheel
+// zooms around the pointer, so the mouse goes to the cluster centre.
 async function measureFccuZoomStates(page, fitScale) {
   const paneBox = await page.evaluate(() => {
     const r = document.querySelector('[data-testid="designer-pane"]').getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2, left: r.left, top: r.top, width: r.width, height: r.height };
   });
   const zOf = (m) => (fitScale && m.scale ? +(m.scale / fitScale).toFixed(2) : null);
-  const wheelTo = async (targetZ, maxSteps = 24) => {
+  const wheelTo = async (targetZ, center = paneBox, maxSteps = 24) => {
     let m = await measureFccu(page);
     for (let step = 0; step < maxSteps; step += 1) {
       if (m.scale && fitScale && m.scale / fitScale >= targetZ) return m;
-      await page.mouse.move(paneBox.x, paneBox.y);
+      await page.mouse.move(center.x, center.y);
       await page.mouse.wheel(0, -240);
       await page.waitForTimeout(350);
       m = await measureFccu(page);
@@ -839,8 +1037,61 @@ async function measureFccuZoomStates(page, fitScale) {
   states.reveal15 = { ...reveal15, z: zOf(reveal15), ...(await stableCheck(reveal15)) };
   const reveal25 = await wheelTo(2.5);
   states.reveal25 = { ...reveal25, z: zOf(reveal25), ...(await stableCheck(reveal25)) };
-  const closeup = await wheelTo(8);
-  states.closeup = { ...closeup, z: zOf(closeup), ...(await stableCheck(closeup)) };
+  // Target the exchanger cluster from the live 2.5x view: the tags
+  // rendered there give the cluster's current screen centre. Fall
+  // back to the pane centre only if no exchanger tag renders (the
+  // verdict then fails on cluster visibility, not silently).
+  const clusterTarget = (await exchangerClusterCenter(page)) || {
+    x: paneBox.x,
+    y: paneBox.y,
+    tagsUsed: [],
+    fallback: "pane-centre",
+  };
+  const closeup = await wheelTo(8, clusterTarget);
+  states.closeup = { ...closeup, z: zOf(closeup), clusterTarget, ...(await stableCheck(closeup)) };
+  // Deliberate overlapping-exchanger NEGATIVE control (Finding D):
+  // inject a duplicate E-101 tag at the exact same position — what a
+  // broken engine would emit — and prove the close-up assertions fire
+  // on it, while the flare area stays untouched. Then remove the
+  // injected node and prove the scene is clean again. The OLD
+  // close-up assertion (≥1 Tier 3 label anywhere) would still pass on
+  // the tampered scene, so record that too: it is the proof the old
+  // guard was blind to exchanger overlaps.
+  states.closeupNegativeControl = await (async () => {
+    const injected = await page.evaluate(() => {
+      const svg = document.querySelector('[data-testid="designer-pane"] svg');
+      if (!svg) return false;
+      const t = [...svg.querySelectorAll('text[data-label-kind="equipment-tag"]')].find(
+        (el) => (el.textContent || "").trim() === "E-101",
+      );
+      if (!t) return false;
+      const clone = t.cloneNode(true);
+      clone.setAttribute("data-negative-control", "true");
+      svg.appendChild(clone);
+      return true;
+    });
+    if (!injected) {
+      return { injected: false, detected: false, cleaned: false, cleanAfterRemoval: false, legacyAssertionStillPasses: null };
+    }
+    const tampered = await measureFccu(page);
+    const detected = tampered.intersections.some(([a, b]) => a === "E-101" && b === "E-101");
+    const legacyAssertionStillPasses = tampered.texts.filter((t) => t.tier === "3").length > 0;
+    const cleaned = await page.evaluate(() => {
+      const n = document.querySelector('[data-negative-control="true"]');
+      if (!n) return false;
+      n.remove();
+      return true;
+    });
+    const afterClean = await measureFccu(page);
+    return {
+      injected: true,
+      detected,
+      intersections: tampered.intersections,
+      legacyAssertionStillPasses,
+      cleaned,
+      cleanAfterRemoval: afterClean.intersections.length === 0,
+    };
+  })();
   // Pan then re-measure: drag from a pane corner and confirm the view
   // actually moved (a label rect shifts) before re-measuring. A
   // left-button drag with the select tool does NOT pan (PlanCanvas only
@@ -861,13 +1112,7 @@ async function measureFccuZoomStates(page, fitScale) {
     ...(await stableCheck(afterPan)),
   };
   // Return to fit: reload and let the open-time auto-fit settle.
-  await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
-  await page.waitForSelector('[data-fixture-ready="true"]', { timeout: 60000 });
-  await page.waitForFunction(() => {
-    const el = document.querySelector("[data-fccu-state]");
-    return el && (el.getAttribute("data-fccu-state") === "ready" || el.getAttribute("data-fccu-state") === "error");
-  }, { timeout: 60000 });
-  await page.waitForTimeout(800);
+  await reloadFccuFixture(page);
   const backToFit = await measureFccu(page);
   states.returnToFit = { ...backToFit, z: zOf(backToFit) };
   return states;
@@ -947,7 +1192,7 @@ async function main() {
   try {
     for (const c of CASES) {
       for (const width of WIDTHS) {
-        const page = await browser.newPage({ viewport: { width, height: 800 } });
+        const page = await browser.newPage({ viewport: { width, height: 800 }, hasTouch: width < 768 });
         // Jason's phone shows inch-only dimension labels (144", 216", ...),
         // which is the localStorage display-units preference — set it before
         // the page loads so the fixture renders what he actually saw.
@@ -1036,8 +1281,21 @@ async function main() {
             // Zoom states (brief §7): 1.5x / 2.5x reveals, the ~8x
             // exchanger close-up, pan + remeasure, return to fit —
             // phone widths only; the 1919 desktop check is the
-            // fit-state differential.
-            if (width !== 1919) check.fccuZoomStates = await measureFccuZoomStates(page, check.fccu.scale);
+            // fit-state differential. Finding D: the selection proofs
+            // may have recentred the view (FL-101 Find jump), so
+            // reload and verify the original fit first.
+            if (width !== 1919) {
+              check.fccuFitReset = await resetFccuFit(page, check.fccu.scale);
+              check.fccuZoomStates = await measureFccuZoomStates(page, check.fccuFitReset.scale || check.fccu.scale);
+            }
+            // Finding B browser check (360/390/400): runs after the
+            // zoom states' return-to-fit, when the hidden list is
+            // fullest. Its Find click recentres the view, so reload
+            // back to fit afterwards for the screenshot.
+            if ([360, 390, 400].includes(width)) {
+              check.fccuLabelControls = await measureFccuLabelControls(page);
+              await reloadFccuFixture(page);
+            }
           }
         } else if (c === "room-designs") {
           check.roomDesigns = await measureRoomDesigns(page);
@@ -1168,6 +1426,16 @@ async function main() {
               if (!s.disclosures.flare || !s.disclosures.flare.includes("FL-101")) fail(`tap noncrowded equipment did not reveal FL-101: ${JSON.stringify(s.disclosures.flare)}`);
             }
           }
+          // Finding D: the fit reset after the selection proofs must
+          // actually restore the original whole-plot fit — the zoom
+          // states are meaningless if they start from the flare.
+          if (check.fccuFitReset) {
+            const r = check.fccuFitReset;
+            if (r.fccuState !== "ready") fail(`FCCU fit reset after selection: fixture not ready (state=${r.fccuState})`);
+            if (r.fitScaleMatch === false) fail(`FCCU fit reset after selection: scale ${r.scale} drifted from fit ${check.fccu.scale}`);
+            if (r.z !== null && r.z > 1.1) fail(`FCCU fit reset after selection: did not return to fit (z=${r.z})`);
+            if (r.fit && !r.fit.insidePane) fail("FCCU fit reset after selection: structural plan outside the pane");
+          }
           // Zoom states (brief §7): the engine owns equipment tags at
           // every zoom, Tier 2 appears at 1.5–2.5x, pipe dimensions at
           // ≥2.5x, Tier 3 at the ~8x close-up, pan + return-to-fit
@@ -1203,13 +1471,47 @@ async function main() {
             });
             zoomStateVerdict(zs.closeup, "exchanger close-up", (s) => {
               if (s.z === null || s.z < 8) fail(`FCCU exchanger close-up: relative zoom ${s.z} is below 8`);
-              // Tier 3 by data-tier, not by kind: near the sparse flare
-              // stack (360px after a Find jump) the close-up shows a
-              // room-area + a symbol-caption and no pipe dimension, and
-              // both are Tier 3 — counting only pipe-label/annotation/
-              // room-label would false-fail a real Tier 3 reveal.
+              // Finding D: the close-up must actually show the E-101–
+              // E-104 exchanger cluster (targeted by source geometry,
+              // not the selected flare) with Tier 3 candidates
+              // exercised — not merely any Tier 3 label anywhere in a
+              // sparse area. Tier 3 by data-tier, not by kind: the
+              // close-up may show a room-area or a symbol-caption
+              // rather than a pipe dimension, and both are Tier 3.
+              const exchangers = ["E-101", "E-102", "E-103", "E-104"].filter((tag) =>
+                s.texts.some((t) => t.kind === "equipment-tag" && t.text === tag),
+              );
+              if (exchangers.length < 2) fail(`FCCU exchanger close-up: cluster not in view (only ${JSON.stringify(exchangers)} of E-101..E-104 render; target=${JSON.stringify(s.clusterTarget)})`);
               const tier3 = s.texts.filter((t) => t.tier === "3").length;
               if (!tier3) fail("FCCU exchanger close-up: no Tier 3 label renders at ~8x");
+              // No clipped visible label: a label whose rect straddles
+              // the pane edge is clipped by the viewport. The engine
+              // only accepts boxes fully inside the safe viewport, so
+              // a straddle is a defect, not a zoom artifact.
+              const clipped = (s.eligible || []).filter((t) => {
+                const r = t.rect;
+                const p = s.paneRect;
+                if (!p) return false;
+                const inside = r.left >= p.left - 1 && r.right <= p.right + 1 && r.top >= p.top - 1 && r.bottom <= p.bottom + 1;
+                const intersects = r.left < p.right + 1 && r.right > p.left - 1 && r.top < p.bottom + 1 && r.bottom > p.top - 1;
+                return intersects && !inside;
+              }).map((t) => t.text);
+              if (clipped.length) fail(`FCCU exchanger close-up: clipped visible labels: ${JSON.stringify(clipped)}`);
+              // Negative control (Finding D): the injected overlapping
+              // E-101 pair must have been detected by these very
+              // assertions, and the scene must be clean again after
+              // its removal. A guard that cannot see an exchanger
+              // overlap is blind where it matters most.
+              const nc = zs.closeupNegativeControl;
+              if (!nc) fail("FCCU exchanger close-up: negative control did not run");
+              else {
+                if (!nc.injected) fail("FCCU exchanger close-up: negative control could not inject the overlapping E-101 pair (cluster not in view?)");
+                if (nc.injected && !nc.detected) fail(`FCCU exchanger close-up: negative control NOT detected (injected overlap invisible to the guard): ${JSON.stringify(nc.intersections)}`);
+                if (nc.injected && (!nc.cleaned || !nc.cleanAfterRemoval)) fail("FCCU exchanger close-up: negative-control injection leaked into later states");
+                if (nc.injected && !nc.legacyAssertionStillPasses) {
+                  results.warnings.push(`fccu@${width}: negative control: the OLD close-up assertion (≥1 Tier 3 label) would ALSO have failed on the tampered scene — the blindness proof did not hold this run`);
+                }
+              }
             });
             zoomStateVerdict(zs.pan, "pan", (s) => {
               if (!s.moved) fail("FCCU pan: the drag did not move the view (pan gesture not working?)");
@@ -1219,6 +1521,52 @@ async function main() {
               if (zs.returnToFit.intersections.length) fail(`FCCU return-to-fit: eligible label intersections: ${JSON.stringify(zs.returnToFit.intersections)}`);
               if (zs.returnToFit.outsidePane.length) fail(`FCCU return-to-fit: eligible labels outside pane: ${JSON.stringify(zs.returnToFit.outsidePane)}`);
               if (zs.returnToFit.z !== null && zs.returnToFit.z > 1.1) fail(`FCCU return-to-fit: scale did not return to fit (z=${zs.returnToFit.z})`);
+            }
+          }
+          // Finding B browser check (360/390/400): real bounding
+          // rectangles for the Labels control — the SVG geometry
+          // measurements above never certified the HTML panel — plus
+          // Escape/Close/Find focus behavior and a real touchscreen
+          // tap on a Find row.
+          if (check.fccuLabelControls) {
+            const lc = check.fccuLabelControls;
+            if (!lc.opened) fail("FCCU label controls: Hidden labels disclosure did not open");
+            else {
+              const g = lc.geometry;
+              const small = [];
+              for (const t of g.toggleRects || []) {
+                if (!t.rect || t.rect.height < 44) small.push(`toggle ${t.label} height=${t.rect?.height}`);
+              }
+              if (!g.summaryRect || g.summaryRect.height < 44) small.push(`summary height=${g.summaryRect?.height}`);
+              if (!g.searchRect || g.searchRect.height < 44) small.push(`search height=${g.searchRect?.height}`);
+              for (const row of g.rows || []) {
+                if (!row.findRect || row.findRect.height < 44) small.push(`Find "${row.text}" height=${row.findRect?.height}`);
+                if (!row.rowRect || row.rowRect.height < 44) small.push(`row "${row.text}" height=${row.rowRect?.height}`);
+              }
+              if (small.length) fail(`FCCU label controls: tap targets below the 44px minimum: ${JSON.stringify(small)}`);
+              if (!g.rows || g.rows.length === 0) fail("FCCU label controls: no hidden-label rows to measure (empty list is not a pass)");
+              if (g.detailsRect && (g.detailsRect.right > g.innerWidth + 1 || g.detailsRect.bottom > g.innerHeight + 1)) {
+                fail(`FCCU label controls: disclosure overflows the viewport: ${JSON.stringify(g.detailsRect)} vs ${g.innerWidth}x${g.innerHeight}`);
+              }
+              if (!lc.escape.closed) fail("FCCU label controls: Escape did not close the disclosure");
+              if (!lc.escape.focusOnSummary) fail("FCCU label controls: Escape did not return focus to the summary");
+              if (!lc.closeButton.closed) fail("FCCU label controls: Close button did not close the disclosure");
+              if (!lc.closeButton.focusOnSummary) fail("FCCU label controls: Close button did not return focus to the summary");
+              if (!lc.findAnnotation.rowFound) fail("FCCU label controls: no FICTIONAL FCCU annotation row to Find");
+              else {
+                if (!lc.findAnnotation.detailsClosed) fail("FCCU label controls: Find did not close the disclosure");
+                if (!lc.findAnnotation.detailText || !lc.findAnnotation.detailText.includes("FICTIONAL FCCU — GENERIC LAYOUT EXERCISE")) {
+                  fail(`FCCU label controls: Find did not show the full annotation text immediately: ${JSON.stringify(lc.findAnnotation.detailText)}`);
+                }
+                if (!lc.findAnnotation.focusOnDetail) fail("FCCU label controls: Find did not move focus into the identity disclosure");
+              }
+              if (lc.tap.error) {
+                fail(`FCCU label controls: touchscreen tap threw instead of tapping: ${lc.tap.error}`);
+              } else if (lc.tap.skipped) {
+                results.warnings.push(`fccu@${width}: label controls tap step skipped: ${lc.tap.skipped}`);
+              } else if (!lc.tap.detailsClosed) {
+                fail("FCCU label controls: touchscreen tap on Find did not close the disclosure");
+              }
             }
           }
         }

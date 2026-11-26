@@ -37,11 +37,17 @@
 //     equipment rows are ranked left-to-right, so upper-right-first
 //     cascades each tag right into the next glyph's tag space and
 //     withholds 5 of 14 Tier 1 tags at fit; upper-left-first lets each
-//     tag nest into the free space left of its glyph and places 12 of
-//     14 (measured on the real fixture, jsdom probe + geometry guard).
-//     The brief lists the four positions without binding their order;
-//     the mechanism — four positions, first non-overlapping wins —
-//     is unchanged. Flagged in the PR for the reviewer's call.
+//     tag nest into the free space left of its glyph and places 10 of
+//     14 in the browser geometry guard (12 of 14 in the jsdom probe,
+//     whose estimator measures wider). ACCEPTED as an intentional
+//     deviation by the PR #862 reviewer 2026-11-26: the order is an
+//     implementation heuristic, not the user-facing invariant, which
+//     is deterministic tier ranking, zero intersections and at most
+//     four Tier 1 withheld at 390/400px. The brief lists the four
+//     positions without binding their order; the mechanism — four
+//     positions, first non-overlapping wins — is unchanged. Do not
+//     revert: the try-order is regression-tested (see
+//     plotPlanLabelLayout.test.js).
 //   * A label placed BELOW its glyph (lower-right / lower-left) is
 //     visually detached from the usual above-glyph reading position, so
 //     it gets a thin leader line back to a small dot on the glyph's
