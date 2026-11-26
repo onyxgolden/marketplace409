@@ -768,10 +768,14 @@ async function measureFccuSelection(page) {
 
 // Whole-plot-fit assertions for the label engine (brief §7). Checked
 // by TEXT against the tier lists so they fail on the old overview
-// rendering too (fail-before). Gated on engineActive: at 1919 the
-// engine is off and the desktop in-glyph inventory is the baseline.
+// rendering too (fail-before). Gated on the PANE being phone-width
+// (<768px) — the engine's own activation condition for an industrial
+// design — NOT on the engine control being present: on the unmodified
+// base the control does not exist, and gating on it would let the base
+// pass these assertions vacuously. At 1919 the pane is wide, so the
+// desktop in-glyph inventory stays the baseline there.
 function assertFccuEngineFit(f, width, fail, warn, label) {
-  if (!f.engineActive) return;
+  if (!(f.paneRect && f.paneRect.width < 768)) return;
   const eqTags = f.texts.filter((t) => t.kind === "equipment-tag");
   const tier1Shown = FCCU_TIER_1.filter((tag) => eqTags.some((t) => t.text === tag));
   const tier1Withheld = FCCU_TIER_1.length - tier1Shown.length;
