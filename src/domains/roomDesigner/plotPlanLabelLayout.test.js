@@ -79,30 +79,32 @@ describe("tierForRelativeZoom", () => {
 });
 
 describe("layoutPlotPlanLabels", () => {
-  it("places a lone label upper-right of its glyph, inside the pane", () => {
+  it("places a lone label upper-left of its glyph, inside the pane", () => {
     const { placed, withheld, diagnostics } = layout([cand()]);
     expect(withheld).toHaveLength(0);
     expect(placed).toHaveLength(1);
     const p = placed[0];
-    expect(p.position).toBe("upper-right");
+    // Upper-left is tried first (see the order note in
+    // plotPlanLabelLayout.js): a lone label nests to the left.
+    expect(p.position).toBe("upper-left");
     expect(p.leader).toBeNull();
-    // Box sits 6px right of the glyph's right edge and 6px above its top.
-    expect(p.rect.left).toBe(200 + 4 + LABEL_ANCHOR_OFFSET_PX);
+    // Box sits 6px left of the glyph's left edge and 6px above its top.
+    expect(p.rect.right).toBe(200 - 4 - LABEL_ANCHOR_OFFSET_PX);
     expect(p.rect.bottom).toBe(400 - 4 - LABEL_ANCHOR_OFFSET_PX);
-    expect(p.rect.right).toBeLessThanOrEqual(VIEWPORT.right - 2);
+    expect(p.rect.left).toBeGreaterThanOrEqual(VIEWPORT.left + 2);
     expect(diagnostics.byTier[1].placed).toBe(1);
   });
 
   it("tries the other three corners before withholding a colliding label", () => {
-    // Two tags on the same glyph: the second cannot take upper-right
+    // Two tags on the same glyph: the second cannot take upper-left
     // (taken), so it must fall back to another corner, not vanish.
     const a = cand({ id: "equipment-tag:R-101", tag: "R-101", rank: 0 });
     const b = cand({ id: "equipment-tag:R-102", tag: "R-102", rank: 1 });
     const { placed, withheld } = layout([a, b]);
     expect(withheld).toHaveLength(0);
     expect(placed).toHaveLength(2);
-    expect(placed[0].position).toBe("upper-right");
-    expect(placed[1].position).toBe("upper-left");
+    expect(placed[0].position).toBe("upper-left");
+    expect(placed[1].position).toBe("upper-right");
     const [r1, r2] = placed.map((p) => p.rect);
     expect(r1.left < r2.right && r2.left < r1.right && r1.top < r2.bottom && r2.top < r1.bottom).toBe(false);
   });
