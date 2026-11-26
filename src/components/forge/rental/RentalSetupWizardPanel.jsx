@@ -3,37 +3,17 @@ import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { ArrowRight, CheckCircle2, Circle, RefreshCw } from "lucide-react";
+import { fetchSetupWizardStatus, writeSetupWizardDismissal } from "./rentalSetupWizardStatus";
 
-// Dismissal persists in localStorage (deliberately not a migration): it is a
-// per-browser UI preference, not workspace data, and the wizard re-appears on a
-// fresh device until that browser is dismissed too — acceptable for a one-time
-// tour, and the Setup guide entry under Settings always offers a re-run.
-export const SETUP_WIZARD_DISMISSAL_STORAGE_KEY = "forge-rental-setup-wizard-dismissed:v1";
-
-export function readSetupWizardDismissal() {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(SETUP_WIZARD_DISMISSAL_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-export function writeSetupWizardDismissal() {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(SETUP_WIZARD_DISMISSAL_STORAGE_KEY, "1");
-  } catch {
-    // Storage unavailable — the wizard simply shows again next load.
-  }
-}
-
-export async function fetchSetupWizardStatus() {
-  const response = await fetch("/api/rental/setup-wizard-status");
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || "Unable to load setup progress.");
-  return body;
-}
+// Status helpers live in ./rentalSetupWizardStatus (re-exported here so
+// existing imports keep working): the shell reads them without statically
+// importing this panel, which Slice 1 demand-loads with next/dynamic.
+export {
+  SETUP_WIZARD_DISMISSAL_STORAGE_KEY,
+  fetchSetupWizardStatus,
+  readSetupWizardDismissal,
+  writeSetupWizardDismissal,
+} from "./rentalSetupWizardStatus";
 
 const STEP_STATUS_STYLES = {
   done: { badge: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300", label: "Done" },

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getRentalSummaryPayload, resetRentalSummaryClient } from "./rentalSummaryClient";
 
-const RENTAL_URL = "/api/rental";
+const RENTAL_URL = "/api/rental?surface=summary";
 const REPORTS_URL = "/api/rental/reports";
 const NO_DELAY = [0, 0];
 
@@ -46,7 +46,7 @@ describe("getRentalSummaryPayload", () => {
     ]);
     expect(first).toBe(second);
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(fetch.mock.calls.map(([url]) => url).sort()).toEqual([RENTAL_URL, REPORTS_URL]);
+    expect(fetch.mock.calls.map(([url]) => url).sort()).toEqual([REPORTS_URL, RENTAL_URL]);
   });
 
   it("fetches fresh again once the previous pair has settled", async () => {
