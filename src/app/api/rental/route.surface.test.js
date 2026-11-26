@@ -87,6 +87,11 @@ const FIXTURES = {
   ],
 };
 
+// The or() filter strings the production code actually sent: the escaping
+// tests read these to prove the wire pattern (escaped comma / wildcard /
+// backslash), not just the rows that came back.
+const capturedOrFilters = [];
+
 // Recording chainable query mock: applies eq/in filters, order and range to
 // the fixture rows, and records every select string for the guard assertions.
 function makeClient(calls) {
@@ -121,7 +126,7 @@ function makeClient(calls) {
   }
   function query(table) {
     const rows = FIXTURES[table] || [];
-    const state = { table, select: null, filters: [], order: null, range: null };
+    const state = { table, select: null, filters: [], orders: [], range: null };
     const api = {
       select(columns, options) {
         state.select = columns;
@@ -131,8 +136,8 @@ function makeClient(calls) {
       },
       eq(column, value) { state.filters.push(["eq", column, value]); return api; },
       in(column, values) { state.filters.push(["in", column, values]); return api; },
-      or(orString) { state.filters.push(["or", null, parseOrTerms(orString)]); return api; },
-      order(column, options) { state.order = [column, options?.ascending !== false]; return api; },
+      or(orString) { capturedOrFilters.push(orString); state.filters.push(["or", null, parseOrTerms(orString)]); return api; },
+      order(column, options) { state.orders.push([column, options?.ascending !== false]); return api; },
       range(from, to) { state.range = [from, to]; return api; },
       limit(count) { state.limit = count; return api; },
       is() { return api; },
@@ -149,11 +154,15 @@ function makeClient(calls) {
       then(resolve) {
         let out = applyFilters(rows, state.filters);
         const total = out.length;
-        if (state.order) {
-          const [column, ascending] = state.order;
+        if (state.orders.length) {
+          // Multi-key: each .order() call appends a key, so a name tie
+          // falls through to the next key (id) instead of resolving by
+          // storage order.
           out = [...out].sort((a, b) => {
-            if (a[column] < b[column]) return ascending ? -1 : 1;
-            if (a[column] > b[column]) return ascending ? 1 : -1;
+            for (const [column, ascending] of state.orders) {
+              if (a[column] < b[column]) return ascending ? -1 : 1;
+              if (a[column] > b[column]) return ascending ? 1 : -1;
+            }
             return 0;
           });
         }
@@ -328,6 +337,68 @@ describe("GET /api/rental surface projections", () => {
     // A search term cannot widen the match with wildcards.
     const wildcard = await (await get("/api/rental?surface=tenants&search=Tenant%20%25")).json();
     expect(wildcard.totalCount).toBe(0);
+  });
+
+  it("tenants pagination orders equal display names by id across page 1 and page 2", async () => {
+    // PR #863 fix round 2, residual P2: two tenants sharing a display name
+    // at ranks 50/51 must land deterministically on their own pages -- the
+    // id tie-break decides which one page 1 ends on, regardless of the
+    // order the rows happen to be stored in.
+    const originalTenants = FIXTURES.rental_tenants;
+    const base = makeTenants(1)[0];
+    const duplicateLate = { ...base, id: "tenant_z50", display_name: "Tenant 50", email: "z50@example.com" };
+    const duplicateEarly = { ...base, id: "tenant_a50", display_name: "Tenant 50", email: "a50@example.com" };
+    try {
+      // Stored in the wrong order on purpose: the later id is stored first.
+      FIXTURES.rental_tenants = [...makeTenants(49), duplicateLate, duplicateEarly];
+      const firstPage = await (await get("/api/rental?surface=tenants&page=1")).json();
+      const secondPage = await (await get("/api/rental?surface=tenants&page=2")).json();
+      expect(firstPage.tenants).toHaveLength(50);
+      expect(secondPage.tenants).toHaveLength(1);
+      expect(firstPage.totalCount).toBe(51);
+      expect(firstPage.tenants[49]).toEqual({ id: "tenant_a50", display_name: "Tenant 50", email: "a50@example.com", invited_at: null, auth_user_id: null, photo_bucket: null, photo_object_path: null, photo_url: null });
+      expect(secondPage.tenants[0]).toEqual({ id: "tenant_z50", display_name: "Tenant 50", email: "z50@example.com", invited_at: null, auth_user_id: null, photo_bucket: null, photo_object_path: null, photo_url: null });
+      // Stable across repeated queries: both pages, every id exactly once.
+      const repeatFirst = await (await get("/api/rental?surface=tenants&page=1")).json();
+      const repeatSecond = await (await get("/api/rental?surface=tenants&page=2")).json();
+      const allIds = [...firstPage.tenants, ...secondPage.tenants].map((tenant) => tenant.id);
+      expect([...repeatFirst.tenants, ...repeatSecond.tenants].map((tenant) => tenant.id)).toEqual(allIds);
+      expect(new Set(allIds).size).toBe(51);
+      expect(allIds[49]).toBe("tenant_a50");
+      expect(allIds[50]).toBe("tenant_z50");
+    } finally {
+      FIXTURES.rental_tenants = originalTenants;
+    }
+  });
+
+  it("tenants search escapes commas, quotes and wildcards on the wire instead of widening or breaking", async () => {
+    // PR #863 fix round 2: a comma must not split the PostgREST or() term
+    // list, a quote must not break the query, and % / _ / backslash must
+    // not widen the match. The wire pattern is asserted directly from the
+    // or() string the production code sent; the rows prove none of these
+    // terms matches a real tenant.
+    const backslash = String.fromCharCode(92);
+    capturedOrFilters.length = 0;
+    const comma = await (await get("/api/rental?surface=tenants&search=Tenant%2C%2001")).json();
+    expect(comma.tenants).toEqual([]);
+    expect(comma.totalCount).toBe(0);
+    expect(capturedOrFilters.at(-1)).toContain(`Tenant${backslash}, 01`);
+    const quote = await (await get("/api/rental?surface=tenants&search=O%27Brien")).json();
+    expect(quote.tenants).toEqual([]);
+    expect(quote.totalCount).toBe(0);
+    expect(capturedOrFilters.at(-1)).toContain("O'Brien");
+    const percent = await (await get("/api/rental?surface=tenants&search=Tenant%20%25")).json();
+    expect(percent.tenants).toEqual([]);
+    expect(percent.totalCount).toBe(0);
+    expect(capturedOrFilters.at(-1)).toContain(`Tenant ${backslash}%`);
+    const underscore = await (await get("/api/rental?surface=tenants&search=Tenant%20_01")).json();
+    expect(underscore.tenants).toEqual([]);
+    expect(underscore.totalCount).toBe(0);
+    expect(capturedOrFilters.at(-1)).toContain(`Tenant ${backslash}_01`);
+    const slash = await (await get("/api/rental?surface=tenants&search=Tenant%20%5C")).json();
+    expect(slash.tenants).toEqual([]);
+    expect(slash.totalCount).toBe(0);
+    expect(capturedOrFilters.at(-1)).toContain(`Tenant ${backslash}${backslash}`);
   });
 
   it("tenants projection join counts (Q1 receipt: owner-wide reads behind the 50 rows)", async () => {

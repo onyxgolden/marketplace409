@@ -503,4 +503,23 @@ describe("patchCacheEntry write barrier (PR #863 fix round 1)", () => {
     await expect(pending).resolves.toBe("stale");
     expect(getCacheEntry("wb-6")?.data).toBe("stale");
   });
+
+  it("the barrier holds on a paged list key (rental:tenants:v2:page:2)", async () => {
+    // PR #863 fix round 2, residual 3: Load more reads page 2 through
+    // fetchWithDedupe under its own key, and row mutations patch that key --
+    // a stale page-2 GET must not overwrite the patched page either.
+    let resolveStale;
+    const stale = new Promise((resolve) => { resolveStale = resolve; });
+    await fetchWithDedupe("rental:tenants:v2:page:2", () => Promise.resolve({ tenants: [{ id: "t71", email: "old@example.com" }], totalCount: 75, page: 2, pageSize: 50 }));
+    const pending = fetchWithDedupe("rental:tenants:v2:page:2", () => stale.then(() => ({ tenants: [{ id: "t71", email: "stale@example.com" }], totalCount: 75, page: 2, pageSize: 50 })));
+    await tick();
+    expect(isInflight("rental:tenants:v2:page:2")).toBe(true);
+    expect(patchCacheEntry("rental:tenants:v2:page:2", (data) => ({ ...data, tenants: [{ id: "t71", email: "new@example.com" }] }))).toBe(true);
+    expect(isInflight("rental:tenants:v2:page:2")).toBe(false);
+    resolveStale();
+    await expect(pending).resolves.toEqual({ tenants: [{ id: "t71", email: "stale@example.com" }], totalCount: 75, page: 2, pageSize: 50 });
+    await tick();
+    expect(getCacheEntry("rental:tenants:v2:page:2").data.tenants[0].email).toBe("new@example.com");
+    expect(getCacheEntry("rental:tenants:v2:page:2").error).toBe("");
+  });
 });

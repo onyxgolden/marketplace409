@@ -10,7 +10,7 @@ import TenantLedgerPage from "./TenantLedgerPage";
 import { useCardContextMenu, CardContextMenu, CARD_REGION_ATTRIBUTE } from "./CardContextMenu";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
-import { fetchWithDedupe, getCacheEntry, invalidatePrefix } from "@/hooks/swrCache";
+import { fetchWithDedupe, getCacheEntry, invalidatePrefix, patchCacheEntry } from "@/hooks/swrCache";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { PAYMENT_POLICIES, paymentPolicyDescription, paymentPolicyLabel } from "@/domains/rental-payment/paymentPolicy";
 import { useRentalTerminology } from "./rentalTerminologyContext";
@@ -100,7 +100,11 @@ export function compactTenantRow(domainTenant) {
 }
 
 export function sortTenantsByName(rows) {
-  return [...rows].sort((a, b) => String(a.display_name || "").localeCompare(String(b.display_name || "")));
+  // Mirror the server order exactly (display_name, then id): a name tie
+  // must resolve the same way in the browser as in the database, or a
+  // locally re-sorted list can disagree with the next server page.
+  return [...rows].sort((a, b) => String(a.display_name || "").localeCompare(String(b.display_name || ""))
+    || String(a.id || "").localeCompare(String(b.id || "")));
 }
 
 // PR #863 fix round 1, Finding 2 — the tenants list is paged server-side
@@ -229,6 +233,9 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   const [coTenantQuery, setCoTenantQuery] = useState("");
   const [coTenantSearch, setCoTenantSearch] = useState([]);
   const [coTenantSearching, setCoTenantSearching] = useState(false);
+  // A failed lookup is its own state: it must never present as an
+  // authoritative "No tenant matches" (fix round 2, residual 3).
+  const [coTenantSearchError, setCoTenantSearchError] = useState("");
   const coTenantQueryRef = useRef("");
   const tenants = useMemo(() => data
     ? [...(data.tenants || []), ...extraTenantPages.flatMap((page) => page.tenants || [])]
@@ -280,6 +287,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     setTenantPageCount(1);
     setCoTenantQuery("");
     setCoTenantSearch([]);
+    setCoTenantSearchError("");
   }, [identityEpoch]);
   // Switching records resets the co-tenant search: a query typed for one
   // lease must never offer its matches on another lease's form. Adjusted
@@ -291,6 +299,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     setCoTenantQuery("");
     setCoTenantSearch([]);
     setCoTenantSearching(false);
+    setCoTenantSearchError("");
   }
   // Debounced server lookup for the add-co-tenant picker: 2+ characters,
   // 300ms after the last keystroke, one narrow read per query string. A
@@ -303,8 +312,8 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     if (query.length < 2) return undefined;
     const timer = setTimeout(() => {
       fetchWithDedupe(`${TENANT_LIST_KEY}:search:${query.toLowerCase()}`, () => fetchTenantLookup(query))
-        .then((payload) => { if (coTenantQueryRef.current === query) setCoTenantSearch(payload?.tenants || []); })
-        .catch(() => { if (coTenantQueryRef.current === query) setCoTenantSearch([]); })
+        .then((payload) => { if (coTenantQueryRef.current === query) { setCoTenantSearch(payload?.tenants || []); setCoTenantSearchError(""); } })
+        .catch(() => { if (coTenantQueryRef.current === query) { setCoTenantSearch([]); setCoTenantSearchError("Tenant search failed — please try again."); } })
         .finally(() => { if (coTenantQueryRef.current === query) setCoTenantSearching(false); });
     }, 300);
     return () => clearTimeout(timer);
@@ -393,10 +402,30 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     invalidateList();
     await refreshList();
   }
+  // One authoritative loaded-pages reconciliation path (fix round 2,
+  // residual 3): a row mutation patches the matching tenant in page 1 AND
+  // every loaded extra page, and keeps each corresponding page cache entry
+  // coherent (patched through the same Finding-1 barrier as page 1, so a
+  // stale in-flight page read cannot overwrite it). Returns false when
+  // page 1 has no entry to patch -- the caller falls back to a targeted
+  // refresh of page 1. Extra pages cannot exist without a page-1 entry
+  // (Load more only appends after page 1 loads), so a false return means
+  // there is nothing loaded to reconcile.
+  function patchTenantRowInLoadedPages(tenantId, patchRow) {
+    const patched = mutateList((list) => ({ ...list,
+      tenants: (list.tenants || []).map((item) => item.id === tenantId ? patchRow(item) : item) }));
+    if (!patched) return false;
+    setExtraTenantPages((prev) => prev.map((page) => ({ ...page,
+      tenants: (page.tenants || []).map((item) => item.id === tenantId ? patchRow(item) : item) })));
+    extraTenantPages.forEach((page) => {
+      patchCacheEntry(tenantListPageKey(page.page), (data) => data ? { ...data,
+        tenants: (data.tenants || []).map((item) => item.id === tenantId ? patchRow(item) : item) } : data);
+    });
+    return true;
+  }
   // Photo upload/remove: the photo URL changes in place in both caches.
   function reconcileTenantPhoto(tenantId, photoUrl) {
-    mutateList((list) => ({ ...list,
-      tenants: (list.tenants || []).map((item) => item.id === tenantId ? { ...item, photo_url: photoUrl } : item) }));
+    patchTenantRowInLoadedPages(tenantId, (item) => ({ ...item, photo_url: photoUrl }));
     mutateDetail((detail) => detail?.tenant ? { ...detail,
       tenant: { ...detail.tenant, photo_url: photoUrl },
       tenants: (detail.tenants || []).map((item) => item.id === tenantId ? { ...item, photo_url: photoUrl } : item) } : detail);
@@ -418,14 +447,16 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       }
       const savedId = result.tenant.id;
       formElement.reset();
-      // Row-only reconciliation while the whole portfolio fits on page 1:
-      // the new tenant slots into the cached list (sorted, count bumped) --
-      // no refetch. Past 50 tenants the new row can push another row off
-      // page 1, so re-read the exact page instead of appending locally
-      // (which would render 51+ rows and the wrong first-50 subset). The
-      // detail surface loads on demand when the record page opens.
+      // Row-only reconciliation while the new total still fits on page 1
+      // (oldTotal + 1 <= 50): the new tenant slots into the cached list
+      // (sorted, count bumped) -- no refetch. At exactly 50 tenants the new
+      // row belongs on page 2, so re-read the exact page instead of
+      // appending locally (which would render 51+ rows and the wrong
+      // first-50 subset). The detail surface loads on demand when the
+      // record page opens.
       const cachedList = getCacheEntry(TENANT_LIST_KEY)?.data;
-      if (cachedList && isSinglePageTenantList(cachedList)) {
+      const oldTotal = cachedList ? (cachedList.totalCount ?? (cachedList.tenants || []).length) : 0;
+      if (cachedList && oldTotal + 1 <= TENANT_LIST_PAGE_SIZE) {
         if (!mutateList((list) => ({ ...list,
           tenants: sortTenantsByName([...(list.tenants || []), compactTenantRow(result.tenant)]),
           totalCount: (list.totalCount ?? (list.tenants || []).length) + 1 }))) {
@@ -485,7 +516,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       setMessage(`Portal email updated for ${result.tenant.display_name}.`);
       // The server returns the updated row (id, display_name, email, status).
       const patchRow = (row) => row.id === tenantId ? { ...row, email: result.tenant.email, display_name: result.tenant.display_name, status: result.tenant.status } : row;
-      await patchOrRefresh(mutateList, refreshList, (list) => ({ ...list, tenants: (list.tenants || []).map(patchRow) }));
+      if (!patchTenantRowInLoadedPages(tenantId, patchRow)) await refreshList();
       await patchOrRefresh(mutateDetail, refreshDetail, (detail) => detail?.tenant ? { ...detail,
         tenant: patchRow(detail.tenant), tenants: (detail.tenants || []).map(patchRow) } : detail);
     } catch (error) { setMessage(error.message); } finally { setBusyKey(null); }
@@ -503,7 +534,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       setMessage(`Invite email sent to ${tenant.display_name} (${tenant.email}).`);
       // The server stamps invited_at and flips status to "invited" on send.
       const patchRow = (row) => row.id === tenant.id ? { ...row, invited_at: result.invitedAt, status: "invited" } : row;
-      await patchOrRefresh(mutateList, refreshList, (list) => ({ ...list, tenants: (list.tenants || []).map(patchRow) }));
+      if (!patchTenantRowInLoadedPages(tenant.id, patchRow)) await refreshList();
       await patchOrRefresh(mutateDetail, refreshDetail, (detail) => detail?.tenant ? { ...detail,
         tenant: patchRow(detail.tenant), tenants: (detail.tenants || []).map(patchRow) } : detail);
     } catch (error) { setMessage(error.message); } finally { setBusyKey(null); }
@@ -748,7 +779,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
             </div>
           </div>
         </div>}
-        <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700"><h3 className="text-lg font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3>{household.lease?.status === "cancelled" && <p className="mt-2 text-sm font-bold text-slate-500 dark:text-slate-400">This lease is cancelled — membership cannot be changed.</p>}<div className="mt-2 space-y-4">{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} busyKey={busyKey} updateProfile={updateProfile} updateEmail={updateEmail} onPhotoUploaded={(photoUrl) => reconcileTenantPhoto(coTenant.id, photoUrl)} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={detailData?.lateFeeTenantOverride || null} saveLateFeeOverride={saveLateFeeOverride} workspacePaymentPolicy={detailData?.paymentPolicy || "allow_any_amount"} paymentPolicyOverride={coTenant.payment_policy||null} savePaymentPolicyOverride={savePaymentPolicyOverride} makePrimary={household.lease && household.lease.status !== "cancelled" ? ()=>makePrimary(household.lease.id,coTenant.id) : null} removeCoTenant={household.lease && household.lease.status !== "cancelled" ? ()=>removeCoTenant(household.lease.id,coTenant) : null}/>) : !household.lease ? <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned — this tenant has no lease yet. Create a lease first, then add co-tenants to it.</p> : household.lease.status !== "cancelled" && coTenantCandidates.length === 0 && !coTenantsBeyondLoadedPages ? <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease. Every saved tenant is already on this lease — create a new tenant record first to add one.</p> : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>{household.lease && household.lease.status !== "cancelled" && (coTenantCandidates.length > 0 || coTenantQuery.trim().length >= 2 || coTenantsBeyondLoadedPages) && <form onSubmit={(event)=>addCoTenant(event, household.lease.id)} className="mt-4 flex flex-wrap items-end gap-3"><label className="min-w-[260px] flex-1 text-sm font-bold text-slate-900 dark:text-white">Search all tenants by name or email<input name="coTenantSearch" value={coTenantQuery} onChange={(event)=>{ const value = event.target.value; setCoTenantQuery(value); if (value.trim().length < 2) { setCoTenantSearch([]); setCoTenantSearching(false); } else { setCoTenantSearching(true); } }} placeholder="Type at least 2 characters to search every tenant" aria-label="Search all tenants by name or email" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label><label className="min-w-[260px] flex-1 text-sm font-bold text-slate-900 dark:text-white">Add co-tenant<select name="coTenantId" required defaultValue="" aria-label="Tenant to add as co-tenant" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="" disabled>Select a saved tenant</option>{coTenantCandidates.map((candidate)=><option key={candidate.id} value={candidate.id}>{candidate.display_name} — {candidate.email}</option>)}</select></label><button disabled={busyKey === BUSY_KEYS.addCoTenant} className={`rounded-lg px-4 py-2 text-sm font-black disabled:opacity-50 ${goldControlClassName}`}>Add co-tenant</button>{coTenantSearching && <p className="w-full text-xs font-bold text-slate-500 dark:text-slate-400">Searching…</p>}{coTenantQuery.trim().length >= 2 && !coTenantSearching && coTenantSearch.length === 0 && <p className="w-full text-xs font-bold text-slate-500 dark:text-slate-400">No tenant matches “{coTenantQuery.trim()}”.</p>}</form>}</div>
+        <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700"><h3 className="text-lg font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3>{household.lease?.status === "cancelled" && <p className="mt-2 text-sm font-bold text-slate-500 dark:text-slate-400">This lease is cancelled — membership cannot be changed.</p>}<div className="mt-2 space-y-4">{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} busyKey={busyKey} updateProfile={updateProfile} updateEmail={updateEmail} onPhotoUploaded={(photoUrl) => reconcileTenantPhoto(coTenant.id, photoUrl)} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={detailData?.lateFeeTenantOverride || null} saveLateFeeOverride={saveLateFeeOverride} workspacePaymentPolicy={detailData?.paymentPolicy || "allow_any_amount"} paymentPolicyOverride={coTenant.payment_policy||null} savePaymentPolicyOverride={savePaymentPolicyOverride} makePrimary={household.lease && household.lease.status !== "cancelled" ? ()=>makePrimary(household.lease.id,coTenant.id) : null} removeCoTenant={household.lease && household.lease.status !== "cancelled" ? ()=>removeCoTenant(household.lease.id,coTenant) : null}/>) : !household.lease ? <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned — this tenant has no lease yet. Create a lease first, then add co-tenants to it.</p> : household.lease.status !== "cancelled" && coTenantCandidates.length === 0 && !coTenantsBeyondLoadedPages ? <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease. Every saved tenant is already on this lease — create a new tenant record first to add one.</p> : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>{household.lease && household.lease.status !== "cancelled" && (coTenantCandidates.length > 0 || coTenantQuery.trim().length >= 2 || coTenantsBeyondLoadedPages) && <form onSubmit={(event)=>addCoTenant(event, household.lease.id)} className="mt-4 flex flex-wrap items-end gap-3"><label className="min-w-[260px] flex-1 text-sm font-bold text-slate-900 dark:text-white">Search all tenants by name or email<input name="coTenantSearch" value={coTenantQuery} onChange={(event)=>{ const value = event.target.value; setCoTenantQuery(value); setCoTenantSearchError(""); if (value.trim().length < 2) { setCoTenantSearch([]); setCoTenantSearching(false); } else { setCoTenantSearching(true); } }} placeholder="Type at least 2 characters to search every tenant" aria-label="Search all tenants by name or email" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label><label className="min-w-[260px] flex-1 text-sm font-bold text-slate-900 dark:text-white">Add co-tenant<select name="coTenantId" required defaultValue="" aria-label="Tenant to add as co-tenant" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="" disabled>Select a saved tenant</option>{coTenantCandidates.map((candidate)=><option key={candidate.id} value={candidate.id}>{candidate.display_name} — {candidate.email}</option>)}</select></label><button disabled={busyKey === BUSY_KEYS.addCoTenant} className={`rounded-lg px-4 py-2 text-sm font-black disabled:opacity-50 ${goldControlClassName}`}>Add co-tenant</button>{coTenantSearching && <p className="w-full text-xs font-bold text-slate-500 dark:text-slate-400">Searching…</p>}{coTenantSearchError && <p className="w-full text-xs font-bold text-red-600 dark:text-red-400">{coTenantSearchError}</p>}{coTenantQuery.trim().length >= 2 && !coTenantSearching && !coTenantSearchError && coTenantSearch.length === 0 && <p className="w-full text-xs font-bold text-slate-500 dark:text-slate-400">No tenant matches “{coTenantQuery.trim()}”.</p>}</form>}</div>
         <a href="/auth?next=/forge/rental/portal" className="mt-5 inline-block text-sm font-bold text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Open tenant sign-in</a></>}
         />
       </div>

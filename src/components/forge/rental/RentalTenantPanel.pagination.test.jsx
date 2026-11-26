@@ -55,6 +55,7 @@ describe("RentalTenantPanel Finding 2 pagination (75 tenants)", () => {
   let liveTenants;
   let liveMemberships;
   let failEmailUpdate;
+  let failCoTenantSearch;
 
   function pageOnePayload() {
     const sorted = sortTenantsByName(liveTenants);
@@ -99,6 +100,11 @@ describe("RentalTenantPanel Finding 2 pagination (75 tenants)", () => {
         if (row) row.email = String(body.email).trim().toLowerCase();
         return { success: true, tenant: { id: body.tenantId, display_name: row?.display_name, email: row?.email, status: "active" } };
       }
+      case "send-tenant-invite": {
+        const row = liveTenants.find((item) => item.id === body.tenantId);
+        if (row) row.invited_at = "2026-11-26T12:00:00.000Z";
+        return { success: true, tenantId: body.tenantId, invitedAt: "2026-11-26T12:00:00.000Z" };
+      }
       case "update-tenant-profile": {
         const name = typeof body.profile.displayName === "string" && body.profile.displayName.trim() !== ""
           ? body.profile.displayName.trim() : null;
@@ -117,6 +123,14 @@ describe("RentalTenantPanel Finding 2 pagination (75 tenants)", () => {
     }
   }
 
+  // A real server returns JSON: every GET hands the client fresh objects.
+  // The stub must do the same, or a server-side mutation of liveTenants
+  // would leak into already-cached pages through shared references and make
+  // a missing reconciliation look like it worked.
+  function freshCopy(payload) {
+    return JSON.parse(JSON.stringify(payload));
+  }
+
   function stubFetch() {
     gets = [];
     posts = [];
@@ -124,6 +138,10 @@ describe("RentalTenantPanel Finding 2 pagination (75 tenants)", () => {
       if (String(url).includes("tenant-ledger")) return { ok: true, json: async () => emptyHistory };
       if (String(url).includes("custom-field-values")) return { ok: true, json: async () => ({ fields: [], values: {} }) };
       if (String(url).includes("/api/rental/notices")) return { ok: true, json: async () => ({ notices: [] }) };
+      if (String(url).includes("/api/rental/photo")) {
+        posts.push({ url: String(url), method: options?.method || "POST" });
+        return { ok: true, json: async () => ({ photoUrl: "https://example.test/photos/t71.png" }) };
+      }
       if (options?.method === "POST") {
         const body = JSON.parse(options.body);
         posts.push(body);
@@ -135,10 +153,11 @@ describe("RentalTenantPanel Finding 2 pagination (75 tenants)", () => {
       const parsed = new URL(String(url), "http://localhost");
       if (String(url).includes("surface=tenant-detail")) {
         const tenantIdValue = parsed.searchParams.get("tenantId") || "";
-        return { ok: true, json: async () => detailPayload(tenantIdValue) };
+        return { ok: true, json: async () => freshCopy(detailPayload(tenantIdValue)) };
       }
       if (String(url).includes("surface=tenants")) {
         const search = (parsed.searchParams.get("search") || "").trim().toLowerCase();
+        if (search && failCoTenantSearch) return { ok: false, json: async () => ({ error: "Search unavailable." }) };
         const page = Math.max(1, Number(parsed.searchParams.get("page") || 1));
         const pageSize = Math.min(50, Math.max(1, Number(parsed.searchParams.get("pageSize") || 50)));
         let rows = sortTenantsByName(liveTenants);
@@ -146,12 +165,12 @@ describe("RentalTenantPanel Finding 2 pagination (75 tenants)", () => {
           const matches = rows.filter((item) => item.display_name.toLowerCase().includes(search)
             || String(item.email || "").toLowerCase().includes(search));
           rows = matches.slice(0, 20);
-          return { ok: true, json: async () => ({ tenants: rows, leases: [], leaseMemberships: [],
+          return { ok: true, json: async () => freshCopy({ tenants: rows, leases: [], leaseMemberships: [],
             units: [], openCharges: [], totalCount: matches.length, page: 1, pageSize: 20, search }) };
         }
         const totalCount = rows.length;
         const sliced = rows.slice((page - 1) * pageSize, page * pageSize);
-        return { ok: true, json: async () => ({ tenants: sliced, leases: [LEASE],
+        return { ok: true, json: async () => freshCopy({ tenants: sliced, leases: [LEASE],
           leaseMemberships: liveMemberships.map((item) => ({ ...item })), units: [UNIT], openCharges: [],
           totalCount, page, pageSize }) };
       }
@@ -172,10 +191,29 @@ describe("RentalTenantPanel Finding 2 pagination (75 tenants)", () => {
     await flush();
     return container;
   }
+  // Re-render into the same root so component state (loaded extra pages)
+  // survives the navigation, exactly as the still-mounted index keeps them
+  // while the record view is open.
+  async function rerenderPanel({ recordContext = null, onNavigate = null } = {}) {
+    await act(async () => root.render(<RentalTenantPanel recordContext={recordContext} onNavigate={onNavigate} />));
+    await flush();
+    return container;
+  }
+  async function openPageTwoRecord(tenantIdValue, onNavigate) {
+    const loadMore = [...container.querySelectorAll("button")].find((button) => button.textContent === "Load more tenants");
+    await act(async () => loadMore.click());
+    await flush();
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(75);
+    await rerenderPanel({ recordContext: { recordType: "tenant", recordId: tenantIdValue }, onNavigate });
+  }
+  function indexRowFor(displayName) {
+    return [...container.querySelectorAll("tbody tr")].find((tr) => tr.textContent.includes(displayName));
+  }
 
   beforeEach(() => {
     clearSWRCache();
     failEmailUpdate = false;
+    failCoTenantSearch = false;
     liveTenants = Array.from({ length: 75 }, (_, i) => compactRow(i + 1));
     liveMemberships = [
       { lease_id: "l1", tenant_id: "t01", occupancy_role: "primary" },
@@ -326,5 +364,153 @@ describe("RentalTenantPanel Finding 2 pagination (75 tenants)", () => {
     expect(container.textContent).toContain("Unable to update tenant email.");
     expect(getCacheEntry("rental:tenants:v2").data.tenants.find((item) => item.id === "t01").email).toBe("tenant1@example.com");
     expect(getCacheEntry("rental:tenant-detail:t01").data.tenant.email).toBe("tenant1@example.com");
+  });
+
+  it("create at exactly 50 tenants re-reads page 1 instead of appending a 51st row", async () => {
+    // PR #863 fix round 2, residual P1: with exactly 50 tenants the new row
+    // belongs on page 2. A local append would render an impossible 51-row
+    // first page ("Showing 51 of 51" with no Load more button).
+    liveTenants = Array.from({ length: 50 }, (_, i) => compactRow(i + 1));
+    clearSWRCache();
+    seedCacheEntry("rental:tenants:v2", JSON.parse(JSON.stringify(pageOnePayload())));
+    const onNavigate = vi.fn();
+    await mountPanel({ onNavigate });
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(50);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "+ Add a new tenant").click());
+    const form = container.querySelector('input[name="displayName"]').form;
+    setNativeValue(container.querySelector('input[name="displayName"]'), "Aaron Aardvark");
+    setNativeValue(container.querySelector('input[name="email"]'), "aaron@example.com");
+    await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    await flush();
+    expect(posts.filter((body) => body.operation === "save-tenant")).toHaveLength(1);
+    expectNoMonolithFetch();
+    // The create re-read the authoritative first page instead of patching.
+    expect(gets.filter((url) => url.includes("surface=tenants") && url.includes("page=1"))).toHaveLength(1);
+    const cached = getCacheEntry("rental:tenants:v2").data;
+    expect(cached.tenants).toHaveLength(50);
+    expect(cached.totalCount).toBe(51);
+    expect(cached.tenants[0].display_name).toBe("Aaron Aardvark");
+    expect(cached.tenants[49].display_name).toBe("Tenant 49");
+    expect(cached.tenants.map((item) => item.display_name)).not.toContain("Tenant 50");
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(50);
+    expect(container.textContent).toContain("Showing 50 of 51 tenants.");
+    // Load more reveals the one remaining tenant on page 2.
+    const loadMore = [...container.querySelectorAll("button")].find((button) => button.textContent === "Load more tenants");
+    await act(async () => loadMore.click());
+    await flush();
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(51);
+    expect(container.textContent).toContain("Showing 51 of 51 tenants.");
+    expect(getCacheEntry("rental:tenants:v2:page:2").data.tenants.map((item) => item.display_name)).toEqual(["Tenant 50"]);
+  });
+
+  it("create at 49 tenants stays refetch-free and fills page 1 exactly", async () => {
+    // Zero-refetch fast path: the 50th row completes page 1, so a local
+    // patch is exact and no authoritative re-read is owed.
+    liveTenants = Array.from({ length: 49 }, (_, i) => compactRow(i + 1));
+    clearSWRCache();
+    seedCacheEntry("rental:tenants:v2", JSON.parse(JSON.stringify(pageOnePayload())));
+    const onNavigate = vi.fn();
+    await mountPanel({ onNavigate });
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(49);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "+ Add a new tenant").click());
+    const form = container.querySelector('input[name="displayName"]').form;
+    setNativeValue(container.querySelector('input[name="displayName"]'), "Aaron Aardvark");
+    setNativeValue(container.querySelector('input[name="email"]'), "aaron@example.com");
+    await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    await flush();
+    expect(posts.filter((body) => body.operation === "save-tenant")).toHaveLength(1);
+    expectNoMonolithFetch();
+    expect(gets.filter((url) => url.includes("surface=tenants"))).toHaveLength(0);
+    const cached = getCacheEntry("rental:tenants:v2").data;
+    expect(cached.tenants).toHaveLength(50);
+    expect(cached.totalCount).toBe(50);
+    expect(cached.tenants[0].display_name).toBe("Aaron Aardvark");
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(50);
+    expect(container.textContent).not.toContain("Load more tenants");
+  });
+
+  it("email update on a page-2 tenant reconciles the loaded page-2 row", async () => {
+    // PR #863 fix round 2, residual 3: a tenant opened from page 2 is
+    // updated in the record view; the still-mounted index must show the
+    // confirmed value, not the stale page-2 row.
+    const onNavigate = vi.fn();
+    await mountPanel({ onNavigate });
+    await openPageTwoRecord("t71", onNavigate);
+    const form = container.querySelector('input[name="portalEmail"]').form;
+    setNativeValue(container.querySelector('input[name="portalEmail"]'), "T71.Updated@Example.COM");
+    await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    await flush();
+    expect(posts.filter((body) => body.operation === "update-tenant-email")).toHaveLength(1);
+    expectNoMonolithFetch();
+    expect(container.textContent).toContain("Portal email updated for Tenant 71.");
+    await rerenderPanel({ recordContext: null, onNavigate });
+    const row = indexRowFor("Tenant 71");
+    expect(row).not.toBeUndefined();
+    expect(row.textContent).toContain("t71.updated@example.com");
+    expect(row.textContent).not.toContain("tenant71@example.com");
+    expect(getCacheEntry("rental:tenants:v2:page:2").data.tenants.find((item) => item.id === "t71").email).toBe("t71.updated@example.com");
+    expect(getCacheEntry("rental:tenant-detail:t71").data.tenant.email).toBe("t71.updated@example.com");
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(75);
+  });
+
+  it("invite on a page-2 tenant reconciles the loaded page-2 row", async () => {
+    const onNavigate = vi.fn();
+    await mountPanel({ onNavigate });
+    await openPageTwoRecord("t71", onNavigate);
+    const inviteButton = [...container.querySelectorAll("button")].find((button) => button.textContent === "Send invite email");
+    act(() => inviteButton.click());
+    const dialog = container.querySelector('[role="alertdialog"]');
+    act(() => dialog.querySelector('input[type="checkbox"]').click());
+    setNativeValue(dialog.querySelector('input[name="inviteConfirmText"]'), "INVITE");
+    const sendButton = [...dialog.querySelectorAll("button")].find((button) => button.textContent === "Send invite");
+    await act(async () => sendButton.click());
+    await flush();
+    expect(posts.filter((body) => body.operation === "send-tenant-invite")).toHaveLength(1);
+    expectNoMonolithFetch();
+    expect([...container.querySelectorAll("button")].some((button) => button.textContent === "Resend invite email")).toBe(true);
+    await rerenderPanel({ recordContext: null, onNavigate });
+    const row = indexRowFor("Tenant 71");
+    expect(row.textContent).toContain("Invite sent");
+    expect(row.textContent).not.toContain("Invite not sent");
+    expect(getCacheEntry("rental:tenants:v2:page:2").data.tenants.find((item) => item.id === "t71").invited_at).toBe("2026-11-26T12:00:00.000Z");
+  });
+
+  it("photo upload on a page-2 tenant reconciles the loaded page-2 row", async () => {
+    const onNavigate = vi.fn();
+    await mountPanel({ onNavigate });
+    await openPageTwoRecord("t71", onNavigate);
+    const fileInput = container.querySelector('input[type="file"]');
+    const file = new File(["fake-png"], "photo.png", { type: "image/png" });
+    Object.defineProperty(fileInput, "files", { value: [file] });
+    await act(async () => { fileInput.dispatchEvent(new Event("change", { bubbles: true })); });
+    await flush();
+    expect(posts.filter((body) => body.url === "/api/rental/photo")).toHaveLength(1);
+    expectNoMonolithFetch();
+    expect(getCacheEntry("rental:tenant-detail:t71").data.tenant.photo_url).toBe("https://example.test/photos/t71.png");
+    await rerenderPanel({ recordContext: null, onNavigate });
+    const row = indexRowFor("Tenant 71");
+    expect(row.querySelector('img[src="https://example.test/photos/t71.png"]')).not.toBeNull();
+    expect(getCacheEntry("rental:tenants:v2:page:2").data.tenants.find((item) => item.id === "t71").photo_url).toBe("https://example.test/photos/t71.png");
+  });
+
+  it("a failed co-tenant search reports the failure instead of 'No tenant matches'", async () => {
+    // PR #863 fix round 2: a failed lookup must not present as an
+    // authoritative zero-match result.
+    failCoTenantSearch = true;
+    await mountPanel({ recordContext: { recordType: "tenant", recordId: "t01" } });
+    const search = container.querySelector('input[name="coTenantSearch"]');
+    setNativeValue(search, "Tenant 71");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+    await flush();
+    expect(container.textContent).toContain("Tenant search failed");
+    expect(container.textContent).not.toContain("No tenant matches");
+    // A retry after the failure recovers and offers the match.
+    failCoTenantSearch = false;
+    setNativeValue(search, "Tenant 72");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+    await flush();
+    expect(container.textContent).not.toContain("Tenant search failed");
+    const select = container.querySelector('select[name="coTenantId"]');
+    expect([...select.options].map((option) => option.value)).toContain("t72");
   });
 });

@@ -194,14 +194,16 @@ export async function getTenantsProjection({ supabaseClient }, { page = 1, pageS
   if (trimmedSearch) {
     // Bounded targeted lookup (PR #863 fix round 1, Finding 2): the
     // co-tenant picker must reach tenants sorted past page 1. Matches on
-    // display_name or email, display_name order, at most 20 rows. The join
-    // rows the index draws are not needed for a candidate lookup, so they
-    // are not fetched — the response carries empty joins, never stale ones.
+    // display_name or email, display_name order with an id tie-break, at
+    // most 20 rows. The join rows the index draws are not needed for a
+    // candidate lookup, so they are not fetched — the response carries
+    // empty joins, never stale ones.
     const pattern = escapeIlikePattern(trimmedSearch);
     const lookupResult = await supabaseClient.from("rental_tenants")
       .select(TENANT_LIST_COLUMNS, { count: "exact" })
       .or(`display_name.ilike.%${pattern}%,email.ilike.%${pattern}%`)
       .order("display_name", { ascending: true })
+      .order("id", { ascending: true })
       .limit(TENANT_LOOKUP_PAGE_SIZE);
     throwIfError(lookupResult);
     const tenants = await signRecordPhotos(supabaseClient, lookupResult.data || []);
@@ -227,6 +229,11 @@ export async function getTenantsProjection({ supabaseClient }, { page = 1, pageS
     supabaseClient.from("rental_tenants")
       .select(TENANT_LIST_COLUMNS, { count: "exact" })
       .order("display_name", { ascending: true })
+      // Fix round 2, residual P2: the id tie-break makes the page order
+      // deterministic in the database -- two tenants sharing a display name
+      // at ranks 50/51 must land on their own pages in a stable sequence,
+      // never duplicate or omit across page requests.
+      .order("id", { ascending: true })
       .range(from, to),
     supabaseClient.from("rental_lease_tenants")
       .select("lease_id, tenant_id, occupancy_role").order("lease_id", { ascending: true }),
