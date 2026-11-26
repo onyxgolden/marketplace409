@@ -648,10 +648,11 @@ async function measureFccu(page) {
 
 // Tap three objects in the crowded FCCU plot and prove the read-only
 // selection disclosure identifies each one exactly: a crowded exchanger
-// (E-101, via its overview tag — the click lands on the glyph centre
-// just below the tag, inside the symbol footprint), a pipe (longest
-// polyline segment midpoint, chosen far from any rendered tag), and a
-// noncrowded equipment object (FL-101, isolated at the far right).
+// (E-101, via its tag), a pipe (longest polyline segment midpoint,
+// chosen far from any rendered tag), and a noncrowded equipment object
+// (FL-101, isolated at the far right — via its tag when rendered, or
+// via the Hidden labels Find button when the engine withholds it at
+// the dense 360px fit, which also proves the recovery path).
 // Returns the disclosure text after each tap.
 async function measureFccuSelection(page) {
   const tapTargets = await page.evaluate(() => {
@@ -662,7 +663,7 @@ async function measureFccuSelection(page) {
       const t = [...svg.querySelectorAll('text[data-label-kind="equipment-tag"]')].find((el) => (el.textContent || "").trim() === label);
       if (!t) return null;
       const r = t.getBoundingClientRect();
-      // Overview tags are themselves the touch target (PlanCanvas
+      // Engine tags are themselves the touch target (PlanCanvas
       // dispatches SELECT from the tag's pointerdown), so click the
       // tag centre — never a point below it, where the 1-2px glyph
       // underneath would be missed and a pipe hit instead.
@@ -700,14 +701,17 @@ async function measureFccuSelection(page) {
     const el = document.querySelector('[data-testid="fccu-selection-detail"]');
     return el ? el.textContent.trim() : null;
   });
-  for (const [key, pt] of [["exchanger", tapTargets.exchanger], ["flare", tapTargets.flare]]) {
-    if (!pt) { result.disclosures[key] = null; continue; }
-    await page.mouse.click(pt.x, pt.y);
+  // Exchanger: tap its rendered tag.
+  if (!tapTargets.exchanger) result.disclosures.exchanger = null;
+  else {
+    await page.mouse.click(tapTargets.exchanger.x, tapTargets.exchanger.y);
     await page.waitForTimeout(400);
-    result.disclosures[key] = await readDisclosure();
+    result.disclosures.exchanger = await readDisclosure();
   }
   // Pipe: retry candidate midpoints until one reveals a pipe identity
   // (a midpoint inside a small symbol footprint selects the symbol).
+  // Runs BEFORE the flare fallback: a Find jump pans the view, which
+  // would stale these fit-state coordinates.
   result.disclosures.pipe = null;
   for (const pt of tapTargets.pipe || []) {
     await page.mouse.click(pt.x, pt.y);
@@ -715,6 +719,35 @@ async function measureFccuSelection(page) {
     const d = await readDisclosure();
     if (d && d.startsWith("Pipe fccu_pipe_")) { result.disclosures.pipe = d; break; }
     result.disclosures.pipe = d;
+  }
+  // Flare: tap its tag when rendered; when the engine withholds it
+  // (the dense 360px fit), recover it through the Hidden labels Find
+  // button — the designed recovery path for a withheld label — which
+  // selects it and jumps the view to it. Runs last: the jump pans the
+  // view, and nothing after it depends on fit-state coordinates.
+  if (tapTargets.flare) {
+    await page.mouse.click(tapTargets.flare.x, tapTargets.flare.y);
+    await page.waitForTimeout(400);
+    result.disclosures.flare = await readDisclosure();
+  } else {
+    const clicked = await page.evaluate(() => {
+      const controls = document.querySelector('[data-testid="label-engine-controls"]');
+      if (!controls) return false;
+      const details = controls.querySelector("details");
+      if (details && !details.open) {
+        const summary = details.querySelector("summary");
+        if (summary) summary.click();
+      }
+      const row = [...controls.querySelectorAll("details li")].find((li) => (li.textContent || "").includes("FL-101"));
+      if (!row) return false;
+      const btn = row.querySelector("button");
+      if (!btn) return false;
+      btn.click();
+      return true;
+    });
+    await page.waitForTimeout(400);
+    result.disclosures.flare = clicked ? await readDisclosure() : null;
+    result.flareRecoveredViaFind = clicked;
   }
   return result;
 }
