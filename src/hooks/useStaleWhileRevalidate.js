@@ -7,6 +7,7 @@ import {
   invalidate,
   isFresh,
   isInflight,
+  patchCacheEntry,
   subscribe,
 } from "./swrCache";
 import {
@@ -95,6 +96,14 @@ export function useStaleWhileRevalidate(key, fetcher, options = {}) {
     if (key != null) invalidate(key);
   }, [key]);
 
+  // Row-only reconciliation: patch the cached payload without a refetch.
+  // Returns false when there is no entry to patch (caller falls back to a
+  // targeted refresh of this same key — never the monolith).
+  const mutate = useCallback((updater) => {
+    if (key == null) return false;
+    return patchCacheEntry(key, updater);
+  }, [key]);
+
   return {
     data: entry?.data ?? null,
     error: entry?.error ?? "",
@@ -107,6 +116,7 @@ export function useStaleWhileRevalidate(key, fetcher, options = {}) {
     identityEpoch: identityTick,
     refresh,
     invalidate: invalidateKey,
+    mutate,
   };
 }
 

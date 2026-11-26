@@ -276,6 +276,23 @@ export function fetchWithDedupe(key, fetcher) {
   return promise;
 }
 
+/**
+ * Patch a cached entry in place without a network round trip. The updater
+ * receives the current data and returns the next data (or undefined to
+ * decline the patch — e.g. the row it would touch is not in this cache).
+ * Returns false when there is no entry/data to patch, so the caller can
+ * fall back to a targeted refetch instead of silently showing stale data.
+ * Notifies subscribers and persists like a normal write.
+ */
+export function patchCacheEntry(key, updater) {
+  const entry = getCacheEntry(key);
+  if (!entry || entry.data == null) return false;
+  const next = updater(entry.data);
+  if (next === undefined) return false;
+  setEntry(key, { data: next, error: "", updatedAt: Date.now() });
+  return true;
+}
+
 /** Drop the cached entry so the next read refetches. In-flight work is orphaned. */
 export function invalidate(key) {
   versions.set(key, (versions.get(key) ?? 0) + 1);

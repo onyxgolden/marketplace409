@@ -129,16 +129,20 @@ describe("RentalTenantPanel co-tenant controls", () => {
   const lease = { id: "l1", unit_id: "u1", status: "active" };
   const units = [{ id: "u1", label: "4225 Barnhill" }];
 
-  function seed(memberships, tenants) {
+  function seed(recordId, memberships, tenants) {
     clearSWRCache();
-    seedCacheEntry("rental:tenants", { tenants, leases: [lease], leaseMemberships: memberships, units, openCharges: [] });
+    seedCacheEntry("rental:tenants:v2", { tenants, leases: [lease], leaseMemberships: memberships, units, openCharges: [] });
+    // Slice 1: the record page renders ONLY from the detail surface.
+    seedCacheEntry(`rental:tenant-detail:${recordId}`, { tenant: tenants.find((item) => item.id === recordId),
+      tenants, leases: [lease], leaseMemberships: memberships, units, openCharges: [],
+      lateFeeTenantOverride: null, paymentPolicy: "allow_any_amount" });
   }
   function recordMarkup(recordId) {
     return renderClientMarkup(<RentalTenantPanel recordContext={{ recordType: "tenant", recordId }} />);
   }
 
   it("lists only tenants not on the lease in the Add co-tenant dropdown", () => {
-    seed([
+    seed("t1", [
       { lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" },
       { lease_id: "l1", tenant_id: "t2", occupancy_role: "co_tenant" },
     ], [primary, spouse, unassigned]);
@@ -150,7 +154,7 @@ describe("RentalTenantPanel co-tenant controls", () => {
   });
 
   it("renders an added co-tenant with email, invite, and remove controls", () => {
-    seed([
+    seed("t1", [
       { lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" },
       { lease_id: "l1", tenant_id: "t2", occupancy_role: "co_tenant" },
     ], [primary, spouse, unassigned]);
@@ -163,14 +167,14 @@ describe("RentalTenantPanel co-tenant controls", () => {
   });
 
   it("keeps the empty state when no co-tenant is assigned", () => {
-    seed([{ lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" }], [primary, unassigned]);
+    seed("t1", [{ lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" }], [primary, unassigned]);
     const markup = recordMarkup("t1");
     expect(markup).toContain("No co-tenant is assigned to this lease.");
     expect(markup).toContain("Add co-tenant");
   });
 
   it("never offers Delete unused duplicate for an attached co-tenant", () => {
-    seed([
+    seed("t2", [
       { lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" },
       { lease_id: "l1", tenant_id: "t2", occupancy_role: "co_tenant" },
     ], [primary, spouse, unassigned]);
@@ -187,9 +191,14 @@ describe("RentalTenantPanel tenant name editing", () => {
 
   function recordMarkup() {
     clearSWRCache();
-    seedCacheEntry("rental:tenants", { tenants: [primary], leases: [lease],
+    seedCacheEntry("rental:tenants:v2", { tenants: [primary], leases: [lease],
       leaseMemberships: [{ lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" }],
       units: [{ id: "u1", label: "4225 Barnhill" }], openCharges: [] });
+    // Slice 1: the record page renders ONLY from the detail surface.
+    seedCacheEntry("rental:tenant-detail:t1", { tenant: primary, tenants: [primary], leases: [lease],
+      leaseMemberships: [{ lease_id: "l1", tenant_id: "t1", occupancy_role: "primary" }],
+      units: [{ id: "u1", label: "4225 Barnhill" }], openCharges: [],
+      lateFeeTenantOverride: null, paymentPolicy: "allow_any_amount" });
     return renderClientMarkup(<RentalTenantPanel recordContext={{ recordType: "tenant", recordId: "t1" }} />);
   }
 

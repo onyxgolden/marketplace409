@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RentalTenantPanel from "./RentalTenantPanel";
+import { routeTenantSurfaceGet } from "./tenantSurfaceTestUtils";
 
 const tenants = [{ id: "t1", display_name: "Paula", email: "paula@example.com", status: "active" }];
 const rentalPayload = {
@@ -34,6 +35,8 @@ const ledgerPayload = {
 function stubFetch() {
   vi.stubGlobal("fetch", vi.fn(async (url) => {
     if (String(url).includes("tenant-ledger")) return { ok: true, json: async () => ledgerPayload };
+    const routed = routeTenantSurfaceGet(url, rentalPayload);
+    if (routed) return { ok: true, json: async () => routed };
     return { ok: true, json: async () => rentalPayload };
   }));
 }

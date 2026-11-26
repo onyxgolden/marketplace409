@@ -7,6 +7,7 @@ import {
   invalidatePrefix,
   isFresh,
   isInflight,
+  patchCacheEntry,
   prefetch,
   subscribe,
 } from "./swrCache";
@@ -365,6 +366,47 @@ describe("cross-identity in-flight protection (PR #417 re-review finding 2)", ()
     await expect(late).resolves.toBe("stale");
     await tick();
     expect(mod.getCacheEntry("epoch-1")).toBeUndefined(); // nothing resurrected after the clear
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("patchCacheEntry (Slice 1 row-only reconciliation)", () => {
+  beforeEach(() => { clearSWRCache(); });
+
+  it("patches an in-memory entry in place and notifies subscribers", async () => {
+    await fetchWithDedupe("patch-1", () => Promise.resolve({ tenants: [{ id: "t1", email: "old@example.com" }] }));
+    const seen = [];
+    const unsubscribe = subscribe("patch-1", () => seen.push(getCacheEntry("patch-1")?.data));
+    expect(patchCacheEntry("patch-1", (data) => ({ ...data, tenants: data.tenants.map((item) => item.id === "t1" ? { ...item, email: "new@example.com" } : item) }))).toBe(true);
+    expect(getCacheEntry("patch-1").data.tenants[0].email).toBe("new@example.com");
+    expect(seen).toHaveLength(1);
+    expect(seen[0].tenants[0].email).toBe("new@example.com");
+    unsubscribe();
+  });
+
+  it("returns false and changes nothing when there is no entry", () => {
+    expect(patchCacheEntry("patch-missing", () => ({ tenants: [] }))).toBe(false);
+    expect(getCacheEntry("patch-missing")).toBeUndefined();
+  });
+
+  it("returns false and keeps the entry when the updater declines (returns undefined)", async () => {
+    await fetchWithDedupe("patch-2", () => Promise.resolve({ tenants: [{ id: "t1" }] }));
+    const before = getCacheEntry("patch-2").data;
+    expect(patchCacheEntry("patch-2", () => undefined)).toBe(false);
+    expect(getCacheEntry("patch-2").data).toBe(before);
+  });
+
+  it("patches a disk-hydrated entry after a simulated cold boot", async () => {
+    const { store } = installLocalStorageStub();
+    const signed = await signedInModule("patch-user");
+    await signed.fetchWithDedupe("patch-3", () => Promise.resolve({ tenants: [{ id: "t1", email: "old@example.com" }] }));
+    expect(store.size).toBeGreaterThan(0);
+    const cold = await signedInModule("patch-user");
+    expect(cold.getCacheEntry("patch-3")?.data.tenants[0].email).toBe("old@example.com");
+    expect(cold.patchCacheEntry("patch-3", (data) => ({ ...data, tenants: data.tenants.map((item) => ({ ...item, email: "new@example.com" })) }))).toBe(true);
+    expect(cold.getCacheEntry("patch-3").data.tenants[0].email).toBe("new@example.com");
+    const colder = await signedInModule("patch-user");
+    expect(colder.getCacheEntry("patch-3")?.data.tenants[0].email).toBe("new@example.com");
     vi.unstubAllGlobals();
   });
 });

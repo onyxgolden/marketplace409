@@ -272,6 +272,41 @@ describe("RentalPageClient section deep-linking", () => {
   });
 });
 
+describe("Slice 1 guard: next-frame navigation feedback (brief section 4 condition 3)", () => {
+  it("a section click paints the new selection synchronously, before the chunk arrives", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => { root.render(<RentalPageClient />); });
+    await flush();
+    // Leases lives in a collapsed group -- expand every group toggle first.
+    let toggles;
+    do {
+      toggles = Array.from(container.querySelectorAll('nav[aria-label="Rental Manager functions"] button[aria-expanded="false"]'));
+      toggles.forEach((toggle) => act(() => { toggle.click(); }));
+    } while (toggles.length > 0);
+    const leasesButton = Array.from(container.querySelectorAll('nav[aria-label="Rental Manager functions"] button'))
+      .filter((button) => !button.hasAttribute("aria-expanded"))
+      .find((button) => button.textContent.includes("Leases"));
+    expect(leasesButton).not.toBeUndefined();
+    // The click itself: navigate() sets state synchronously, so the selected
+    // paint must be in the DOM the moment the click's act() returns -- no
+    // await, no frame wait. A regression that defers the state update (or
+    // fetches before painting) fails here. The pending paint is the skeleton
+    // on a cold chunk, or the panel itself when the chunk is already warm in
+    // this test run -- either way the overview is gone synchronously.
+    act(() => { leasesButton.click(); });
+    expect(leasesButton.getAttribute("aria-current")).toBe("page");
+    expect(container.querySelector('[data-active-function="leases"]')).not.toBeNull();
+    expect(
+      container.querySelector("[data-rental-surface-loading]") !== null
+        || container.querySelector('main')?.textContent.includes("Leases"),
+    ).toBe(true);
+    act(() => { root.unmount(); });
+    container.remove();
+  });
+});
+
 describe("resolveRentalRecordContextParam", () => {
   it("resolves a valid property context", () => {
     expect(resolveRentalRecordContextParam({ recordType: "property", recordId: "308-paula", propertyId: "308-paula" }))
