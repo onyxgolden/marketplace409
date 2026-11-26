@@ -1199,7 +1199,12 @@ async function main() {
             });
             zoomStateVerdict(zs.closeup, "exchanger close-up", (s) => {
               if (s.z === null || s.z < 8) fail(`FCCU exchanger close-up: relative zoom ${s.z} is below 8`);
-              const tier3 = (s.countsByKind["pipe-label"] || 0) + (s.countsByKind.annotation || 0) + (s.countsByKind["room-label"] || 0);
+              // Tier 3 by data-tier, not by kind: near the sparse flare
+              // stack (360px after a Find jump) the close-up shows a
+              // room-area + a symbol-caption and no pipe dimension, and
+              // both are Tier 3 — counting only pipe-label/annotation/
+              // room-label would false-fail a real Tier 3 reveal.
+              const tier3 = s.texts.filter((t) => t.tier === "3").length;
               if (!tier3) fail("FCCU exchanger close-up: no Tier 3 label renders at ~8x");
             });
             zoomStateVerdict(zs.pan, "pan", (s) => {
