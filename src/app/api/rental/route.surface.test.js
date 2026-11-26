@@ -94,8 +94,23 @@ function makeClient(calls) {
     return rows.filter((row) => filters.every(([kind, column, value]) => {
       if (kind === "eq") return row[column] === value;
       if (kind === "in") return value.includes(row[column]);
+      // or: [[column, ilike-pattern], ...] — the row passes when any term
+      // matches (case-insensitive substring; backslash escapes undone first).
+      if (kind === "or") {
+        return value.some(([termColumn, pattern]) => String(row[termColumn] ?? "").toLowerCase().includes(pattern.toLowerCase()));
+      }
       return true;
     }));
+  }
+  // Parse a PostgREST or() string of `col.ilike.%pattern%` terms, undoing
+  // the backslash escapes the server applies to the search text.
+  function parseOrTerms(orString) {
+    return String(orString).split(/(?<!\\),/).map((term) => {
+      const match = term.match(/^([^.]+)\.ilike\.%(.*)%$/);
+      if (!match) throw new Error(`unsupported or() term in mock: ${term}`);
+      const pattern = match[2].replace(/\\(.)/g, "$1");
+      return [match[1], pattern];
+    });
   }
   function project(row, select) {
     if (!select || String(select).trim() === "*") return row;
@@ -116,9 +131,10 @@ function makeClient(calls) {
       },
       eq(column, value) { state.filters.push(["eq", column, value]); return api; },
       in(column, values) { state.filters.push(["in", column, values]); return api; },
+      or(orString) { state.filters.push(["or", null, parseOrTerms(orString)]); return api; },
       order(column, options) { state.order = [column, options?.ascending !== false]; return api; },
       range(from, to) { state.range = [from, to]; return api; },
-      limit() { return api; },
+      limit(count) { state.limit = count; return api; },
       is() { return api; },
       maybeSingle() {
         const filtered = applyFilters(rows, state.filters);
@@ -142,6 +158,7 @@ function makeClient(calls) {
           });
         }
         if (state.range) out = out.slice(state.range[0], state.range[1] + 1);
+        if (state.limit != null) out = out.slice(0, state.limit);
         resolve({ data: out.map((row) => project(row, state.select)), error: null, count: total });
         return undefined;
       },
@@ -260,6 +277,69 @@ describe("GET /api/rental surface projections", () => {
       "auth_user_id", "display_name", "email", "id", "invited_at",
       "photo_bucket", "photo_object_path", "photo_url",
     ]);
+  });
+
+  it("tenants page=2 returns rows 51–60 with no overlap with page 1", async () => {
+    const first = await (await get("/api/rental?surface=tenants&page=1")).json();
+    const second = await get("/api/rental?surface=tenants&page=2");
+    expect(second.status).toBe(200);
+    const body = await second.json();
+    expect(body.surface).toBe("tenants");
+    expect(body.page).toBe(2);
+    expect(body.pageSize).toBe(50);
+    expect(body.totalCount).toBe(60);
+    expect(body.tenants).toHaveLength(10);
+    expect(body.tenants.map((tenant) => tenant.display_name)).toEqual(
+      Array.from({ length: 10 }, (_, i) => `Tenant ${String(i + 51).padStart(2, "0")}`),
+    );
+    const firstIds = new Set(first.tenants.map((tenant) => tenant.id));
+    expect(body.tenants.every((tenant) => !firstIds.has(tenant.id))).toBe(true);
+    expect([...firstIds, ...body.tenants.map((tenant) => tenant.id)]).toHaveLength(60);
+  });
+
+  it("tenants search returns bounded matches in display_name order and skips the join tables", async () => {
+    const response = await get("/api/rental?surface=tenants&search=Tenant%206");
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.surface).toBe("tenants");
+    expect(body.search).toBe("Tenant 6");
+    // Only Tenant 60 matches "Tenant 6" among Tenant 01–60.
+    expect(body.tenants.map((tenant) => tenant.display_name)).toEqual(["Tenant 60"]);
+    expect(body.totalCount).toBe(1);
+    expect(body.pageSize).toBeLessThanOrEqual(20);
+    // A candidate lookup needs no join rows: the index joins stay unread.
+    expect(tablesCalled()).toEqual(["rental_tenants"]);
+    expect(body.leaseMemberships).toEqual([]);
+    expect(body.leases).toEqual([]);
+    expect(body.units).toEqual([]);
+    expect(body.openCharges).toEqual([]);
+
+    // A broad search is bounded to 20 rows even though 60 tenants match.
+    const broad = await (await get("/api/rental?surface=tenants&search=Tenant")).json();
+    expect(broad.tenants).toHaveLength(20);
+    expect(broad.totalCount).toBe(60);
+    expect(broad.tenants.map((tenant) => tenant.display_name)).toEqual(
+      Array.from({ length: 20 }, (_, i) => `Tenant ${String(i + 1).padStart(2, "0")}`),
+    );
+    // No match at all: empty rows, zero count, still 200.
+    const none = await (await get("/api/rental?surface=tenants&search=zzz-no-such-tenant")).json();
+    expect(none.tenants).toEqual([]);
+    expect(none.totalCount).toBe(0);
+    // A search term cannot widen the match with wildcards.
+    const wildcard = await (await get("/api/rental?surface=tenants&search=Tenant%20%25")).json();
+    expect(wildcard.totalCount).toBe(0);
+  });
+
+  it("tenants projection join counts (Q1 receipt: owner-wide reads behind the 50 rows)", async () => {
+    const body = await (await get("/api/rental?surface=tenants")).json();
+    // 60 fixture tenants, 1 membership, 1 lease, 2 units, 1 open charge:
+    // the index draws the joins in full alongside the 50-row page.
+    expect(body.tenants).toHaveLength(50);
+    expect(body.leaseMemberships).toHaveLength(1);
+    expect(body.leases).toHaveLength(1);
+    expect(body.units).toHaveLength(2);
+    expect(body.openCharges).toHaveLength(1);
+    expect(body.totalCount).toBe(60);
   });
 
   it("tenant-detail returns the authorized tenant + household and 404s a foreign id", async () => {

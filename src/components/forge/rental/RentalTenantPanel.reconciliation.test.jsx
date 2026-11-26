@@ -252,6 +252,20 @@ describe("RentalTenantPanel Slice 1 reconciliation", () => {
     expect(getCacheEntry("rental:tenant-detail:t1").data.tenant.email).toBe("alice.new@example.com");
   });
 
+  it("update-email stores the server-normalized email, not the submitted casing (Q3)", async () => {
+    await mountPanel({ recordContext: { recordType: "tenant", recordId: "t1" } });
+    const form = container.querySelector('input[name="portalEmail"]').form;
+    // The server trims and lowercases; the patch must take the canonical
+    // value from the response, never the raw submitted input.
+    setNativeValue(container.querySelector('input[name="portalEmail"]'), "  ALICE.New@Example.COM  ");
+    await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    await flush();
+    expect(posts.filter((body) => body.operation === "update-tenant-email")).toHaveLength(1);
+    expectNoMonolithFetch();
+    expect(getCacheEntry("rental:tenants:v2").data.tenants.find((item) => item.id === "t1").email).toBe("alice.new@example.com");
+    expect(getCacheEntry("rental:tenant-detail:t1").data.tenant.email).toBe("alice.new@example.com");
+  });
+
   it("update-profile applies the submitted profile to the detail row and re-sorts the list on rename", async () => {
     await mountPanel({ recordContext: { recordType: "tenant", recordId: "t1" } });
     const form = container.querySelector('input[name="tenantName"]').form;

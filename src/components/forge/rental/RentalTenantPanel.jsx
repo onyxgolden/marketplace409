@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 import RentalRecordActions, { labelRentalRecordContext } from "./RentalRecordActions";
 import RentalPhotoUpload from "./RentalPhotoUpload";
@@ -10,6 +10,7 @@ import TenantLedgerPage from "./TenantLedgerPage";
 import { useCardContextMenu, CardContextMenu, CARD_REGION_ATTRIBUTE } from "./CardContextMenu";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { fetchWithDedupe, getCacheEntry, invalidatePrefix } from "@/hooks/swrCache";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { PAYMENT_POLICIES, paymentPolicyDescription, paymentPolicyLabel } from "@/domains/rental-payment/paymentPolicy";
 import { useRentalTerminology } from "./rentalTerminologyContext";
@@ -102,6 +103,48 @@ export function sortTenantsByName(rows) {
   return [...rows].sort((a, b) => String(a.display_name || "").localeCompare(String(b.display_name || "")));
 }
 
+// PR #863 fix round 1, Finding 2 — the tenants list is paged server-side
+// (50 rows per page, display_name order). Page 1 keeps the Slice-1 key so
+// existing disk entries stay valid; later pages get their own scope-bound
+// key, and a name/email lookup gets one per query string.
+export const TENANT_LIST_KEY = "rental:tenants:v2";
+export const TENANT_LIST_PAGE_SIZE = 50;
+export function tenantListPageKey(page) {
+  return page <= 1 ? TENANT_LIST_KEY : `${TENANT_LIST_KEY}:page:${page}`;
+}
+// A list is single-page when the whole portfolio fits on page 1: a local
+// row patch is then exactly correct, so mutations stay refetch-free. Past
+// 50 tenants a create/delete/rename can move rows across the page boundary,
+// so those mutations re-read the exact page from the server instead.
+export function isSinglePageTenantList(list) {
+  return (list?.totalCount ?? (list?.tenants || []).length) <= TENANT_LIST_PAGE_SIZE;
+}
+
+export function dedupeTenantsById(rows) {
+  const seen = new Set();
+  const out = [];
+  for (const row of rows || []) {
+    if (!row?.id || seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+  return out;
+}
+
+async function fetchTenantListPage(page) {
+  const response = await fetch(`/api/rental?surface=tenants&page=${page}&pageSize=${TENANT_LIST_PAGE_SIZE}`);
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "Unable to load tenants.");
+  return result;
+}
+
+async function fetchTenantLookup(query) {
+  const response = await fetch(`/api/rental?surface=tenants&search=${encodeURIComponent(query)}`);
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "Unable to search tenants.");
+  return result;
+}
+
 // Apply a submitted profile to a cached tenant row, mirroring the server's
 // update-tenant-profile normalization exactly: strings are trimmed or nulled,
 // monthly income is already whole cents (or null), and displayName renames
@@ -147,14 +190,13 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   // tenant-detail surface for the selected tenant only. Neither reads the
   // monolith /api/rental. Mutations reconcile the cached rows in place
   // (see the per-mutation helpers below) and never refetch the monolith.
-  const fetchRentalTenants = useCallback(async () => {
-    const response = await fetch("/api/rental?surface=tenants");
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Unable to load tenants.");
-    return result;
-  }, []);
-  const { data, error: loadError, isLoading, isRefreshing, refresh: refreshList, mutate: mutateList } = useStaleWhileRevalidate(
-    "rental:tenants:v2",
+  // Fix round 1: the index is paged — page 1 under the Slice-1 key, later
+  // pages under their own keys, appended by Load more. The list a mutation
+  // patches is the accumulated loaded pages; a boundary change re-reads the
+  // exact page from the server instead of patching (see refreshTenantListPage).
+  const fetchRentalTenants = useCallback(async () => fetchTenantListPage(1), []);
+  const { data, error: loadError, isLoading, isRefreshing, refresh: refreshList, mutate: mutateList, invalidate: invalidateList, identityEpoch } = useStaleWhileRevalidate(
+    TENANT_LIST_KEY,
     fetchRentalTenants,
     { ttlMs: 60_000 },
   );
@@ -174,7 +216,24 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     fetchTenantDetail,
     { ttlMs: 60_000 },
   );
-  const tenants = data?.tenants ?? initialTenants;
+  // Fix round 1 pagination state: extra pages loaded by Load more (page 1
+  // lives in the hook above), how many pages are loaded, and a generation
+  // counter bumped on every boundary reset so a page fetch that started
+  // before the reset is discarded instead of mixed with the fresh page.
+  const [extraTenantPages, setExtraTenantPages] = useState([]);
+  const [tenantPageCount, setTenantPageCount] = useState(1);
+  const [loadingMoreTenants, setLoadingMoreTenants] = useState(false);
+  const listGeneration = useRef(0);
+  // Co-tenant lookup state: a debounced server search by name/email that
+  // reaches tenants sorted past the loaded pages (see the effect below).
+  const [coTenantQuery, setCoTenantQuery] = useState("");
+  const [coTenantSearch, setCoTenantSearch] = useState([]);
+  const [coTenantSearching, setCoTenantSearching] = useState(false);
+  const coTenantQueryRef = useRef("");
+  const tenants = useMemo(() => data
+    ? [...(data.tenants || []), ...extraTenantPages.flatMap((page) => page.tenants || [])]
+    : initialTenants, [data, extraTenantPages, initialTenants]);
+  const tenantTotalCount = data?.totalCount ?? tenants.length;
   const leases = data?.leases || [];
   const leaseMemberships = data?.leaseMemberships || [];
   const units = data?.units || [];
@@ -209,6 +268,47 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     adoptedInitial.current = true;
     setShowCreate(openCreateTenant || (data.tenants?.length || 0) === 0);
   }, [data, openCreateTenant]);
+  // An identity change wipes the cache (see swrCache): the loaded extra
+  // pages belong to the previous identity, so drop them too — otherwise
+  // page-2 rows from user A would render under user B's page 1.
+  const lastIdentityEpoch = useRef(identityEpoch);
+  useEffect(() => {
+    if (lastIdentityEpoch.current === identityEpoch) return;
+    lastIdentityEpoch.current = identityEpoch;
+    listGeneration.current += 1;
+    setExtraTenantPages([]);
+    setTenantPageCount(1);
+    setCoTenantQuery("");
+    setCoTenantSearch([]);
+  }, [identityEpoch]);
+  // Switching records resets the co-tenant search: a query typed for one
+  // lease must never offer its matches on another lease's form. Adjusted
+  // during render (the React docs pattern for state that tracks a prop) so
+  // no effect — and no setState-in-effect — is needed.
+  const [searchScopeId, setSearchScopeId] = useState(recordTenantId);
+  if (searchScopeId !== recordTenantId) {
+    setSearchScopeId(recordTenantId);
+    setCoTenantQuery("");
+    setCoTenantSearch([]);
+    setCoTenantSearching(false);
+  }
+  // Debounced server lookup for the add-co-tenant picker: 2+ characters,
+  // 300ms after the last keystroke, one narrow read per query string. A
+  // late resolution for an older query is discarded (the ref holds the
+  // latest query), so typing never shows stale candidates. A query under 2
+  // characters clears its results in the input's onChange, not here.
+  useEffect(() => {
+    const query = coTenantQuery.trim();
+    coTenantQueryRef.current = query;
+    if (query.length < 2) return undefined;
+    const timer = setTimeout(() => {
+      fetchWithDedupe(`${TENANT_LIST_KEY}:search:${query.toLowerCase()}`, () => fetchTenantLookup(query))
+        .then((payload) => { if (coTenantQueryRef.current === query) setCoTenantSearch(payload?.tenants || []); })
+        .catch(() => { if (coTenantQueryRef.current === query) setCoTenantSearch([]); })
+        .finally(() => { if (coTenantQueryRef.current === query) setCoTenantSearching(false); });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [coTenantQuery]);
   // Full-page ledger state: { tenant, initialView } where initialView is null |
   // "post-income" | "print". Rendered full-page below, replacing the card surface.
   const [ledgerTenant, setLedgerTenant] = useState(null);
@@ -260,6 +360,39 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   async function patchOrRefresh(mutate, refresh, updater) {
     if (!mutate(updater)) await refresh();
   }
+  // Load the next tenants page and append it (server order, no re-sort: the
+  // pages arrive in display_name order). A page fetch that started before a
+  // boundary reset is discarded by the generation check.
+  async function loadMoreTenants() {
+    if (loadingMoreTenants) return;
+    const nextPage = tenantPageCount + 1;
+    const generation = listGeneration.current;
+    setLoadingMoreTenants(true);
+    try {
+      const payload = await fetchWithDedupe(tenantListPageKey(nextPage), () => fetchTenantListPage(nextPage));
+      if (generation !== listGeneration.current) return;
+      setExtraTenantPages((prev) => prev.some((page) => page.page === nextPage)
+        ? prev : [...prev, { page: nextPage, tenants: payload?.tenants || [] }]);
+      setTenantPageCount(nextPage);
+    } catch (error) {
+      setMessage(error?.message || "Unable to load more tenants.");
+    } finally {
+      setLoadingMoreTenants(false);
+    }
+  }
+  // Re-read the exact first page after a boundary change (create, delete, or
+  // rename past 50 tenants): drop the extra pages, orphan any in-flight page
+  // reads, and invalidate page 1 before refetching so a stale in-flight GET
+  // cannot overwrite the fresh page (the Finding 1 barrier). One narrow
+  // surface read, never the monolith.
+  async function refreshTenantListPage() {
+    listGeneration.current += 1;
+    setExtraTenantPages([]);
+    setTenantPageCount(1);
+    invalidatePrefix(`${TENANT_LIST_KEY}:page:`);
+    invalidateList();
+    await refreshList();
+  }
   // Photo upload/remove: the photo URL changes in place in both caches.
   function reconcileTenantPhoto(tenantId, photoUrl) {
     mutateList((list) => ({ ...list,
@@ -285,13 +418,21 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       }
       const savedId = result.tenant.id;
       formElement.reset();
-      // Row-only reconciliation: the new tenant slots into the cached list
-      // (sorted, count bumped) -- no refetch. The detail surface loads on
-      // demand when the record page opens.
-      if (!mutateList((list) => ({ ...list,
-        tenants: sortTenantsByName([...(list.tenants || []), compactTenantRow(result.tenant)]),
-        totalCount: (list.totalCount ?? (list.tenants || []).length) + 1 }))) {
-        await refreshList();
+      // Row-only reconciliation while the whole portfolio fits on page 1:
+      // the new tenant slots into the cached list (sorted, count bumped) --
+      // no refetch. Past 50 tenants the new row can push another row off
+      // page 1, so re-read the exact page instead of appending locally
+      // (which would render 51+ rows and the wrong first-50 subset). The
+      // detail surface loads on demand when the record page opens.
+      const cachedList = getCacheEntry(TENANT_LIST_KEY)?.data;
+      if (cachedList && isSinglePageTenantList(cachedList)) {
+        if (!mutateList((list) => ({ ...list,
+          tenants: sortTenantsByName([...(list.tenants || []), compactTenantRow(result.tenant)]),
+          totalCount: (list.totalCount ?? (list.tenants || []).length) + 1 }))) {
+          await refreshList();
+        }
+      } else {
+        await refreshTenantListPage();
       }
       setShowCreate(false);
       // The confirmation rides with the navigation so it lands on the record
@@ -311,11 +452,19 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
         body: JSON.stringify({ operation: "delete-unused-tenant", tenantId: tenant.id, confirmation: "DELETE" }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to delete the unused tenant.");
-      // Row-only reconciliation: drop the row from the cached list and tombstone
-      // the detail cache so a stale record can never render for a deleted id.
-      mutateList((list) => ({ ...list,
-        tenants: (list.tenants || []).filter((item) => item.id !== tenant.id),
-        totalCount: Math.max(0, (list.totalCount ?? (list.tenants || []).length) - 1) }));
+      // Row-only reconciliation while the whole portfolio fits on page 1:
+      // drop the row from the cached list and tombstone the detail cache so
+      // a stale record can never render for a deleted id. Past 50 tenants
+      // the next tenant must be pulled in from page 2, so re-read the exact
+      // first page instead of leaving a short list.
+      const cachedList = getCacheEntry(TENANT_LIST_KEY)?.data;
+      if (cachedList && isSinglePageTenantList(cachedList)) {
+        mutateList((list) => ({ ...list,
+          tenants: (list.tenants || []).filter((item) => item.id !== tenant.id),
+          totalCount: Math.max(0, (list.totalCount ?? (list.tenants || []).length) - 1) }));
+      } else {
+        await refreshTenantListPage();
+      }
       invalidateDetail();
       setMessage(`Deleted unused duplicate: ${result.deletedTenant.display_name}.`);
       // Deletion only happens from the record page; return to the index.
@@ -369,10 +518,17 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       // The server returns only {id, display_name}; the rest of the row comes
       // from the submitted profile, normalized exactly like the server. The
       // list row is compact, so it takes only the rename (plus re-sort); the
-      // full profile lands in the detail cache.
+      // full profile lands in the detail cache. Past 50 tenants a rename can
+      // move the row across the page boundary, so re-read the exact first
+      // page instead of re-sorting a stale subset.
       const patchRow = (row) => row.id === tenantId ? applyTenantProfileToRow({ ...row, display_name: result.tenant.display_name }, profile) : row;
       const patchListRow = (row) => row.id === tenantId ? { ...row, display_name: result.tenant.display_name } : row;
-      await patchOrRefresh(mutateList, refreshList, (list) => ({ ...list, tenants: sortTenantsByName((list.tenants || []).map(patchListRow)) }));
+      const cachedList = getCacheEntry(TENANT_LIST_KEY)?.data;
+      if (cachedList && isSinglePageTenantList(cachedList)) {
+        await patchOrRefresh(mutateList, refreshList, (list) => ({ ...list, tenants: sortTenantsByName((list.tenants || []).map(patchListRow)) }));
+      } else {
+        await refreshTenantListPage();
+      }
       await patchOrRefresh(mutateDetail, refreshDetail, (detail) => detail?.tenant ? { ...detail,
         tenant: patchRow(detail.tenant), tenants: (detail.tenants || []).map(patchRow) } : detail);
     } catch (error) { setMessage(error.message); } finally { setBusyKey(null); }
@@ -401,7 +557,9 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     try { const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ operation: "add-co-tenant", leaseId, tenantId }) });
       const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to add the co-tenant.");
-      const added = tenants.find((item) => item.id === tenantId);
+      // The added tenant may have come from the server search (past page 1),
+      // so look them up in the loaded rows plus the search matches.
+      const added = [...tenants, ...coTenantSearch].find((item) => item.id === tenantId);
       setMessage(`Co-tenant added: ${added?.display_name || "tenant"}. Their email and invite card are below.`);
       // The membership is in the response; the new co-tenant's FULL row is in
       // no cache (the list row is compact), so the narrow detail surface
@@ -498,6 +656,18 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   if (recordTenant) {
     const household = tenantHouseholdForSelection(recordTenant, detailTenants, detailLeases, detailMemberships, detailUnits);
     const tenant = household.primaryTenant || recordTenant;
+    // Co-tenant candidates: everyone not already on this lease, from the
+    // loaded list pages plus the server search matches (which reach tenants
+    // sorted past page 1). Deduped by id; the search box below extends the
+    // list whenever the loaded pages hold no candidate.
+    const coTenantCandidates = dedupeTenantsById([
+      ...availableCoTenants(tenants, detailMemberships, household.lease?.id),
+      ...availableCoTenants(coTenantSearch, detailMemberships, household.lease?.id),
+    ]);
+    // More tenants exist beyond the loaded pages: the "every saved tenant
+    // is already on this lease" claim cannot be made from the loaded subset
+    // alone — the search box is the way to reach them.
+    const coTenantsBeyondLoadedPages = tenantTotalCount > tenants.length;
     // A lease the form created lands its tenant as co_tenant with no true
     // primary, which leaves the fallback primary with no Make-primary control:
     // co-tenant cards (the only other place the button renders) exclude the
@@ -578,7 +748,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
             </div>
           </div>
         </div>}
-        <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700"><h3 className="text-lg font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3>{household.lease?.status === "cancelled" && <p className="mt-2 text-sm font-bold text-slate-500 dark:text-slate-400">This lease is cancelled — membership cannot be changed.</p>}<div className="mt-2 space-y-4">{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} busyKey={busyKey} updateProfile={updateProfile} updateEmail={updateEmail} onPhotoUploaded={(photoUrl) => reconcileTenantPhoto(coTenant.id, photoUrl)} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={detailData?.lateFeeTenantOverride || null} saveLateFeeOverride={saveLateFeeOverride} workspacePaymentPolicy={detailData?.paymentPolicy || "allow_any_amount"} paymentPolicyOverride={coTenant.payment_policy||null} savePaymentPolicyOverride={savePaymentPolicyOverride} makePrimary={household.lease && household.lease.status !== "cancelled" ? ()=>makePrimary(household.lease.id,coTenant.id) : null} removeCoTenant={household.lease && household.lease.status !== "cancelled" ? ()=>removeCoTenant(household.lease.id,coTenant) : null}/>) : !household.lease ? <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned — this tenant has no lease yet. Create a lease first, then add co-tenants to it.</p> : household.lease.status !== "cancelled" && availableCoTenants(tenants, detailMemberships, household.lease.id).length === 0 ? <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease. Every saved tenant is already on this lease — create a new tenant record first to add one.</p> : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>{household.lease && household.lease.status !== "cancelled" && availableCoTenants(tenants, detailMemberships, household.lease.id).length > 0 && <form onSubmit={(event)=>addCoTenant(event, household.lease.id)} className="mt-4 flex flex-wrap items-end gap-3"><label className="min-w-[260px] flex-1 text-sm font-bold text-slate-900 dark:text-white">Add co-tenant<select name="coTenantId" required defaultValue="" aria-label="Tenant to add as co-tenant" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="" disabled>Select a saved tenant</option>{availableCoTenants(tenants, detailMemberships, household.lease.id).map((candidate)=><option key={candidate.id} value={candidate.id}>{candidate.display_name} — {candidate.email}</option>)}</select></label><button disabled={busyKey === BUSY_KEYS.addCoTenant} className={`rounded-lg px-4 py-2 text-sm font-black disabled:opacity-50 ${goldControlClassName}`}>Add co-tenant</button></form>}</div>
+        <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700"><h3 className="text-lg font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3>{household.lease?.status === "cancelled" && <p className="mt-2 text-sm font-bold text-slate-500 dark:text-slate-400">This lease is cancelled — membership cannot be changed.</p>}<div className="mt-2 space-y-4">{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} busyKey={busyKey} updateProfile={updateProfile} updateEmail={updateEmail} onPhotoUploaded={(photoUrl) => reconcileTenantPhoto(coTenant.id, photoUrl)} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={detailData?.lateFeeTenantOverride || null} saveLateFeeOverride={saveLateFeeOverride} workspacePaymentPolicy={detailData?.paymentPolicy || "allow_any_amount"} paymentPolicyOverride={coTenant.payment_policy||null} savePaymentPolicyOverride={savePaymentPolicyOverride} makePrimary={household.lease && household.lease.status !== "cancelled" ? ()=>makePrimary(household.lease.id,coTenant.id) : null} removeCoTenant={household.lease && household.lease.status !== "cancelled" ? ()=>removeCoTenant(household.lease.id,coTenant) : null}/>) : !household.lease ? <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned — this tenant has no lease yet. Create a lease first, then add co-tenants to it.</p> : household.lease.status !== "cancelled" && coTenantCandidates.length === 0 && !coTenantsBeyondLoadedPages ? <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease. Every saved tenant is already on this lease — create a new tenant record first to add one.</p> : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>{household.lease && household.lease.status !== "cancelled" && (coTenantCandidates.length > 0 || coTenantQuery.trim().length >= 2 || coTenantsBeyondLoadedPages) && <form onSubmit={(event)=>addCoTenant(event, household.lease.id)} className="mt-4 flex flex-wrap items-end gap-3"><label className="min-w-[260px] flex-1 text-sm font-bold text-slate-900 dark:text-white">Search all tenants by name or email<input name="coTenantSearch" value={coTenantQuery} onChange={(event)=>{ const value = event.target.value; setCoTenantQuery(value); if (value.trim().length < 2) { setCoTenantSearch([]); setCoTenantSearching(false); } else { setCoTenantSearching(true); } }} placeholder="Type at least 2 characters to search every tenant" aria-label="Search all tenants by name or email" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label><label className="min-w-[260px] flex-1 text-sm font-bold text-slate-900 dark:text-white">Add co-tenant<select name="coTenantId" required defaultValue="" aria-label="Tenant to add as co-tenant" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="" disabled>Select a saved tenant</option>{coTenantCandidates.map((candidate)=><option key={candidate.id} value={candidate.id}>{candidate.display_name} — {candidate.email}</option>)}</select></label><button disabled={busyKey === BUSY_KEYS.addCoTenant} className={`rounded-lg px-4 py-2 text-sm font-black disabled:opacity-50 ${goldControlClassName}`}>Add co-tenant</button>{coTenantSearching && <p className="w-full text-xs font-bold text-slate-500 dark:text-slate-400">Searching…</p>}{coTenantQuery.trim().length >= 2 && !coTenantSearching && coTenantSearch.length === 0 && <p className="w-full text-xs font-bold text-slate-500 dark:text-slate-400">No tenant matches “{coTenantQuery.trim()}”.</p>}</form>}</div>
         <a href="/auth?next=/forge/rental/portal" className="mt-5 inline-block text-sm font-bold text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Open tenant sign-in</a></>}
         />
       </div>
@@ -625,6 +795,10 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
               <strong className={balanceCents > 0 ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}>{money.format(balanceCents / 100)}</strong>
             </button>; } },
       ]} />}
+    {data && tenantTotalCount > TENANT_LIST_PAGE_SIZE && <div className="mt-4 flex flex-wrap items-center gap-3">
+      <p className="text-sm font-bold text-slate-600 dark:text-slate-400">Showing {tenants.length} of {tenantTotalCount} tenants.</p>
+      {tenants.length < tenantTotalCount && <button type="button" disabled={loadingMoreTenants} onClick={loadMoreTenants} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{loadingMoreTenants ? "Loading…" : "Load more tenants"}</button>}
+    </div>}
     {showCreate && <form onSubmit={save} className="mt-6 grid max-w-4xl gap-4 md:grid-cols-2">
       <label className="text-sm font-bold text-slate-900 dark:text-white">Tenant name<input name="displayName" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Email<input name="email" type="email" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>

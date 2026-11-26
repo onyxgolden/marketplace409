@@ -45,7 +45,19 @@ export const TENANT_DETAIL_COLUMNS =
 
 export const TENANT_LIST_PAGE_SIZE = 50;
 
+// Bounded co-tenant lookup: how many name/email matches one search returns.
+// The list page stays 50; a lookup is a targeted candidate search, not a page.
+export const TENANT_LOOKUP_PAGE_SIZE = 20;
+
 const OPEN_CHARGE_STATUSES = ["scheduled", "due", "partially_paid", "overdue"];
+
+// Escape a user search term for a PostgREST ilike() pattern: a raw %, _ or
+// backslash would widen the match, and a raw comma would split the or()
+// term list. The mock query chain in route.surface.test.js undoes the same
+// escapes, so the guard proves the pattern that actually reaches the server.
+function escapeIlikePattern(value) {
+  return String(value).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_").replace(/,/g, "\\,");
+}
 
 // The exact financial-event columns the Summary builders read
 // (buildRentalDashboardSummary + buildRentalPropertyPerformance /
@@ -168,7 +180,7 @@ export async function getSummaryProjection({ supabaseClient, effectiveOwnerId, u
   };
 }
 
-export async function getTenantsProjection({ supabaseClient }, { page = 1, pageSize = TENANT_LIST_PAGE_SIZE } = {}) {
+export async function getTenantsProjection({ supabaseClient }, { page = 1, pageSize = TENANT_LIST_PAGE_SIZE, search = null } = {}) {
   // A missing param arrives as null: Number(null) is 0, NOT NaN, so a naive
   // Number() check would silently clamp the page size to 1. Treat
   // null/undefined/"" as "use the default" before any numeric coercion.
@@ -178,6 +190,35 @@ export async function getTenantsProjection({ supabaseClient }, { page = 1, pageS
     if (!Number.isFinite(parsed)) return fallback;
     return Math.min(max, Math.max(1, parsed));
   };
+  const trimmedSearch = typeof search === "string" ? search.trim() : "";
+  if (trimmedSearch) {
+    // Bounded targeted lookup (PR #863 fix round 1, Finding 2): the
+    // co-tenant picker must reach tenants sorted past page 1. Matches on
+    // display_name or email, display_name order, at most 20 rows. The join
+    // rows the index draws are not needed for a candidate lookup, so they
+    // are not fetched — the response carries empty joins, never stale ones.
+    const pattern = escapeIlikePattern(trimmedSearch);
+    const lookupResult = await supabaseClient.from("rental_tenants")
+      .select(TENANT_LIST_COLUMNS, { count: "exact" })
+      .or(`display_name.ilike.%${pattern}%,email.ilike.%${pattern}%`)
+      .order("display_name", { ascending: true })
+      .limit(TENANT_LOOKUP_PAGE_SIZE);
+    throwIfError(lookupResult);
+    const tenants = await signRecordPhotos(supabaseClient, lookupResult.data || []);
+    return {
+      success: true,
+      surface: "tenants",
+      tenants,
+      leaseMemberships: [],
+      leases: [],
+      units: [],
+      openCharges: [],
+      totalCount: lookupResult.count ?? tenants.length,
+      page: 1,
+      pageSize: TENANT_LOOKUP_PAGE_SIZE,
+      search: trimmedSearch,
+    };
+  }
   const safePage = safePositiveInt(page, 1, Number.MAX_SAFE_INTEGER);
   const safePageSize = safePositiveInt(pageSize, TENANT_LIST_PAGE_SIZE, TENANT_LIST_PAGE_SIZE);
   const from = (safePage - 1) * safePageSize;
@@ -293,6 +334,7 @@ export async function getRentalSurfaceProjection({ authenticated, surface, searc
     return NextResponse.json(await getTenantsProjection({ supabaseClient }, {
       page: searchParams?.get("page"),
       pageSize: searchParams?.get("pageSize"),
+      search: searchParams?.get("search"),
     }));
   }
   if (surface === "tenant-detail") {
