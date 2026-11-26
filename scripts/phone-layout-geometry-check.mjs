@@ -748,6 +748,20 @@ async function measureFccuSelection(page) {
     await page.waitForTimeout(400);
     result.disclosures.flare = clicked ? await readDisclosure() : null;
     result.flareRecoveredViaFind = clicked;
+    // Close the disclosure again: the open panel is 256px wide on a
+    // ~300px pane and covers the pane centre, so it would swallow the
+    // zoom-state wheel events (a scrollable element eats the wheel)
+    // and the zoom states would measure z=1 forever.
+    if (clicked) {
+      await page.evaluate(() => {
+        const details = document.querySelector('[data-testid="label-engine-controls"] details');
+        if (details && details.open) {
+          const summary = details.querySelector("summary");
+          if (summary) summary.click();
+        }
+      });
+      await page.waitForTimeout(200);
+    }
   }
   return result;
 }
