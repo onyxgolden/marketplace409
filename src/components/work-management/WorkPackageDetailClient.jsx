@@ -15,6 +15,8 @@ import WorkPackageMilestones from "./WorkPackageMilestones.jsx";
 import WorkPackageManpowerCurve from "./WorkPackageManpowerCurve.jsx";
 import WorkPackageBudgetPanel from "./WorkPackageBudgetPanel.jsx";
 import WorkPackageChangeOrders from "./WorkPackageChangeOrders.jsx";
+import PackageDashboard from "./PackageDashboard.jsx";
+import { parseDetailFocus, serializeDetailFocus } from "@/application/work-management/packageDashboard";
 import WorkPackageBusts from "./WorkPackageBusts.jsx";
 import WorkPackageFieldVerification, { FieldVerificationSummary } from "./WorkPackageFieldVerification.jsx";
 import { withPageQuery } from "./workspaceQuery.js";
@@ -80,7 +82,7 @@ function editFormFromPackage(p) {
   };
 }
 
-export default function WorkPackageDetailClient({ initial, initialLinks = [], initialTab = "overview", workspaceParam = null, forgeProjectParam = null }) {
+export default function WorkPackageDetailClient({ initial, initialLinks = [], initialTab = "overview", workspaceParam = null, forgeProjectParam = null, ownerId = null, initialDetailFocus = null }) {
   const router = useRouter();
   const [pkg, setPkg] = useState(initial.package);
   const [transitions, setTransitions] = useState(initial.transitions);
@@ -207,6 +209,55 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
     switchTab("field-verification");
   }
 
+  // D4 dashboard drill: a dashboard widget lands on a tab with a
+  // focus (a craft, a change-order slice, a budget category, or the
+  // control estimate). The focus is parsed from ?detailFocus= on load
+  // (allowlist only — raw text never becomes a filter) and written
+  // back to the URL on drill so the landing is shareable and survives
+  // a reload. A manual tab switch clears the focus; the receiving
+  // panel offers "Show all" / "Clear highlight" / "Back to dashboard".
+  const [detailFocus, setDetailFocus] = useState(() => parseDetailFocus(initialDetailFocus));
+  const [prevInitialDetailFocus, setPrevInitialDetailFocus] = useState(initialDetailFocus);
+  if (initialDetailFocus !== prevInitialDetailFocus) {
+    setPrevInitialDetailFocus(initialDetailFocus);
+    setDetailFocus(parseDetailFocus(initialDetailFocus));
+  }
+  function writeDetailFocusParam(focus) {
+    const params = new URLSearchParams(window.location.search);
+    if (focus) params.set("detailFocus", serializeDetailFocus(focus));
+    else params.delete("detailFocus");
+    const query = params.toString();
+    const url = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+    window.history.replaceState(window.history.state, "", url);
+  }
+  function drillTo(tab, focus) {
+    setDetailFocus(focus);
+    switchTab(tab, { keepFocus: true });
+    writeDetailFocusParam(focus);
+  }
+  function clearFocus() {
+    setDetailFocus(null);
+    writeDetailFocusParam(null);
+  }
+  function backToDashboard() {
+    setDetailFocus(null);
+    writeDetailFocusParam(null);
+    // Guarded for jsdom, which has no scrollIntoView.
+    const dashboard = document.getElementById("package-dashboard");
+    if (dashboard && typeof dashboard.scrollIntoView === "function") {
+      dashboard.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+  // The focus object shape is parseDetailFocus's: craft carries
+  // craftKey, change-orders carries filter, budget-allocation carries
+  // category, and estimate is its own kind (it highlights the control
+  // estimate on the Budget tab).
+  const craftFilter = detailFocus?.kind === "craft" ? detailFocus.craftKey : null;
+  const changeOrdersFocus = detailFocus?.kind === "change-orders"
+    ? detailFocus.filter
+    : detailFocus?.kind === "estimate" ? "estimate" : null;
+  const budgetHighlight = detailFocus?.kind === "budget-allocation" ? detailFocus.category : null;
+
   // D16: "Review linked records" on the Budget tab was a dead anchor
   // (#work-package-links only exists in the DOM while Overview is the
   // active tab — tabs are conditionally rendered, not merely hidden).
@@ -228,7 +279,8 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
     [workspaceParam, forgeProjectParam],
   );
 
-  function switchTab(tab) {
+  function switchTab(tab, options = {}) {
+    if (!options.keepFocus) setDetailFocus(null);
     setActiveTab(tab);
     // Slice-7: preserve the page's existing query params. The old code
     // rebuilt the URL with only tab + workspace, silently dropping
@@ -239,6 +291,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
     const params = new URLSearchParams(window.location.search);
     if (tab !== "overview") params.set("tab", tab);
     else params.delete("tab");
+    if (!options.keepFocus) params.delete("detailFocus");
     if (workspaceParam) params.set("workspace", workspaceParam);
     if (forgeProjectParam) params.set("forgeProject", forgeProjectParam);
     const query = params.toString();
@@ -623,6 +676,16 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
   return (
     <PackagePageProvider workspace={workspaceParam} forgeProject={forgeProjectParam}>
     <div className="mt-6">
+      <div id="package-dashboard" className="scroll-mt-4">
+        <PackageDashboard
+          packageId={pkg.id}
+          pkg={pkg}
+          planningSummary={planningSummary}
+          refreshKey={costRefreshKey}
+          ownerId={ownerId}
+          onDrill={drillTo}
+        />
+      </div>
       {error && (
         <p role="alert" className="flex items-start justify-between gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
           <span>{error}</span>
@@ -1021,7 +1084,14 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
       {activeTab === "steps" && (
         <div className="mt-6 space-y-6">
-          <WorkPackageSteps packageId={pkg.id} onViewVerifications={navigateToFieldVerification} />
+          <WorkPackageSteps
+            packageId={pkg.id}
+            onChanged={() => setCostRefreshKey((key) => key + 1)}
+            onViewVerifications={navigateToFieldVerification}
+            craftFilter={craftFilter}
+            onClearCraftFilter={clearFocus}
+            onBackToDashboard={backToDashboard}
+          />
           <WorkPackageManpowerCurve packageId={pkg.id} />
           <WorkPackageCraftAssignments packageId={pkg.id} />
         </div>
@@ -1063,6 +1133,11 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
             packageId={pkg.id}
             refreshKey={costRefreshKey}
             onChanged={() => setCostRefreshKey((key) => key + 1)}
+            focus={changeOrdersFocus}
+            onClearFocus={clearFocus}
+            onBackToDashboard={backToDashboard}
+            highlightCategory={budgetHighlight}
+            onClearHighlight={clearFocus}
           />
         </div>
       )}

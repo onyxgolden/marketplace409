@@ -12,7 +12,7 @@
 // own, and a later step/rate edit never rewrites a saved allocation.
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
 import { scopedSWRKey } from "./workspaceQuery.js";
@@ -77,6 +77,9 @@ export default function WorkPackageBudgetAllocation({
   refreshKey = 0,
   onChanged = null,
   onRequestEstimateEdit = null,
+  highlightCategory = null,
+  onClearHighlight = null,
+  onBackToDashboard = null,
 }) {
   const pageQuery = usePageQuery();
   const pageContext = usePackagePageContext();
@@ -102,6 +105,23 @@ export default function WorkPackageBudgetAllocation({
   const plannedLaborForecastCents = data?.plannedLaborForecastCents ?? null;
   const notApplied = Boolean(data?.notApplied);
   const estimateCents = estimate?.currentControlEstimateCents ?? null;
+  // D4 drill: the dashboard lands here with a category to highlight.
+  // "all" shows every line; a single category highlights its rows.
+  const highlightedLines = highlightCategory && highlightCategory !== "all" && allocation
+    ? allocation.lines.filter((line) => line.category === highlightCategory)
+    : null;
+  const highlightLabel = highlightCategory === "all"
+    ? "all categories"
+    : highlightCategory
+      ? budgetCategoryLabel(highlightCategory)
+      : null;
+  const sectionRef = useRef(null);
+  useEffect(() => {
+    // Guarded for jsdom, which has no scrollIntoView.
+    if (highlightCategory && sectionRef.current && typeof sectionRef.current.scrollIntoView === "function") {
+      sectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [highlightCategory, allocation]);
 
   async function reload(message) {
     if (message) setConfirmation(message);
@@ -255,7 +275,7 @@ export default function WorkPackageBudgetAllocation({
   });
 
   return (
-    <section className="mt-5 border-t border-slate-200 pt-4" aria-label="Budget allocation">
+    <section ref={sectionRef} className="mt-5 border-t border-slate-200 pt-4" aria-label="Budget allocation">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-900">Budget allocation</h3>
         {!editing && !notApplied && estimate && (
@@ -273,6 +293,25 @@ export default function WorkPackageBudgetAllocation({
         The control estimate split five ways — labor, material, equipment, external services, rental.
         The lines must add up to the control estimate exactly. Change orders get no budget lines here.
       </p>
+      {highlightCategory && !isLoading && !loadError && !notApplied && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2" role="status" data-testid="budget-allocation-highlight-banner">
+          <span className="text-sm text-blue-900">
+            {allocation
+              ? highlightCategory === "all"
+                ? `Showing all budget categories — ${allocation.lines.length} lines.`
+                : highlightedLines.length === 0
+                  ? `No budget lines in ${highlightLabel} — ${allocation.lines.length} lines in total.`
+                  : `Highlighting ${highlightLabel} — ${highlightedLines.length} of ${allocation.lines.length} lines.`
+              : `No budget allocation yet — nothing to highlight in ${highlightLabel}.`}
+          </span>
+          {onClearHighlight && (
+            <button type="button" className="min-h-11 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-900 hover:bg-blue-100" onClick={onClearHighlight}>Clear highlight</button>
+          )}
+          {onBackToDashboard && (
+            <button type="button" className="min-h-11 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-900 hover:bg-blue-100" onClick={onBackToDashboard}>Back to dashboard</button>
+          )}
+        </div>
+      )}
 
       {isTerminal && (
         <p className="mt-2 text-sm text-amber-700">
@@ -401,7 +440,7 @@ export default function WorkPackageBudgetAllocation({
             </thead>
             <tbody>
               {allocation.lines.map((line) => (
-                <tr key={line.id} className="border-b border-slate-100">
+                <tr key={line.id} data-category={line.category} className={`border-b border-slate-100 ${highlightCategory && highlightCategory !== "all" && line.category === highlightCategory ? "bg-blue-50" : ""}`}>
                   <td className="py-1 pr-2 font-medium text-slate-900">{budgetCategoryLabel(line.category)}</td>
                   <td className="py-1 pr-2 text-slate-700">{line.description}</td>
                   <td className="py-1 text-slate-700">{money(line.amountCents)}</td>

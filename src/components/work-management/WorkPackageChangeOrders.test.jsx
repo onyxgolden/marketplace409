@@ -4,6 +4,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { clearSWRCache } from "@/hooks/swrCache";
+
 import WorkPackageChangeOrders from "./WorkPackageChangeOrders.jsx";
 
 const SUMMARY = {
@@ -39,10 +41,13 @@ const ORDER = {
   createdBy: "user_9", updatedBy: "user_9", createdAt: "t0", updatedAt: "t0",
 };
 
-function stubFetch({ summary = SUMMARY, changeOrders = [ORDER], packageStatus = "in_progress" } = {}) {
+function stubFetch({ summary = SUMMARY, changeOrders = [ORDER], packageStatus = "in_progress", allocation = null } = {}) {
   const calls = [];
   vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
     calls.push({ url, method: options.method || "GET", body: options.body ? JSON.parse(options.body) : undefined });
+    if (url === "/api/work-packages/pkg_1/budget-allocation" && allocation) {
+      return { ok: true, json: async () => ({ ...allocation, packageStatus }) };
+    }
     if (url === "/api/work-packages/pkg_1/change-orders" && options.method === "POST") {
       const created = JSON.parse(options.body);
       return {
@@ -239,5 +244,87 @@ describe("WorkPackageChangeOrders", () => {
       reason: "Owner-requested scope addition",
     }));
     expect(container.textContent).toContain("Change order #2 added — New scope item.");
+  });
+});
+
+describe("WorkPackageChangeOrders D4 drill", () => {
+  // The allocation the nested BudgetAllocation panel fetches when a
+  // highlight is passed through: labor $1,500.00 / material $1,000.00.
+  const ALLOCATION = {
+    packageCode: "WP-0001",
+    packageTitle: "Turnover",
+    packageStatus: "in_progress",
+    notApplied: false,
+    estimate: {
+      id: "est_1", workPackageId: "pkg_1",
+      originalControlEstimateCents: 250000, currentControlEstimateCents: 250000,
+      contingencyCents: 50000, version: 1,
+    },
+    allocation: {
+      id: "forge_wba_1", workPackageId: "pkg_1", controlEstimateId: "est_1",
+      controlEstimateVersion: 1, allocatedTotalCents: 250000, version: 1,
+      lines: [
+        { id: "forge_wbl_1", category: "labor", description: "Crew", amountCents: 150000, sortOrder: 0 },
+        { id: "forge_wbl_2", category: "material", description: "Pipe", amountCents: 100000, sortOrder: 1 },
+      ],
+    },
+    plannedLaborForecastCents: 90000,
+  };
+
+  it("narrows the rows to open change orders and clears back to all", async () => {
+    const denied = { ...ORDER, id: "forge_wco_2", changeOrderNumber: 2, description: "Denied extra", status: "denied" };
+    const estimated = { ...ORDER, id: "forge_wco_3", changeOrderNumber: 3, description: "Priced extra", status: "estimated" };
+    clearSWRCache();
+    stubFetch({ changeOrders: [ORDER, denied, estimated] });
+    const onClear = vi.fn();
+    const { container } = renderPanel({ focus: "open", onClearFocus: onClear, onBackToDashboard: () => {} });
+    await settle();
+    expect(container.querySelector('[data-testid="change-orders-focus-banner"]').textContent)
+      .toContain("Showing only open change orders — 2 of 3.");
+    expect(container.textContent).toContain("Rework spool 7");
+    expect(container.textContent).toContain("Priced extra");
+    expect(container.textContent).not.toContain("Denied extra");
+    act(() => {
+      [...container.querySelectorAll("button")].find((b) => b.textContent === "Show all change orders")
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
+  it("narrows the rows to counted Deviations only", async () => {
+    const deviation = { ...ORDER, id: "forge_wco_2", changeOrderNumber: 2, type: "deviation", description: "Field deviation", status: "approved", estimatedCostCents: 5000, approvedCostCents: 5000 };
+    const uncountedDeviation = { ...deviation, id: "forge_wco_3", changeOrderNumber: 3, description: "Priced deviation", status: "estimated" };
+    clearSWRCache();
+    stubFetch({ changeOrders: [ORDER, deviation, uncountedDeviation] });
+    const { container } = renderPanel({ focus: "deviation", onClearFocus: () => {} });
+    await settle();
+    expect(container.querySelector('[data-testid="change-orders-focus-banner"]').textContent)
+      .toContain("Showing only counted Deviation change orders — 1 of 3.");
+    expect(container.textContent).toContain("Field deviation");
+    expect(container.textContent).not.toContain("Priced deviation");
+    expect(container.textContent).not.toContain("Rework spool 7");
+  });
+
+  it("highlights the control-estimate block for the estimate focus", async () => {
+    clearSWRCache();
+    stubFetch();
+    const { container } = renderPanel({ focus: "estimate", onClearFocus: () => {} });
+    await settle();
+    const estimate = container.querySelector('[data-testid="change-orders-estimate"]');
+    expect(estimate).not.toBeNull();
+    expect(estimate.className).toContain("ring-2");
+    expect(container.querySelector('[data-testid="change-orders-focus-banner"]').textContent)
+      .toContain("Control estimate — the estimate the cost split reconciles against.");
+  });
+
+  it("passes a budget-category highlight through to the allocation", async () => {
+    clearSWRCache();
+    stubFetch({ allocation: ALLOCATION });
+    const { container } = renderPanel({ highlightCategory: "labor", onClearHighlight: () => {} });
+    await settle();
+    await settle(); // the nested allocation panel fetches after the parent mounts
+    const banner = container.querySelector('[data-testid="budget-allocation-highlight-banner"]');
+    expect(banner).not.toBeNull();
+    expect(banner.textContent).toContain("Highlighting Labor — 1 of 2 lines.");
   });
 });

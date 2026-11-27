@@ -15,7 +15,7 @@
 // requires one on every update, status change, and retire.
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
 import { scopedSWRKey } from "./workspaceQuery.js";
@@ -28,6 +28,7 @@ import {
   DEFAULT_CRAFT_RATE_CENTS_PER_HOUR,
   changeOrderStatusLabel,
   changeOrderTypeLabel,
+  isCountedChangeOrder,
   formatRatePerHour,
   parseDollarsToCents,
 } from "@/domains/work-management/changeOrders";
@@ -152,7 +153,7 @@ function statusBadge(status) {
   return <span className={`rounded px-2 py-0.5 text-xs font-medium ${tone}`}>{changeOrderStatusLabel(status)}</span>;
 }
 
-export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onChanged = null }) {
+export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onChanged = null, focus = null, onClearFocus = null, onBackToDashboard = null, highlightCategory = null, onClearHighlight = null }) {
   const pageQuery = usePageQuery();
   const pageContext = usePackagePageContext();
   const [error, setError] = useState("");
@@ -190,6 +191,41 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
   const summary = data?.summary || null;
   const changeOrders = data?.changeOrders || [];
   const packageStatus = data?.packageStatus || "";
+  // D4 drill: the dashboard lands here with a focus. "open" is every
+  // active status except denied; "counted" is the statuses that roll
+  // into the running contract price; "deviation" is counted Deviations
+  // only; "estimate" highlights the control-estimate block instead of
+  // filtering rows. Blank quick-add rows hide while a row filter is
+  // on — a new order typed there would not match it and look lost.
+  const rowFilterActive = focus === "open" || focus === "counted" || focus === "deviation";
+  const displayedOrders = focus === "open"
+    ? changeOrders.filter((order) => order.status !== "denied")
+    : focus === "counted"
+      ? changeOrders.filter((order) => isCountedChangeOrder(order))
+      : focus === "deviation"
+        ? changeOrders.filter((order) => order.type === "deviation" && isCountedChangeOrder(order))
+        : changeOrders;
+  const focusLabel = focus === "open"
+    ? `Showing only open change orders — ${displayedOrders.length} of ${changeOrders.length}.`
+    : focus === "counted"
+      ? `Showing only counted change orders — ${displayedOrders.length} of ${changeOrders.length}.`
+      : focus === "deviation"
+        ? `Showing only counted Deviation change orders — ${displayedOrders.length} of ${changeOrders.length}.`
+        : focus === "estimate"
+          ? "Control estimate — the estimate the cost split reconciles against."
+          : focus === "all"
+            ? `Showing all change orders — ${changeOrders.length} in total.`
+            : null;
+  const estimateRef = useRef(null);
+  useEffect(() => {
+    // Runs again when the summary lands: the estimate block is not in
+    // the DOM until the data loads, so a focus-only dependency would
+    // fire once with a null ref and never scroll. Guarded for jsdom,
+    // which has no scrollIntoView.
+    if (focus === "estimate" && estimateRef.current && typeof estimateRef.current.scrollIntoView === "function") {
+      estimateRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [focus, summary]);
   const isTerminal = packageStatus === "cancelled" || packageStatus === "verified_closed";
   const notApplied = Boolean(summary?.notApplied);
 
@@ -880,6 +916,23 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
         from contingency and never touches the contract price; every other counted type rolls into
         it. Labor cost is the planned step hours at each craft&apos;s rate.
       </p>
+      {focus && focusLabel && !isLoading && !loadError && !notApplied && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2" role="status" data-testid="change-orders-focus-banner">
+          <span className="text-sm text-blue-900">{focusLabel}</span>
+          {rowFilterActive && onClearFocus && (
+            <button type="button" className="min-h-11 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-900 hover:bg-blue-100" onClick={onClearFocus}>Show all change orders</button>
+          )}
+          {focus === "estimate" && onClearFocus && (
+            <button type="button" className="min-h-11 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-900 hover:bg-blue-100" onClick={onClearFocus}>Clear estimate focus</button>
+          )}
+          {focus === "all" && onClearFocus && (
+            <button type="button" className="min-h-11 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-900 hover:bg-blue-100" onClick={onClearFocus}>Clear focus</button>
+          )}
+          {onBackToDashboard && (
+            <button type="button" className="min-h-11 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-900 hover:bg-blue-100" onClick={onBackToDashboard}>Back to dashboard</button>
+          )}
+        </div>
+      )}
 
       {isTerminal && (
         <p className="mt-2 text-sm text-amber-700">
@@ -899,7 +952,8 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
         <p className="mt-3 text-xs text-slate-500">Loading Change Orders Log…</p>
       ) : loadError || notApplied ? null : summary && (
         <>
-          <dl className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div ref={estimateRef} data-testid="change-orders-estimate" className={focus === "estimate" ? "mt-4 scroll-mt-4 rounded-lg bg-blue-50 p-3 ring-2 ring-blue-500" : "mt-4"}>
+          <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <div>
               <dt className="text-xs font-medium text-slate-500">Original control estimate</dt>
               <dd className="mt-0.5 text-sm font-medium text-slate-900">
@@ -947,6 +1001,7 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
               </dd>
             </div>
           </dl>
+          </div>
 
           <div className="mt-3 flex flex-wrap gap-2">
             {CHANGE_ORDER_STATUSES.map((status) => (
@@ -1149,13 +1204,21 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
               <div role="columnheader">PO #</div>
               <div role="columnheader">Actions</div>
             </div>
-            {changeOrders.map((order) => renderOrderRow(order))}
-            {!isTerminal && drafts.map((draft, index) => renderBlankRow(draft, index))}
+            {displayedOrders.map((order) => renderOrderRow(order))}
+            {!isTerminal && !rowFilterActive && drafts.map((draft, index) => renderBlankRow(draft, index))}
             {isTerminal && changeOrders.length === 0 && (
               <p className="px-3 py-3 text-sm text-slate-500">This package is closed — no change orders were added.</p>
             )}
-            {!isTerminal && changeOrders.length === 0 && (
-              <p className="px-3 py-3 text-sm text-slate-500">No change orders yet — type the first one in a blank row above.</p>
+            {!isTerminal && displayedOrders.length === 0 && (
+              <p className="px-3 py-3 text-sm text-slate-500">
+                {focus === "open"
+                  ? "No open change orders — every change order is denied, or none exist yet."
+                  : focus === "counted"
+                    ? "No counted change orders yet."
+                    : focus === "deviation"
+                      ? "No counted Deviation change orders yet."
+                      : "No change orders yet — type the first one in a blank row above."}
+              </p>
             )}
           </div>
 
@@ -1184,6 +1247,9 @@ export default function WorkPackageChangeOrders({ packageId, refreshKey = 0, onC
         refreshKey={refreshKey}
         onChanged={onChanged}
         onRequestEstimateEdit={startEstimateEdit}
+        highlightCategory={highlightCategory}
+        onClearHighlight={onClearHighlight}
+        onBackToDashboard={onBackToDashboard}
       />
     </section>
   );

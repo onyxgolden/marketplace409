@@ -358,3 +358,35 @@ describe("WorkPackageBudgetAllocation", () => {
     expect(buttonNamed(container, "Save budget allocation")).toBeDefined();
   });
 });
+
+describe("WorkPackageBudgetAllocation D4 highlight", () => {
+  it("highlights one category's rows and counts them", async () => {
+    stubFetch();
+    const onClear = vi.fn();
+    const { container } = renderPanel({ highlightCategory: "labor", onClearHighlight: onClear });
+    await settle();
+    const banner = container.querySelector('[data-testid="budget-allocation-highlight-banner"]');
+    expect(banner).not.toBeNull();
+    expect(banner.textContent).toContain("Highlighting Labor — 1 of 2 lines.");
+    expect(container.querySelector('tr[data-category="labor"]').className).toContain("bg-blue-50");
+    expect(container.querySelector('tr[data-category="material"]').className).not.toContain("bg-blue-50");
+    await clickButton([...container.querySelectorAll("button")].find((b) => b.textContent === "Clear highlight"));
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
+  it("says so in plain words when the highlighted category has no lines", async () => {
+    stubFetch();
+    const { container } = renderPanel({ highlightCategory: "equipment", onClearHighlight: () => {} });
+    await settle();
+    expect(container.querySelector('[data-testid="budget-allocation-highlight-banner"]').textContent)
+      .toContain("No budget lines in Equipment — 2 lines in total.");
+  });
+
+  it("shows every line for the all highlight", async () => {
+    stubFetch();
+    const { container } = renderPanel({ highlightCategory: "all", onClearHighlight: () => {} });
+    await settle();
+    expect(container.querySelector('[data-testid="budget-allocation-highlight-banner"]').textContent)
+      .toContain("Showing all budget categories — 2 lines.");
+  });
+});
