@@ -13,6 +13,10 @@
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
 import { buildBankLedger } from "@/application/rental/bankLedger";
 import { planUndo, reconcileStatement, validateStatement } from "@/domains/rental/bankReconciliation";
+import { isMissingTableError } from "@/lib/supabase/isMissingTableError";
+// The missing-table guard is the one shared helper (FV-1); this
+// re-export keeps the historical import path working.
+export { isMissingTableError };
 
 const EVENT_COLUMNS =
   "id, event_date, description, amount, transaction_kind, normalized_category, property_id, payee, check_number, bank_account_id, cleared, cleared_at, source_system, status, is_deleted";
@@ -22,12 +26,6 @@ export class ReconciliationError extends Error {
     super(message);
     this.status = status;
   }
-}
-
-/** True when a Supabase/PostgREST error means the table doesn't exist yet (migration not applied). */
-export function isMissingTableError(error) {
-  const text = `${error?.code || ""} ${error?.message || ""}`;
-  return /42P01|PGRST205|relation .* does not exist|Could not find the table/i.test(text);
 }
 
 async function loadAccount(db, ownerId, bankAccountId) {

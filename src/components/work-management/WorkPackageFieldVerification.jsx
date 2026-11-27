@@ -84,8 +84,30 @@ async function api(pageQuery, path, options) {
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || "The request could not be completed.");
+  if (!response.ok) {
+    const error = new Error(body.error || "The request could not be completed.");
+    // Carry the migration-not-applied flag on the error: the SWR cache
+    // stores only the error message string, so a caller that needs the
+    // flag (the list fetchers, for the honest unavailable state) reads
+    // it here before the message is all that survives.
+    if (body?.notApplied) error.notApplied = true;
+    throw error;
+  }
   return body;
+}
+
+// The list fetch the panel and the header summary share (same SWR key
+// at default filters, so one network request serves both — whichever
+// fetcher runs first wins the entry). A 503 with notApplied means the
+// migration hasn't landed: that is data, not a failure — the panel
+// renders its honest "isn't available yet" state from
+// listData.notApplied, and the summary renders nothing. Every other
+// failure still throws and lands in the error branch.
+function fetchFieldVerificationList(pageQuery, packageId, listQuery) {
+  return api(pageQuery, `/api/work-packages/${packageId}/field-verifications?${listQuery}`).catch((error) => {
+    if (error?.notApplied) return { notApplied: true };
+    throw error;
+  });
 }
 
 function formatWhen(value) {
@@ -192,7 +214,7 @@ export function FieldVerificationSummary({ packageId, onNavigate }) {
   const pageContext = usePackagePageContext();
   const { data } = useStaleWhileRevalidate(
     scopedSWRKey(pageContext, "work-packages", packageId, "field-verifications", "list", "limit=100"),
-    () => api(pageQuery, `/api/work-packages/${packageId}/field-verifications?limit=100`),
+    () => fetchFieldVerificationList(pageQuery, packageId, "limit=100"),
     { ttlMs: 10_000 },
   );
   const summary = data?.summary ?? null;
@@ -1277,7 +1299,7 @@ export default function WorkPackageFieldVerification({ packageId, initialFilter 
     data: listData, error: listError, isLoading: listLoading, refresh: refreshList,
   } = useStaleWhileRevalidate(
     scopedSWRKey(pageContext, "work-packages", packageId, "field-verifications", "list", listQuery),
-    () => api(pageQuery, `/api/work-packages/${packageId}/field-verifications?${listQuery}`),
+    () => fetchFieldVerificationList(pageQuery, packageId, listQuery),
     { ttlMs: 10_000 },
   );
 

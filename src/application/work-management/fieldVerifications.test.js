@@ -216,6 +216,34 @@ describe("listFieldVerifications", () => {
     expect(result.httpStatus).toBe(503);
     expect(result.notApplied).toBe(true);
   });
+
+  it("returns the 503 not-applied result when PostgREST reports the table missing (PGRST205)", async () => {
+    const db = mockDb(
+      [pkgChain(), chain({ data: null, error: { code: "PGRST205", message: "Could not find the table 'public.forge_work_field_verifications' in the schema cache" } })],
+      [],
+    );
+    const result = await listFieldVerifications(db, { ownerId: OWNER, packageId: PKG });
+    expect(result.httpStatus).toBe(503);
+    expect(result.notApplied).toBe(true);
+  });
+
+  it("returns the 503 not-applied result on the message shape alone", async () => {
+    const db = mockDb(
+      [pkgChain(), chain({ data: null, error: { message: "Could not find the table 'public.forge_work_field_verifications' in the schema cache" } })],
+      [],
+    );
+    const result = await listFieldVerifications(db, { ownerId: OWNER, packageId: PKG });
+    expect(result.httpStatus).toBe(503);
+    expect(result.notApplied).toBe(true);
+  });
+
+  it("throws on an unrelated list failure instead of dressing it up as not-applied", async () => {
+    const db = mockDb(
+      [pkgChain(), chain({ data: null, error: { code: "42501", message: "permission denied for table forge_work_field_verifications" } })],
+      [],
+    );
+    await expect(listFieldVerifications(db, { ownerId: OWNER, packageId: PKG })).rejects.toThrow("permission denied");
+  });
 });
 
 describe("getFieldVerificationDetail", () => {
@@ -262,6 +290,16 @@ describe("getFieldVerificationDetail", () => {
     const result = await getFieldVerificationDetail(db, { ownerId: OWNER, packageId: PKG, verificationId: "forge_wpfv_other" });
     expect(result.httpStatus).toBe(404);
   });
+
+  it("returns the 503 not-applied result when PostgREST reports the table missing (PGRST205)", async () => {
+    const db = mockDb(
+      [pkgChain(), chain({ data: null, error: { code: "PGRST205", message: "Could not find the table 'public.forge_work_field_verifications' in the schema cache" } })],
+      [],
+    );
+    const result = await getFieldVerificationDetail(db, { ownerId: OWNER, packageId: PKG, verificationId: "forge_wpfv_1" });
+    expect(result.httpStatus).toBe(503);
+    expect(result.notApplied).toBe(true);
+  });
 });
 
 describe("listFieldVerificationBadges", () => {
@@ -278,6 +316,16 @@ describe("listFieldVerificationBadges", () => {
     expect(result.ok).toBe(true);
     expect(result.byWorkStep).toEqual({ forge_step_1: { count: 1, statuses: ["DRAFT"] } });
     expect(result.byTakeoffLine).toEqual({ forge_line_1: { count: 2, statuses: ["ACCEPTED", "SUBMITTED"] } });
+  });
+
+  it("returns the 503 not-applied result when PostgREST reports the table missing (PGRST205)", async () => {
+    const db = mockDb([
+      pkgChain(),
+      chain({ data: null, error: { code: "PGRST205", message: "Could not find the table 'public.forge_work_field_verifications' in the schema cache" } }),
+    ], []);
+    const result = await listFieldVerificationBadges(db, { ownerId: OWNER, packageId: PKG });
+    expect(result.httpStatus).toBe(503);
+    expect(result.notApplied).toBe(true);
   });
 });
 
