@@ -39,6 +39,15 @@ export default function HierarchyProjectSelector({
   includeUnassigned = true,
   disabled = false,
   idPrefix = "forge-project",
+  // A just-created client/site that has no project yet, so there is no
+  // `value` (forgeProject id) to select -- visibly preselects it in the
+  // Client/Site dropdowns instead (PR #848 review, P1: the planner must
+  // land on what was just created, not just open a next-step form).
+  // Pass a new object each time (even re-selecting the same ids) to force
+  // the preselection to re-apply; `refreshKey` forces the tree refetch so
+  // a client/site created a moment ago is present to select.
+  pendingSelection = null,
+  refreshKey = 0,
 }) {
   const [selector, setSelector] = useState(null);
   const [loadError, setLoadError] = useState("");
@@ -54,27 +63,47 @@ export default function HierarchyProjectSelector({
         if (!response.ok) throw new Error(body.error || "Could not load the project list.");
         return body.selector;
       })
-      .then((loaded) => { if (!cancelled) setSelector(loaded); })
+      // Clear any prior load error on a successful refresh: a first failed
+      // read must not leave the selector disabled and still showing the
+      // stale error after a later successful refresh (PR #848 fix round 2).
+      // (Cleared here, in the async success path, rather than when the
+      // refresh begins — a synchronous setState in the effect body trips
+      // react-hooks/set-state-in-effect.)
+      .then((loaded) => { if (!cancelled) { setSelector(loaded); setLoadError(""); } })
       .catch((caught) => { if (!cancelled) setLoadError(caught?.message || "Could not load the project list."); });
     return () => { cancelled = true; };
-  }, []);
+  }, [refreshKey]);
 
   // Pre-select the chain for the current value once the tree loads.
   // A value the tree does not contain (deleted/archived since the page
-  // loaded) leaves the selects empty — never a silent substitute.
+  // loaded) leaves the selects empty — never a silent substitute. With
+  // no value but a pendingSelection, preselect that client/site instead
+  // (a just-created record with no project yet).
   // Adjusted during render (React's derived-state-from-props pattern):
   // the tree and the value are the only inputs, so a user pick — which
   // changes neither — is never clobbered by this sync.
   const [prevValue, setPrevValue] = useState(value);
   const [prevSelector, setPrevSelector] = useState(null);
-  if (prevValue !== value || prevSelector !== selector) {
+  const [prevPending, setPrevPending] = useState(pendingSelection);
+  if (prevValue !== value || prevSelector !== selector || prevPending !== pendingSelection) {
     setPrevValue(value);
     setPrevSelector(selector);
+    setPrevPending(pendingSelection);
     if (selector) {
       const chain = value && value !== UNASSIGNED_VALUE ? findChain(selector, value) : null;
-      setClientId(chain ? chain.client.id : "");
-      setSiteId(chain ? chain.site.id : "");
-      setProjectId(chain ? chain.project.id : "");
+      if (chain) {
+        setClientId(chain.client.id);
+        setSiteId(chain.site.id);
+        setProjectId(chain.project.id);
+      } else if (pendingSelection) {
+        setClientId(pendingSelection.clientId || "");
+        setSiteId(pendingSelection.siteId || "");
+        setProjectId("");
+      } else {
+        setClientId("");
+        setSiteId("");
+        setProjectId("");
+      }
     }
   }
 
