@@ -208,15 +208,44 @@ export default function PackageDashboard({ packageId, pkg, planningSummary = nul
   const pageContext = usePackagePageContext();
   const forgeProjectId = pageContext?.forgeProject ?? "default";
 
-  const [prefs, setPrefs] = useState(() => {
-    try {
-      if (typeof window === "undefined") return defaultPreferences();
-      const raw = window.localStorage.getItem(preferenceKey({ ownerId, forgeProjectId, packageId }));
-      return parsePreferences(raw);
-    } catch {
-      return defaultPreferences();
-    }
-  });
+  // Device-local preferences, loaded hydration-safe (FORGE #418):
+  // the server markup and the first hydration render are both the
+  // defaults, and the saved prefs apply only after the commit. Reading
+  // localStorage in the initial state made a returning client's first
+  // render differ from the server HTML (hidden widget, custom title,
+  // Table pivot) — a hydration mismatch. The render-phase reset below
+  // also runs whenever the owner/project/package key changes, so the
+  // previous package's titles never flash onto this package's page
+  // (the old initializer ran once and then bled across navigation).
+  const [prefs, setPrefs] = useState(() => defaultPreferences());
+  const [loadedKey, setLoadedKey] = useState(null);
+  const prefsKey = preferenceKey({ ownerId, forgeProjectId, packageId });
+  if (loadedKey !== prefsKey) {
+    // Adjusting state during render: the new key's saved prefs load in
+    // the effect below; until then this render shows defaults.
+    setPrefs(defaultPreferences());
+    setLoadedKey(prefsKey);
+  }
+  useEffect(() => {
+    let cancelled = false;
+    // Deferred a tick: setPrefs must not run synchronously inside this
+    // effect's body (react-hooks/set-state-in-effect). The tick still
+    // lands before any user interaction, so the saved prefs are in
+    // place before the dashboard is usable.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      try {
+        if (typeof window !== "undefined") {
+          setPrefs(parsePreferences(window.localStorage.getItem(prefsKey)));
+        }
+      } catch {
+        // Private mode / unavailable storage: stay on defaults.
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [prefsKey]);
   const [settingsOpen, setSettingsOpen] = useState(null);
   const [notices, setNotices] = useState({});
   const settingsTriggerRefs = useRef({});
@@ -225,10 +254,7 @@ export default function PackageDashboard({ packageId, pkg, planningSummary = nul
     setPrefs(next);
     try {
       if (typeof window !== "undefined") {
-        window.localStorage.setItem(
-          preferenceKey({ ownerId, forgeProjectId, packageId }),
-          serializePreferences(next),
-        );
+        window.localStorage.setItem(prefsKey, serializePreferences(next));
       }
     } catch {
       // Private mode / unavailable storage: preferences stay in memory
@@ -602,7 +628,9 @@ export default function PackageDashboard({ packageId, pkg, planningSummary = nul
             <div className="mt-3 rounded-lg bg-amber-50 p-3 dark:bg-amber-950">
               <p className="text-sm text-amber-800 dark:text-amber-200">{cost.reason}</p>
               <p className="mt-1 text-sm text-amber-800 dark:text-amber-200">
-                Lines add up to {money(cost.allocatedTotalCents)}; the control estimate is {money(cost.estimateCents)}.
+                Lines add up to {money(cost.lineSumCents)}; the saved allocation total is{" "}
+                {Number.isSafeInteger(cost.allocatedTotalCents) ? money(cost.allocatedTotalCents) : "unknown"}; the control estimate is{" "}
+                {Number.isSafeInteger(cost.estimateCents) ? money(cost.estimateCents) : "unknown"}.
               </p>
               <Drill onDrill={onDrill} tab="budget" focus={{ kind: "budget-allocation", category: "all" }} ariaLabel="Review the budget allocation on the Budget and Change Orders tab" className="mt-2 px-2 py-1 font-medium text-amber-800 hover:underline dark:text-amber-200">
                 Review the budget allocation

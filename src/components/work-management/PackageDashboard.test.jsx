@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PackageDashboard from "./PackageDashboard.jsx";
 import { PackagePageProvider } from "./packagePageContext.jsx";
 import { clearSWRCache } from "@/hooks/swrCache";
+import { markSWRHydrated, resetSWRHydration } from "@/hooks/swrHydration";
+import { preferenceKey, serializePreferences } from "@/application/work-management/packageDashboardPreferences.js";
 
 const PKG = {
   id: "pkg_1",
@@ -406,5 +409,139 @@ describe("customization", () => {
     expect([...strip.querySelectorAll("button")].some((b) => b.textContent.includes("$1,250.00"))).toBe(false);
     expect(strip.textContent).toContain("$1,250.00");
     unmount(rendered);
+  });
+});
+
+describe("hydration-safe preferences", () => {
+  function seedPrefs(keyParts, widgets) {
+    window.localStorage.setItem(
+      preferenceKey(keyParts),
+      serializePreferences({ version: 1, widgets }),
+    );
+  }
+
+  const SAVED_WIDGETS = {
+    strip: { hidden: false, title: "My strip", pivot: "cards" },
+    planning: { hidden: false, title: null, pivot: "table" },
+    cost: { hidden: true, title: null, pivot: "donut" },
+    changeOrders: { hidden: false, title: null, pivot: "strip" },
+  };
+
+  it("renders server markup from defaults despite saved preferences, hydrates without error, then applies them", async () => {
+    try {
+      resetSWRHydration();
+      seedPrefs({ ownerId: "owner_1", forgeProjectId: "forge_project_1", packageId: "pkg_1" }, SAVED_WIDGETS);
+      stubFetch();
+      const element = (
+        <PackagePageProvider workspace="owner_1" forgeProject="forge_project_1">
+          <PackageDashboard packageId="pkg_1" pkg={PKG} planningSummary={PLANNING} ownerId="owner_1" onDrill={vi.fn()} />
+        </PackagePageProvider>
+      );
+      const html = renderToString(element);
+      // Server markup is defaults, never the stored prefs: the default
+      // strip title renders, the saved cost-hidden state does not hide
+      // the widget, and no Table pivot renders.
+      expect(html).toContain(">Package</h3>");
+      expect(html).not.toContain("My strip");
+      expect(html).toContain('data-testid="dashboard-cost"');
+      expect(html).not.toContain("<table");
+
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      container.innerHTML = html;
+      const errors = [];
+      let root;
+      await act(async () => {
+        root = hydrateRoot(container, element, { onRecoverableError: (error) => errors.push(error) });
+      });
+      await act(async () => {});
+      await act(async () => {});
+      expect(errors).toEqual([]);
+      // Saved prefs apply only after the hydration commit.
+      expect(container.querySelector('[data-testid="dashboard-strip"] h3').textContent).toBe("My strip");
+      expect(container.querySelector('[data-testid="dashboard-cost"]')).toBeNull();
+      // Planning data loads only after the hydration boundary is marked.
+      await act(async () => { markSWRHydrated(); });
+      await act(async () => {});
+      await act(async () => {});
+      const planning = container.querySelector('[data-testid="dashboard-planning"]');
+      expect(planning.querySelector("table")).not.toBeNull();
+      expect(planning.querySelector("table").textContent).toContain("Hours not set");
+      act(() => { root.unmount(); });
+      container.remove();
+    } finally {
+      // The file's other tests rely on the setup-marked boundary.
+      markSWRHydrated();
+    }
+  });
+
+  it("isolates preferences by package, owner, and project when the key changes", async () => {
+    seedPrefs(
+      { ownerId: "owner_1", forgeProjectId: "forge_project_1", packageId: "pkg_1" },
+      {
+        strip: { hidden: false, title: "Alpha title", pivot: "cards" },
+        planning: { hidden: false, title: null, pivot: "bars" },
+        cost: { hidden: false, title: null, pivot: "donut" },
+        changeOrders: { hidden: false, title: null, pivot: "strip" },
+      },
+    );
+    seedPrefs(
+      { ownerId: "owner_1", forgeProjectId: "forge_project_1", packageId: "pkg_2" },
+      {
+        strip: { hidden: false, title: "Beta title", pivot: "cards" },
+        planning: { hidden: false, title: null, pivot: "bars" },
+        cost: { hidden: true, title: null, pivot: "donut" },
+        changeOrders: { hidden: false, title: null, pivot: "strip" },
+      },
+    );
+    // Serve the same fixtures for either package id; the assertions
+    // below are about preferences, not data.
+    vi.stubGlobal("fetch", vi.fn(async (rawUrl) => {
+      const url = typeof rawUrl === "string" ? rawUrl : "";
+      const bare = url.split("?")[0];
+      const query = url.includes("?") ? new URLSearchParams(url.split("?")[1]) : new URLSearchParams();
+      if (bare.endsWith("/work-steps")) {
+        const retiredOnly = query.get("retiredOnly") === "true";
+        const offset = Number(query.get("offset") || 0);
+        const page = (retiredOnly ? STEPS.filter((s) => s.retiredAt) : STEPS.filter((s) => !s.retiredAt)).slice(offset, offset + 100);
+        return { ok: true, json: async () => ({ steps: page, generation: 1, packageStatus: "in_progress" }) };
+      }
+      if (bare.endsWith("/budget-allocation")) {
+        return { ok: true, json: async () => ALLOCATION_DATA };
+      }
+      if (bare.endsWith("/change-orders")) {
+        return { ok: true, json: async () => ({ summary: CHANGE_SUMMARY, changeOrders: [] }) };
+      }
+      return { ok: false, json: async () => ({ error: `Unexpected URL ${url}` }) };
+    }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const renderFor = async ({ ownerId, forgeProject, packageId, code }) => {
+      await act(async () => {
+        root.render(
+          <PackagePageProvider workspace={ownerId} forgeProject={forgeProject}>
+            <PackageDashboard packageId={packageId} pkg={{ ...PKG, id: packageId, code }} planningSummary={PLANNING} ownerId={ownerId} onDrill={vi.fn()} />
+          </PackagePageProvider>,
+        );
+      });
+      await act(async () => {});
+      await act(async () => {});
+    };
+    await renderFor({ ownerId: "owner_1", forgeProject: "forge_project_1", packageId: "pkg_1", code: "WP-0001" });
+    expect(container.querySelector('[data-testid="dashboard-strip"] h3').textContent).toBe("Alpha title");
+    // Package switch: the new package's saved prefs replace the old ones.
+    await renderFor({ ownerId: "owner_1", forgeProject: "forge_project_1", packageId: "pkg_2", code: "WP-0002" });
+    expect(container.querySelector('[data-testid="dashboard-strip"] h3').textContent).toBe("Beta title");
+    expect(container.querySelector('[data-testid="dashboard-cost"]')).toBeNull();
+    // Owner switch: no prefs saved for owner_2 — defaults return.
+    await renderFor({ ownerId: "owner_2", forgeProject: "forge_project_1", packageId: "pkg_1", code: "WP-0001" });
+    expect(container.querySelector('[data-testid="dashboard-strip"] h3').textContent).toBe("Package");
+    expect(container.querySelector('[data-testid="dashboard-cost"]')).not.toBeNull();
+    // Project switch: no prefs saved for forge_project_2 — defaults return.
+    await renderFor({ ownerId: "owner_1", forgeProject: "forge_project_2", packageId: "pkg_1", code: "WP-0001" });
+    expect(container.querySelector('[data-testid="dashboard-strip"] h3').textContent).toBe("Package");
+    act(() => { root.unmount(); });
+    container.remove();
   });
 });

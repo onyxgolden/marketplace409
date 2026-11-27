@@ -114,6 +114,84 @@ describe("summarizePackageCostSplit", () => {
     expect(result.categoryTotals.labor).toBe(240000);
   });
 
+  it("reports mismatch when the aggregate equals the estimate but the lines do not add up", () => {
+    // The verdict's example: allocatedTotal 250000, estimate 250000, lines 240000.
+    const disagree = {
+      ...allocation,
+      lines: [
+        { id: "l1", category: "labor", description: "Crew", amountCents: 150000 },
+        { id: "l2", category: "material", description: "Pipe", amountCents: 90000 },
+      ],
+    };
+    const result = summarizePackageCostSplit({ notApplied: false, estimate, allocation: disagree });
+    expect(result.state).toBe("mismatch");
+    expect(result.lineSumCents).toBe(240000);
+    expect(result.allocatedTotalCents).toBe(250000);
+    expect(result.estimateCents).toBe(250000);
+    expect(result.reason).toMatch(/lines/i);
+  });
+
+  it("reports mismatch for a line with an unknown category and never counts it", () => {
+    const bad = {
+      ...allocation,
+      lines: [
+        ...lines,
+        { id: "l3", category: "concrete", description: "Slab", amountCents: 10000 },
+      ],
+    };
+    const result = summarizePackageCostSplit({ notApplied: false, estimate, allocation: bad });
+    expect(result.state).toBe("mismatch");
+    expect(result.lineSumCents).toBe(250000);
+    expect(result.categoryTotals).toEqual({ labor: 150000, material: 100000, equipment: 0, external_services: 0, rental: 0 });
+    expect(result.lineProblems).toHaveLength(1);
+    expect(result.lineProblems[0].problem).toBe("unknown-category");
+  });
+
+  it("reports mismatch for a malformed or null line amount and never coerces it to zero", () => {
+    const cases = [
+      { id: "l1", category: "labor", description: "Crew", amountCents: null },
+      { id: "l1", category: "labor", description: "Crew", amountCents: 0 },
+      { id: "l1", category: "labor", description: "Crew", amountCents: -500 },
+      { id: "l1", category: "labor", description: "Crew", amountCents: 10.5 },
+      { id: "l1", category: "labor", description: "Crew", amountCents: "150000" },
+    ];
+    for (const badLine of cases) {
+      const bad = { ...allocation, lines: [badLine, { id: "l2", category: "material", description: "Pipe", amountCents: 100000 }] };
+      const result = summarizePackageCostSplit({ notApplied: false, estimate, allocation: bad });
+      expect(result.state).toBe("mismatch");
+      expect(result.lineProblems).toHaveLength(1);
+      expect(result.lineProblems[0].problem).toBe("invalid-amount");
+      // The malformed amount is excluded from the sum, never normalized to 0.
+      expect(result.lineSumCents).toBe(100000);
+    }
+  });
+
+  it("reports mismatch when two lines share the same id", () => {
+    const dup = {
+      ...allocation,
+      lines: [
+        { id: "l1", category: "labor", description: "Crew", amountCents: 75000 },
+        { id: "l1", category: "labor", description: "Crew again", amountCents: 75000 },
+        { id: "l2", category: "material", description: "Pipe", amountCents: 100000 },
+      ],
+    };
+    const result = summarizePackageCostSplit({ notApplied: false, estimate, allocation: dup });
+    expect(result.state).toBe("mismatch");
+    expect(result.lineProblems).toHaveLength(1);
+    expect(result.lineProblems[0].problem).toBe("duplicate-id");
+  });
+
+  it("keeps a valid saved explicit zero: a category with no lines is a real zero in a reconciled split", () => {
+    // D2b stores no zero-dollar rows — a zero category total is the
+    // absence of lines for that category, and it reconciles fine.
+    const result = summarizePackageCostSplit({ notApplied: false, estimate, allocation, plannedLaborForecastCents: 90000 });
+    expect(result.state).toBe("reconciled");
+    expect(result.categoryTotals.equipment).toBe(0);
+    expect(result.categoryTotals.rental).toBe(0);
+    expect(result.lineSumCents).toBe(250000);
+    expect(result.lineProblems).toEqual([]);
+  });
+
   it("keeps an explicit zero estimate distinct from a missing one", () => {
     const zero = { ...estimate, currentControlEstimateCents: 0 };
     const result = summarizePackageCostSplit({ notApplied: false, estimate: zero, allocation: null });

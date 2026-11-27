@@ -94,6 +94,34 @@ function emptyCategoryTotals() {
   return Object.fromEntries(BUDGET_CATEGORY_VALUES.map((value) => [value, 0]));
 }
 
+function isValidLineAmount(amount) {
+  // D2b contract (validateBudgetLine): amounts are integer cents, 1 or
+  // more. Zero-dollar rows are not stored — deleting a row is the
+  // truthful zero — so a stored 0, null, fractional, or non-number
+  // amount is malformed data, never a value to normalize.
+  return typeof amount === "number" && Number.isSafeInteger(amount) && amount >= 1;
+}
+
+function describeLineProblems(problems) {
+  const counts = {};
+  for (const problem of problems) counts[problem.problem] = (counts[problem.problem] || 0) + 1;
+  const parts = [];
+  if (counts["unknown-category"]) {
+    parts.push(`${counts["unknown-category"]} ${counts["unknown-category"] === 1 ? "line has" : "lines have"} an unknown category`);
+  }
+  if (counts["invalid-amount"]) {
+    parts.push(`${counts["invalid-amount"]} ${counts["invalid-amount"] === 1 ? "line has" : "lines have"} a missing or invalid amount`);
+  }
+  if (counts["duplicate-id"]) {
+    parts.push(`${counts["duplicate-id"]} ${counts["duplicate-id"] === 1 ? "line is" : "lines are"} duplicated`);
+  }
+  if (counts["invalid-lines"]) parts.push("the saved lines are not a list");
+  if (counts["invalid-line"]) {
+    parts.push(`${counts["invalid-line"]} ${counts["invalid-line"] === 1 ? "line is" : "lines are"} malformed`);
+  }
+  return parts.join("; ");
+}
+
 /**
  * The five-way cost split for one package, from the D2b allocation
  * snapshot (getBudgetAllocation shape).
@@ -103,14 +131,23 @@ function emptyCategoryTotals() {
  * - no-estimate: no control estimate exists yet.
  * - no-allocation: an estimate exists but no allocation was saved.
  * - stale: the allocation was saved against an older estimate version.
- * - mismatch: the version matches but the lines do not add up to the
- *   current estimate — the write path should prevent this, but the
- *   read side never silently normalizes it.
- * - reconciled: lines sum exactly to the current control estimate.
+ * - mismatch: the version matches but the split does not reconcile —
+ *   the lines carry an unknown category, a malformed amount, or a
+ *   duplicate id; the valid lines do not sum to the saved allocation
+ *   total; the saved total is missing or invalid; or the saved total
+ *   differs from the current estimate. The write path should prevent
+ *   all of these, but the read side never silently normalizes them.
+ * - reconciled: every line is valid, and the five-category line sum
+ *   equals the saved allocation total, which equals the current
+ *   control estimate, at the matching version.
  *
  * A state other than reconciled carries no chart: the widget renders
  * the incomplete state instead. gapCents is the allocated total minus
- * the estimate (negative when short), null when either side is unknown.
+ * the estimate (negative when short), null when either side is unknown
+ * or invalid. lineSumCents is the sum of the valid lines only —
+ * malformed lines are excluded, never coerced to zero. A category with
+ * no lines is a real zero (D2b stores no zero-dollar rows), and it
+ * reconciles fine.
  */
 export function summarizePackageCostSplit(data = {}) {
   const estimate = data?.estimate || null;
@@ -119,12 +156,38 @@ export function summarizePackageCostSplit(data = {}) {
   const allocatedTotalCents = allocation?.allocatedTotalCents ?? null;
   const categoryTotals = emptyCategoryTotals();
   let lineCount = 0;
-  for (const line of allocation?.lines || []) {
-    if (!line || !isBudgetCategory(line.category)) continue;
-    lineCount += 1;
-    const amount = typeof line.amountCents === "number" && Number.isFinite(line.amountCents) ? line.amountCents : 0;
-    categoryTotals[line.category] += amount;
+  let lineSumCents = 0;
+  const lineProblems = [];
+  const lines = Array.isArray(allocation?.lines) ? allocation.lines : [];
+  if (allocation != null && !Array.isArray(allocation.lines)) {
+    lineProblems.push({ index: -1, id: null, problem: "invalid-lines" });
   }
+  const seenIds = new Set();
+  lines.forEach((line, index) => {
+    if (!line || typeof line !== "object") {
+      lineProblems.push({ index, id: null, problem: "invalid-line" });
+      return;
+    }
+    if (!isBudgetCategory(line.category)) {
+      lineProblems.push({ index, id: line.id ?? null, problem: "unknown-category" });
+      return;
+    }
+    if (!isValidLineAmount(line.amountCents)) {
+      lineProblems.push({ index, id: line.id ?? null, problem: "invalid-amount" });
+      return;
+    }
+    if (line.id != null) {
+      if (seenIds.has(line.id)) {
+        lineProblems.push({ index, id: line.id, problem: "duplicate-id" });
+        return;
+      }
+      seenIds.add(line.id);
+    }
+    lineCount += 1;
+    lineSumCents += line.amountCents;
+    categoryTotals[line.category] += line.amountCents;
+  });
+  const totalsAreIntegers = Number.isSafeInteger(estimateCents) && Number.isSafeInteger(allocatedTotalCents);
   let state;
   let reason;
   if (data?.notApplied) {
@@ -139,6 +202,18 @@ export function summarizePackageCostSplit(data = {}) {
   } else if (allocation.controlEstimateVersion !== estimate.version) {
     state = "stale";
     reason = "The control estimate changed since this allocation was saved — the split is stale, not reconciled.";
+  } else if (lineProblems.length > 0) {
+    state = "mismatch";
+    reason = `The saved budget lines include ${describeLineProblems(lineProblems)} — the split is not reconciled.`;
+  } else if (!Number.isSafeInteger(allocatedTotalCents)) {
+    state = "mismatch";
+    reason = "The saved allocation total is missing or invalid — the split is not reconciled.";
+  } else if (!Number.isSafeInteger(estimateCents)) {
+    state = "mismatch";
+    reason = "The control estimate amount is missing or invalid — the split is not reconciled.";
+  } else if (lineSumCents !== allocatedTotalCents) {
+    state = "mismatch";
+    reason = "The budget lines do not add up to the saved allocation total — the split is not reconciled.";
   } else if (allocatedTotalCents !== estimateCents) {
     state = "mismatch";
     reason = "The budget lines do not add up to the current control estimate — the split is not reconciled.";
@@ -151,9 +226,11 @@ export function summarizePackageCostSplit(data = {}) {
     reason,
     estimateCents,
     allocatedTotalCents,
-    gapCents: estimateCents == null || allocatedTotalCents == null ? null : allocatedTotalCents - estimateCents,
+    gapCents: totalsAreIntegers ? allocatedTotalCents - estimateCents : null,
     categoryTotals,
     lineCount,
+    lineSumCents,
+    lineProblems,
     plannedLaborForecastCents: data?.plannedLaborForecastCents ?? null,
   };
 }
