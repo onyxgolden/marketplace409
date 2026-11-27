@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const routerMocks = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => routerMocks }));
 
+import { clearSWRCache } from "@/hooks/swrCache";
+
 import WorkPackageDetailClient from "./WorkPackageDetailClient";
 
 const BASE_PKG = {
@@ -40,7 +42,7 @@ const BASE_PKG = {
 
 const OPTIONS = [{ slug: "1900-w-decker", label: "1900 W. Decker" }];
 
-function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = false, patchImpl = null, deleteImpl = null, getEligibility = undefined, freezeImpl = null, seedBaselines = [], seedChanges = [], decideImpl = null } = {}) {
+function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = false, patchImpl = null, deleteImpl = null, getEligibility = undefined, freezeImpl = null, seedBaselines = [], seedChanges = [], decideImpl = null, steps = [] } = {}) {
   const patches = [];
   const deletes = [];
   const freezeRequests = [];
@@ -166,7 +168,12 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
       };
     }
     if (bare === `/api/work-packages/${BASE_PKG.id}/work-steps`) {
-      return { ok: true, json: async () => ({ steps: [], generation: 1, packageStatus: BASE_PKG.status }) };
+      // D4: the dashboard fetches active then retired separately — a
+      // retiredOnly page that returned the seeded steps too would
+      // duplicate every row in the drill tests.
+      const parsed = new URL(url, "https://test");
+      const retiredOnly = parsed.searchParams.get("retiredOnly") === "true";
+      return { ok: true, json: async () => ({ steps: retiredOnly ? [] : steps, generation: 1, packageStatus: BASE_PKG.status }) };
     }
     if (bare === `/api/work-packages/${BASE_PKG.id}/progress/summary`) {
       return { ok: true, json: async () => ({ summary: { packageId: BASE_PKG.id, asOf: "2026-11-15", lines: [] } }) };
@@ -192,7 +199,7 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
 // root is actually unmounted first.
 const activeRoots = [];
 
-function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspaceParam, forgeProjectParam, transitions = [], baselines = [], scopeChanges = [] } = {}) {
+function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspaceParam, forgeProjectParam, transitions = [], baselines = [], scopeChanges = [], ownerId = null, initialDetailFocus = null } = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -203,6 +210,8 @@ function renderDetail(pkg = BASE_PKG, { deletionEligibility, initialTab, workspa
         initialTab={initialTab}
         workspaceParam={workspaceParam}
         forgeProjectParam={forgeProjectParam}
+        ownerId={ownerId}
+        initialDetailFocus={initialDetailFocus}
         initial={{
           package: pkg,
           transitions,
@@ -1641,5 +1650,70 @@ describe("WorkPackageDetailClient post-freeze change approval (Approve button)",
     expect(approveEditor(container)).not.toBeNull();
     expect(approveEditor(container).value).toBe(JSON.stringify(V1_MEMBERSHIP, null, 2));
     expect(decideRequests).toHaveLength(0);
+  });
+});
+
+describe("WorkPackageDetailClient D4 dashboard drill", () => {
+  const PIPEFITTER_STEP = {
+    id: "forge_wps_1", workPackageId: "forge_wp_1", title: "Fabricate pipe spool",
+    description: "Shop work", sequenceNo: 1, craftKey: "pipefitter", craftLabel: "Pipefitter",
+    plannedDurationDays: 3, plannedPersonHours: 24.5, sourceNote: null,
+    supersedesStepId: null, version: 1, retiredAt: null, retiredBy: null,
+    createdBy: "user_1", updatedBy: "user_1", createdAt: "t1", updatedAt: "t1",
+  };
+  const WELDER_STEP = {
+    ...PIPEFITTER_STEP, id: "forge_wps_2", title: "Install supports", description: null,
+    sequenceNo: 2, craftKey: "welder", craftLabel: "Welder",
+    plannedDurationDays: 2, plannedPersonHours: 16, sourceNote: null,
+  };
+
+  it("drills a dashboard craft row to the filtered Work steps tab and back", async () => {
+    clearSWRCache();
+    stubFetch({ steps: [PIPEFITTER_STEP, WELDER_STEP] });
+    const { container } = renderDetail(BASE_PKG, { ownerId: "owner_1" });
+    await settle();
+    await settle();
+    await settle();
+    const dashboard = container.querySelector("#package-dashboard");
+    expect(dashboard).not.toBeNull();
+    expect(dashboard.textContent).toContain("WP-0001");
+    const pipefitter = [...dashboard.querySelectorAll('[data-testid="dashboard-planning"] button')]
+      .find((b) => b.textContent.includes("Pipefitter"));
+    expect(pipefitter).not.toBeUndefined();
+    await act(async () => { pipefitter.click(); });
+    await settle();
+    await settle();
+    expect(window.location.search).toContain("tab=steps");
+    expect(window.location.search).toContain("detailFocus=craft%3Apipefitter");
+    const banner = container.querySelector('[data-testid="steps-craft-filter-banner"]');
+    expect(banner).not.toBeNull();
+    expect(banner.textContent).toContain("Showing only Pipefitter — 1 of 2 steps.");
+    // Back to dashboard clears the focus and the URL param.
+    const back = [...container.querySelectorAll("button")].find((b) => b.textContent === "Back to dashboard");
+    await act(async () => { back.click(); });
+    await settle();
+    expect(container.querySelector('[data-testid="steps-craft-filter-banner"]')).toBeNull();
+    expect(window.location.search).not.toContain("detailFocus");
+  });
+
+  it("parses ?detailFocus= on load", async () => {
+    clearSWRCache();
+    stubFetch({ steps: [PIPEFITTER_STEP, WELDER_STEP] });
+    const { container } = renderDetail(BASE_PKG, { ownerId: "owner_1", initialTab: "steps", initialDetailFocus: "craft:welder" });
+    await settle();
+    await settle();
+    expect(container.querySelector('[data-testid="steps-craft-filter-banner"]').textContent)
+      .toContain("Showing only Welder — 1 of 2 steps.");
+  });
+
+  it("ignores a junk detailFocus instead of filtering on it", async () => {
+    clearSWRCache();
+    stubFetch({ steps: [PIPEFITTER_STEP, WELDER_STEP] });
+    const { container } = renderDetail(BASE_PKG, { ownerId: "owner_1", initialTab: "steps", initialDetailFocus: "craft:; drop table" });
+    await settle();
+    await settle();
+    expect(container.querySelector('[data-testid="steps-craft-filter-banner"]')).toBeNull();
+    expect(container.textContent).toContain("Fabricate pipe spool");
+    expect(container.textContent).toContain("Install supports");
   });
 });

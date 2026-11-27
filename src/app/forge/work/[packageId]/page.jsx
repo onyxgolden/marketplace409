@@ -107,6 +107,11 @@ export default async function WorkPackagePage({ params, searchParams }) {
         initialTab={activeTab}
         workspaceParam={workspaceParam}
         forgeProjectParam={forgeProjectParam}
+        ownerId={ownerId}
+        // D4: the dashboard drill target. Passed raw — the client
+        // allowlist-parses it (parseDetailFocus), so junk text never
+        // becomes a filter.
+        initialDetailFocus={typeof query.detailFocus === "string" ? query.detailFocus : null}
       />
     </main>
   );

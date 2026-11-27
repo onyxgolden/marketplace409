@@ -710,3 +710,39 @@ describe("WorkPackageSteps", () => {
     expect(container.textContent).toContain("Work steps aren't available yet");
   });
 });
+
+describe("WorkPackageSteps D4 craft drill", () => {
+  it("narrows the grid to one craft, counts the reached rows, and clears back to all", async () => {
+    setupFetch();
+    const onClear = vi.fn();
+    const onBack = vi.fn();
+    const { container } = await renderPanel({ craftFilter: "pipefitter", onClearCraftFilter: onClear, onBackToDashboard: onBack });
+    const banner = container.querySelector('[data-testid="steps-craft-filter-banner"]');
+    expect(banner).not.toBeNull();
+    expect(banner.textContent).toContain("Showing only Pipefitter — 1 of 2 steps.");
+    expect(stepRows(container).map((row) => row.getAttribute("data-step-id"))).toEqual(["forge_wps_1"]);
+    // Blank quick-add rows hide while filtered — a new step typed there
+    // would not match the filter and would look lost.
+    expect(container.querySelectorAll("[data-blank-row]").length).toBe(0);
+    // Reordering is disabled while filtered — the visible neighbors are
+    // not the step's real neighbors.
+    expect(buttonByAriaLabel(container, "Move Fabricate pipe spool up").disabled).toBe(true);
+    expect(buttonByAriaLabel(container, "Move Fabricate pipe spool down").disabled).toBe(true);
+    act(() => {
+      buttonByText(container, "Show all steps").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onClear).toHaveBeenCalledTimes(1);
+    act(() => {
+      buttonByText(container, "Back to dashboard").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("says so in plain words when the craft has no steps", async () => {
+    setupFetch();
+    const { container } = await renderPanel({ craftFilter: "electrician", onClearCraftFilter: () => {} });
+    expect(container.querySelector('[data-testid="steps-craft-filter-banner"]').textContent)
+      .toContain("No steps in the electrician craft — 2 steps in total.");
+    expect(stepRows(container)).toHaveLength(0);
+  });
+});

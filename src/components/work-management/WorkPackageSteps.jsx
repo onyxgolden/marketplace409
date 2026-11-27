@@ -23,6 +23,7 @@ import EditableGridCell from "./EditableGridCell.jsx";
 import { BustBadge, useBustBadges } from "./WorkPackageBusts.jsx";
 import { FieldVerificationBadge, useFieldVerificationBadges } from "./WorkPackageFieldVerification.jsx";
 import WorkPackageImportDialog from "./WorkPackageImportDialog.jsx";
+import { craftGroupKey } from "@/application/work-management/packageDashboard";
 
 // The work-steps worklist is a Maximo-style editable grid now (same
 // pattern as the package list): double-click a cell, dropdown where
@@ -466,7 +467,7 @@ function ProgressContext({ packageId, onViewVerifications = null }) {
 // package with few steps still costs two requests and no more.
 const LIST_PAGE_SIZE = 100;
 
-async function fetchAllSteps(pageQuery, packageId) {
+export async function fetchAllSteps(pageQuery, packageId) {
   const active = [];
   let offset = 0;
   let generation = 0;
@@ -520,7 +521,7 @@ async function fetchPagedRows(fetchPage, pageCount) {
   return rows;
 }
 
-export default function WorkPackageSteps({ packageId, onChanged = null, onViewVerifications = null }) {
+export default function WorkPackageSteps({ packageId, onChanged = null, onViewVerifications = null, craftFilter = null, onClearCraftFilter = null, onBackToDashboard = null }) {
   const pageQuery = usePageQuery();
   const pageContext = usePackagePageContext();
   const [showRetired, setShowRetired] = useState(false);
@@ -561,6 +562,16 @@ export default function WorkPackageSteps({ packageId, onChanged = null, onViewVe
   const packageStatus = data?.packageStatus || "";
   const isTerminal = packageStatus === "cancelled" || packageStatus === "verified_closed";
   const activeSteps = steps.filter((s) => !s.retiredAt);
+  // D4 drill: a dashboard craft row narrows the grid to that craft.
+  // The blank quick-add rows hide while filtered — a new step typed
+  // there would not match the filter and would look lost.
+  const displayedActiveSteps = craftFilter
+    ? activeSteps.filter((s) => craftGroupKey(s) === craftFilter)
+    : activeSteps;
+  const craftFilterLabel = craftFilter
+    ? (activeSteps.find((s) => craftGroupKey(s) === craftFilter)?.craftLabel
+      || (craftFilter === "no-craft" ? "No craft" : craftFilter))
+    : null;
   const retiredSteps = steps.filter((s) => s.retiredAt);
   const stepById = new Map(steps.map((s) => [s.id, s]));
   // Read-only linked-bust badges (active busts per step). A badge is
@@ -793,7 +804,7 @@ export default function WorkPackageSteps({ packageId, onChanged = null, onViewVe
     const retired = !!step.retiredAt;
     const cellError = (text) => setError(text);
     const isFirstActive = activeIndex === 0;
-    const isLastActive = activeIndex === activeSteps.length - 1;
+    const isLastActive = activeIndex === displayedActiveSteps.length - 1;
     return (
       <Fragment key={step.id}>
         <div role="row" data-step-id={step.id}
@@ -865,15 +876,15 @@ export default function WorkPackageSteps({ packageId, onChanged = null, onViewVe
           <div role="cell" className="flex min-w-0 flex-wrap gap-1">
             {!retired && !isTerminal && (
               <>
-                <button className={btnGhost} disabled={busy || isFirstActive}
+                <button className={btnGhost} disabled={busy || isFirstActive || !!craftFilter}
                   onClick={() => onMove(step, -1)}
-                  title={isFirstActive ? "Already the first step" : undefined}
+                  title={craftFilter ? "Reordering is hidden while a craft filter is on — show all steps to reorder" : isFirstActive ? "Already the first step" : undefined}
                   aria-label={`Move ${step.title} up`}>
                   ↑
                 </button>
-                <button className={btnGhost} disabled={busy || isLastActive}
+                <button className={btnGhost} disabled={busy || isLastActive || !!craftFilter}
                   onClick={() => onMove(step, 1)}
-                  title={isLastActive ? "Already the last step" : undefined}
+                  title={craftFilter ? "Reordering is hidden while a craft filter is on — show all steps to reorder" : isLastActive ? "Already the last step" : undefined}
                   aria-label={`Move ${step.title} down`}>
                   ↓
                 </button>
@@ -1106,6 +1117,21 @@ export default function WorkPackageSteps({ packageId, onChanged = null, onViewVe
         )}
       </div>
 
+      {craftFilter && !isLoading && !loadError && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2" role="status" data-testid="steps-craft-filter-banner">
+          <span className="text-sm text-blue-900">
+            {displayedActiveSteps.length === 0
+              ? `No steps in the ${craftFilterLabel} craft — ${activeSteps.length} steps in total.`
+              : `Showing only ${craftFilterLabel} — ${displayedActiveSteps.length} of ${activeSteps.length} steps.`}
+          </span>
+          {onClearCraftFilter && (
+            <button type="button" className="min-h-11 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-900 hover:bg-blue-100" onClick={onClearCraftFilter}>Show all steps</button>
+          )}
+          {onBackToDashboard && (
+            <button type="button" className="min-h-11 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-900 hover:bg-blue-100" onClick={onBackToDashboard}>Back to dashboard</button>
+          )}
+        </div>
+      )}
       {isLoading ? (
         <p className="mt-3 text-xs text-slate-500">Loading work steps…</p>
       ) : loadError ? null : (
@@ -1126,8 +1152,8 @@ export default function WorkPackageSteps({ packageId, onChanged = null, onViewVe
           {isTerminal && steps.length === 0 && (
             <p className="px-3 py-3 text-xs text-slate-500">This package is closed — no work steps were added.</p>
           )}
-          {activeSteps.map((step, index) => renderStepRow(step, index))}
-          {!isTerminal && drafts.map((draft, index) => (
+          {displayedActiveSteps.map((step, index) => renderStepRow(step, index))}
+          {!isTerminal && !craftFilter && drafts.map((draft, index) => (
             <div key={`blank-${index}`} role="row" data-blank-row={index}
               className={`grid ${STEPS_GRID_COLS} items-center gap-x-2 border-b border-dashed border-slate-200 bg-slate-50/60 px-3 py-2 text-sm`}>
               <div role="cell" className="min-w-0 truncate text-slate-300">—</div>
