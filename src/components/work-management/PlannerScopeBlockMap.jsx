@@ -1,0 +1,448 @@
+// D3 dashboard rebuild: the Scope block map — a scope/count treemap next
+// to D1's scope-by-status card, never a cost chart. Block hierarchy:
+// selected grouping value -> lifecycle status. Area = package count.
+// Colour = lifecycle status (D1's palette and normalized keys). D2b
+// remains the one cost view; nothing here duplicates its semantics.
+//
+// Reconciliation (brief, binding): sum of all status tiles = sum of
+// group totals = D1's strip total; each displayed number's drill link
+// lands on exactly those rows. summarizeScopeBlockMap already proves
+// group.packageCount === sum(group.statuses[].packageCount) and
+// sum(groups[].packageCount) === packages.length; this component adds
+// no further arithmetic of its own, only layout and links.
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import {
+  SCOPE_BLOCK_DIMENSIONS,
+  statusChartColor,
+  summarizeScopeBlockMap,
+} from "@/application/work-management/plannerDashboard.js";
+import { layoutTreemap } from "@/application/work-management/treemapLayout.js";
+
+const PREFS_VERSION = "v1";
+const DEFAULT_PREFS = { visible: true, title: "Scope block map", grouping: "system", minLabelPercent: 4, pivot: "treemap" };
+const MIN_LABEL_PERCENT_BOUNDS = { min: 0, max: 25 };
+const TITLE_MAX_LENGTH = 80;
+
+function prefsKey(ownerId, forgeProjectKey) {
+  return `forge.dashboard.scopeBlockMap.${PREFS_VERSION}.${ownerId || "none"}.${forgeProjectKey || "none"}`;
+}
+
+// Reads saved prefs from localStorage, validating and defaulting every
+// field independently — a corrupt, oversized, or out-of-range stored
+// value is ignored field-by-field rather than discarding the whole
+// object (brief, binding). Never throws: a browser with storage
+// disabled, a private window, or a parse failure all just yield defaults.
+function readStoredPrefs(ownerId, forgeProjectKey) {
+  try {
+    const raw = window.localStorage.getItem(prefsKey(ownerId, forgeProjectKey));
+    if (!raw) return { ...DEFAULT_PREFS };
+    const parsed = JSON.parse(raw);
+    const out = { ...DEFAULT_PREFS };
+    if (typeof parsed?.visible === "boolean") out.visible = parsed.visible;
+    if (typeof parsed?.title === "string") {
+      const trimmed = parsed.title.trim();
+      if (trimmed.length >= 1 && trimmed.length <= TITLE_MAX_LENGTH) out.title = trimmed;
+    }
+    if (typeof parsed?.grouping === "string" && SCOPE_BLOCK_DIMENSIONS.some((d) => d.key === parsed.grouping)) {
+      out.grouping = parsed.grouping;
+    }
+    if (typeof parsed?.minLabelPercent === "number" && Number.isFinite(parsed.minLabelPercent)
+      && parsed.minLabelPercent >= MIN_LABEL_PERCENT_BOUNDS.min && parsed.minLabelPercent <= MIN_LABEL_PERCENT_BOUNDS.max) {
+      out.minLabelPercent = parsed.minLabelPercent;
+    }
+    if (parsed?.pivot === "treemap" || parsed?.pivot === "table") out.pivot = parsed.pivot;
+    return out;
+  } catch {
+    return { ...DEFAULT_PREFS };
+  }
+}
+
+function writeStoredPrefs(ownerId, forgeProjectKey, prefs) {
+  try {
+    window.localStorage.setItem(prefsKey(ownerId, forgeProjectKey), JSON.stringify(prefs));
+  } catch {
+    // Storage disabled/full/private window: the preference just does not
+    // survive reload. Never breaks the widget over it.
+  }
+}
+
+function statusLabelText(status) {
+  return String(status).replace(/_/g, " ");
+}
+
+function groupHref(baseHref, dimensionParam, groupKey) {
+  const separator = baseHref.includes("?") ? "&" : "?";
+  return `${baseHref}${separator}${encodeURIComponent(dimensionParam)}=${encodeURIComponent(groupKey)}`;
+}
+
+function groupStatusHref(baseHref, dimensionParam, groupKey, statusKey) {
+  const separator = baseHref.includes("?") ? "&" : "?";
+  const params = new URLSearchParams();
+  params.set(dimensionParam, groupKey);
+  params.set("status", statusKey);
+  return `${baseHref}${separator}${params.toString()}`;
+}
+
+// A tile claims "active" only when the URL's narrowing filter exactly
+// matches what it represents — a status tile is active only with that
+// exact group + status, never under extra narrowing (same P1 lesson
+// D1/D2 already learned: a widget must never advertise a row the grid
+// does not hold).
+function isGroupActive(activeGroup, activeStatus, dimensionKey, groupKey) {
+  return activeGroup?.dimension === dimensionKey && activeGroup?.key === groupKey && !activeStatus;
+}
+function isGroupStatusActive(activeGroup, activeStatus, dimensionKey, groupKey, statusKey) {
+  return activeGroup?.dimension === dimensionKey && activeGroup?.key === groupKey && activeStatus === statusKey;
+}
+
+function TreemapView({ groups, dimension, baseHref, activeGroup, activeStatus, minLabelPercent, totalPackages }) {
+  const groupRects = layoutTreemap(
+    groups.map((g) => ({ ...g, weight: g.packageCount })),
+    1000,
+    560,
+  );
+  return (
+    <div
+      className="relative mt-3 h-[360px] w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950 sm:h-[420px]"
+      data-testid="scope-block-treemap"
+      role="group"
+      aria-label={`Scope block map by ${dimension.label}, treemap view`}
+    >
+      {groupRects.map((group) => {
+        const groupPercent = totalPackages > 0 ? (group.packageCount / totalPackages) * 100 : 0;
+        const showGroupLabel = groupPercent >= minLabelPercent;
+        const groupActive = isGroupActive(activeGroup, activeStatus, dimension.key, group.groupKey);
+        const statusRects = layoutTreemap(
+          group.statuses.map((s) => ({ ...s, weight: s.packageCount })),
+          group.width,
+          group.height,
+        );
+        return (
+          <div
+            key={group.groupKey}
+            className="absolute flex flex-col overflow-hidden border border-white dark:border-slate-900"
+            style={{
+              left: `${(group.x / 1000) * 100}%`,
+              top: `${(group.y / 560) * 100}%`,
+              width: `${(group.width / 1000) * 100}%`,
+              height: `${(group.height / 560) * 100}%`,
+            }}
+          >
+            <Link
+              href={groupActive ? baseHref : groupHref(baseHref, dimension.param, group.groupKey)}
+              aria-pressed={groupActive}
+              aria-label={`${group.groupLabel}, ${group.packageCount} ${group.packageCount === 1 ? "package" : "packages"} — ${groupActive ? "currently filtered, activate to show all" : "activate to filter the list to this group"}`}
+              className={`flex min-h-6 shrink-0 items-center gap-1 truncate bg-slate-200 px-1.5 text-[11px] font-semibold text-slate-800 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 ${groupActive ? "ring-2 ring-inset ring-slate-500" : ""}`}
+            >
+              {showGroupLabel ? (
+                <>
+                  <span className="truncate">{group.groupLabel}</span>
+                  <span className="shrink-0 tabular-nums">{group.packageCount}</span>
+                </>
+              ) : (
+                <span className="sr-only">{group.groupLabel}, {group.packageCount} {group.packageCount === 1 ? "package" : "packages"}</span>
+              )}
+            </Link>
+            <div className="relative flex-1">
+              {statusRects.map((status) => {
+                const statusPercentOfWhole = totalPackages > 0 ? (status.packageCount / totalPackages) * 100 : 0;
+                const showStatusLabel = statusPercentOfWhole >= minLabelPercent;
+                const statusActive = isGroupStatusActive(activeGroup, activeStatus, dimension.key, group.groupKey, status.statusKey);
+                const label = `${group.groupLabel}, ${statusLabelText(status.statusKey)}, ${status.packageCount} ${status.packageCount === 1 ? "package" : "packages"}`;
+                return (
+                  <Link
+                    key={status.statusKey}
+                    href={statusActive ? groupHref(baseHref, dimension.param, group.groupKey) : groupStatusHref(baseHref, dimension.param, group.groupKey, status.statusKey)}
+                    aria-pressed={statusActive}
+                    aria-label={`${label} — ${statusActive ? "currently filtered, activate to clear the status" : "activate to filter the list to this group and status"}`}
+                    title={label}
+                    className={`absolute flex items-center justify-center overflow-hidden border border-white/60 text-center text-[10px] font-medium text-white hover:brightness-110 dark:border-slate-900/60 ${statusActive ? "ring-2 ring-inset ring-white" : ""}`}
+                    style={{
+                      left: `${group.width > 0 ? (status.x / group.width) * 100 : 0}%`,
+                      top: `${group.height > 0 ? (status.y / group.height) * 100 : 0}%`,
+                      width: `${group.width > 0 ? (status.width / group.width) * 100 : 0}%`,
+                      height: `${group.height > 0 ? (status.height / group.height) * 100 : 0}%`,
+                      backgroundColor: statusChartColor(status.statusKey),
+                    }}
+                  >
+                    {showStatusLabel && (
+                      <span className="truncate px-0.5 capitalize">{status.packageCount}</span>
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TableView({ groups, dimension, baseHref, activeGroup, activeStatus }) {
+  return (
+    <div className="mt-3 overflow-x-auto" data-testid="scope-block-table">
+      <table className="w-full min-w-0 text-left text-sm">
+        <caption className="sr-only">Scope block map by {dimension.label}, table view</caption>
+        <thead>
+          <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:text-slate-400">
+            <th scope="col" className="py-1.5 pr-2 font-semibold">{dimension.label}</th>
+            <th scope="col" className="py-1.5 pr-2 font-semibold">Total</th>
+            <th scope="col" className="py-1.5 pr-2 font-semibold">By status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((group) => {
+            const groupActive = isGroupActive(activeGroup, activeStatus, dimension.key, group.groupKey);
+            return (
+              <tr key={group.groupKey} className="border-b border-slate-100 align-top dark:border-slate-800">
+                <td className="py-1.5 pr-2">
+                  <Link
+                    href={groupActive ? baseHref : groupHref(baseHref, dimension.param, group.groupKey)}
+                    aria-pressed={groupActive}
+                    className={`inline-block min-h-11 rounded px-1.5 py-1 font-medium hover:bg-slate-100 dark:hover:bg-slate-800 ${groupActive ? "bg-slate-100 ring-1 ring-slate-400 dark:bg-slate-800 dark:ring-slate-500" : ""}`}
+                  >
+                    {group.groupLabel}
+                  </Link>
+                </td>
+                <td className="py-1.5 pr-2 tabular-nums">{group.packageCount}</td>
+                <td className="py-1.5 pr-2">
+                  <ul className="flex flex-wrap gap-2">
+                    {group.statuses.map((status) => {
+                      const statusActive = isGroupStatusActive(activeGroup, activeStatus, dimension.key, group.groupKey, status.statusKey);
+                      return (
+                        <li key={status.statusKey}>
+                          <Link
+                            href={statusActive ? groupHref(baseHref, dimension.param, group.groupKey) : groupStatusHref(baseHref, dimension.param, group.groupKey, status.statusKey)}
+                            aria-pressed={statusActive}
+                            className={`inline-flex min-h-11 items-center gap-1 rounded px-1.5 py-1 hover:bg-slate-100 dark:hover:bg-slate-800 ${statusActive ? "bg-slate-100 ring-1 ring-slate-400 dark:bg-slate-800 dark:ring-slate-500" : ""}`}
+                          >
+                            <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: statusChartColor(status.statusKey) }} />
+                            <span className="capitalize">{statusLabelText(status.statusKey)}</span>
+                            <span className="tabular-nums">{status.packageCount}</span>
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SettingsPanel({ prefs, onChange, onReset }) {
+  return (
+    <div className="mt-3 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950" data-testid="scope-block-settings-panel">
+      <div>
+        <label htmlFor="scope-block-title" className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+          Title
+        </label>
+        <input
+          id="scope-block-title"
+          type="text"
+          value={prefs.title}
+          maxLength={TITLE_MAX_LENGTH}
+          onChange={(event) => onChange({ title: event.target.value })}
+          className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+        />
+      </div>
+      <div>
+        <label htmlFor="scope-block-grouping" className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+          Group by
+        </label>
+        <select
+          id="scope-block-grouping"
+          value={prefs.grouping}
+          onChange={(event) => onChange({ grouping: event.target.value })}
+          className="mt-1 min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+        >
+          {SCOPE_BLOCK_DIMENSIONS.map((dim) => (
+            <option key={dim.key} value={dim.key}>{dim.label}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label htmlFor="scope-block-threshold" className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+          Minimum label size ({prefs.minLabelPercent}% of total)
+        </label>
+        <input
+          id="scope-block-threshold"
+          type="range"
+          min={MIN_LABEL_PERCENT_BOUNDS.min}
+          max={MIN_LABEL_PERCENT_BOUNDS.max}
+          value={prefs.minLabelPercent}
+          onChange={(event) => onChange({ minLabelPercent: Number(event.target.value) })}
+          className="mt-1 min-h-11 w-full"
+        />
+      </div>
+      <button
+        type="button"
+        onClick={onReset}
+        className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+      >
+        Reset to defaults
+      </button>
+    </div>
+  );
+}
+
+export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, activeStatus, scopeByParam, scopeViewParam, ownerId, forgeProjectKey }) {
+  // Hydration order (brief, binding): server-safe defaults render first
+  // (no layout shift, no empty flash — `prefs` starts as DEFAULT_PREFS,
+  // a fully valid, renderable state on its own), then valid saved
+  // preferences hydrate client-side by replacing `prefs` once read. An
+  // explicit URL param (shareable link) always wins over both, for the
+  // one render it is present on — handled below, not by gating render.
+  const [prefs, setPrefs] = useState(DEFAULT_PREFS);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  useEffect(() => {
+    // setState runs inside a microtask callback, not synchronously in the
+    // effect body (react-hooks/set-state-in-effect — same idiom used
+    // elsewhere in this codebase for an effect that hydrates state).
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (!cancelled) setPrefs(readStoredPrefs(ownerId, forgeProjectKey));
+    });
+    return () => { cancelled = true; };
+    // ownerId/forgeProjectKey change -> a different workspace/project's
+    // own saved preferences, re-read rather than carrying the old ones.
+  }, [ownerId, forgeProjectKey]);
+
+  function updatePrefs(partial) {
+    setPrefs((current) => {
+      const next = { ...current, ...partial };
+      writeStoredPrefs(ownerId, forgeProjectKey, next);
+      return next;
+    });
+  }
+
+  function resetPrefs() {
+    writeStoredPrefs(ownerId, forgeProjectKey, DEFAULT_PREFS);
+    setPrefs({ ...DEFAULT_PREFS });
+  }
+
+  const groupingKey = scopeByParam && SCOPE_BLOCK_DIMENSIONS.some((d) => d.key === scopeByParam) ? scopeByParam : prefs.grouping;
+  const pivot = scopeViewParam === "treemap" || scopeViewParam === "table" ? scopeViewParam : prefs.pivot;
+  const dimension = SCOPE_BLOCK_DIMENSIONS.find((d) => d.key === groupingKey) || SCOPE_BLOCK_DIMENSIONS[2];
+  const summary = summarizeScopeBlockMap(packages, dimension.key);
+  const totalPackages = summary.groups.reduce((sum, g) => sum + g.packageCount, 0);
+
+  if (!prefs.visible) {
+    return (
+      <div className="flex min-h-11 items-center justify-between rounded-lg border border-dashed border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900" data-testid="scope-block-hidden-placeholder">
+        <p className="text-sm text-slate-500 dark:text-slate-400">{prefs.title} is hidden.</p>
+        <button
+          type="button"
+          onClick={() => updatePrefs({ visible: true })}
+          className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          Show {prefs.title}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900" data-testid="scope-block-map">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-slate-900 dark:text-white">{prefs.title}</h2>
+        <div className="flex items-center gap-2">
+          <div role="group" aria-label="Scope block map view" className="flex rounded-lg border border-slate-300 dark:border-slate-600">
+            <button
+              type="button"
+              aria-pressed={pivot === "treemap"}
+              onClick={() => updatePrefs({ pivot: "treemap" })}
+              className={`min-h-11 rounded-l-lg px-3 text-sm font-medium ${pivot === "treemap" ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"}`}
+            >
+              Treemap
+            </button>
+            <button
+              type="button"
+              aria-pressed={pivot === "table"}
+              onClick={() => updatePrefs({ pivot: "table" })}
+              className={`min-h-11 rounded-r-lg px-3 text-sm font-medium ${pivot === "table" ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"}`}
+            >
+              Table
+            </button>
+          </div>
+          <button
+            type="button"
+            aria-expanded={settingsOpen}
+            aria-controls="scope-block-settings-panel"
+            onClick={() => setSettingsOpen((open) => !open)}
+            className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            Settings
+          </button>
+        </div>
+      </div>
+      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+        Scope by {dimension.label.toLowerCase()}, coloured by status — package count, never cost.
+      </p>
+
+      {settingsOpen && (
+        <div id="scope-block-settings-panel">
+          <SettingsPanel
+            prefs={prefs}
+            onChange={updatePrefs}
+            onReset={() => {
+              resetPrefs();
+              setSettingsOpen(false);
+            }}
+          />
+        </div>
+      )}
+
+      {summary.groups.length === 0 ? (
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+          No packages in this project yet — add the first one below.
+        </p>
+      ) : (
+        <>
+          <div role="group" aria-label={`Group by (${dimension.label} selected)`} className="mt-3 flex flex-wrap gap-1">
+            {SCOPE_BLOCK_DIMENSIONS.map((dim) => (
+              <button
+                key={dim.key}
+                type="button"
+                aria-pressed={dim.key === dimension.key}
+                onClick={() => updatePrefs({ grouping: dim.key })}
+                className={`min-h-11 rounded-lg px-3 text-sm font-medium ${dim.key === dimension.key ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"}`}
+              >
+                {dim.label}
+              </button>
+            ))}
+          </div>
+
+          {pivot === "treemap" ? (
+            <TreemapView
+              groups={summary.groups}
+              dimension={dimension}
+              baseHref={baseHref}
+              activeGroup={activeGroup}
+              activeStatus={activeStatus}
+              minLabelPercent={prefs.minLabelPercent}
+              totalPackages={totalPackages}
+            />
+          ) : (
+            <TableView
+              groups={summary.groups}
+              dimension={dimension}
+              baseHref={baseHref}
+              activeGroup={activeGroup}
+              activeStatus={activeStatus}
+            />
+          )}
+        </>
+      )}
+    </div>
+  );
+}

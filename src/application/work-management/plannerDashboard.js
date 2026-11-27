@@ -216,6 +216,119 @@ export function summarizePlannerProgress(packages, planningByPackage) {
  *   totalPlannedCostCents. A status the app does not know (cannot
  *   happen — status is validated on write) sorts last, still counted.
  */
+// D3 dashboard rebuild (IPS dashboard proposal §3 continued): the Scope
+// block map — selected grouping value -> lifecycle status, area =
+// package count, colour = lifecycle status (the same D1 palette and
+// normalized status keys). Cost is explicitly excluded; D2b remains the
+// one cost view.
+//
+// Fixed PRESENTATION order (the brief's selector order): Area/zone ->
+// Unit -> Equipment type -> Scope item -> Planner. This is NOT the
+// canonical conflict-resolution precedence for the one active group
+// filter — that precedence (planner > area > unit > system >
+// workscopeCode, extending D2's existing planner > unit > system rule)
+// is owned by the page (it decides which URL params win when several
+// are present), not by this pure summarizer.
+//
+// "Equipment type" is the UI label for the existing `system` field;
+// "Scope item" groups by the existing `workscope_code` field; "Area /
+// zone" is the honest label for the existing `area` field — none of
+// these are separate columns the current model doesn't have (brief's
+// explicit instruction).
+export const SCOPE_BLOCK_DIMENSIONS = Object.freeze([
+  { key: "area", label: "Area / zone", param: "area", noneKey: "__none__", noneLabel: "No area / zone" },
+  { key: "unit", label: "Unit", param: "unit", noneKey: "__none__", noneLabel: "No unit" },
+  { key: "system", label: "Equipment type", param: "system", noneKey: "__none__", noneLabel: "No system" },
+  { key: "workscopeCode", label: "Scope item", param: "workscopeCode", noneKey: "__none__", noneLabel: "No scope item" },
+  { key: "planner", label: "Planner", param: "planner", noneKey: "__unassigned__", noneLabel: "Unassigned" },
+]);
+
+const SCOPE_BLOCK_DIMENSION_BY_KEY = new Map(SCOPE_BLOCK_DIMENSIONS.map((d) => [d.key, d]));
+
+export function scopeBlockDimension(key) {
+  return SCOPE_BLOCK_DIMENSION_BY_KEY.get(key) || SCOPE_BLOCK_DIMENSIONS[2]; // default: Equipment type (system)
+}
+
+// Same one-line normalization D1's chart uses for a status key's display
+// text (lowercase word with underscores replaced by spaces) — duplicated
+// here, not imported from the component layer, so this application-layer
+// file has no dependency on a component module.
+function humanizeStatus(status) {
+  return String(status).replace(/_/g, " ");
+}
+
+function scopeBlockGroupKey(dimensionKey, pkg) {
+  const dim = scopeBlockDimension(dimensionKey);
+  if (dim.key === "planner") {
+    const name = typeof pkg?.responsible_party?.display_name === "string"
+      ? pkg.responsible_party.display_name.trim()
+      : "";
+    return name ? { key: name, label: name } : { key: dim.noneKey, label: dim.noneLabel };
+  }
+  const field = dim.key === "workscopeCode" ? "workscope_code" : dim.key;
+  const raw = pkg?.[field];
+  const value = typeof raw === "string" ? raw.trim() : "";
+  return value ? { key: value, label: value } : { key: dim.noneKey, label: dim.noneLabel };
+}
+
+function sortScopeGroups(groups, noneKey) {
+  // Same rule as D2's groups: biggest first, label-ascending on ties,
+  // except the missing-value bucket, which always sorts last regardless
+  // of its count — it must never outrank a named group on a tie, and a
+  // project where "No unit" happens to be the biggest bucket still
+  // reads that bucket last, not first.
+  return groups.sort((a, b) => {
+    const aNone = a.groupKey === noneKey;
+    const bNone = b.groupKey === noneKey;
+    if (aNone !== bNone) return aNone ? 1 : -1;
+    return b.packageCount - a.packageCount
+      || (a.groupLabel < b.groupLabel ? -1 : a.groupLabel > b.groupLabel ? 1 : 0);
+  });
+}
+
+/**
+ * Summarize the in-scope package array for the D3 Scope block map.
+ *
+ * Returns `{ dimension, groups }`, where each group is
+ * `{ groupKey, groupLabel, packageCount, statuses }` and each status is
+ * `{ statusKey, label, packageCount }`. Groups are sorted biggest-first
+ * (missing-value bucket always last); each group's statuses are in D1's
+ * lifecycle order, unknown statuses last. A group's packageCount equals
+ * the sum of its statuses' packageCounts, and the groups' packageCounts
+ * sum to the whole input array's length — every row counted, including
+ * every explicit missing-value bucket, never a silently dropped row.
+ */
+export function summarizeScopeBlockMap(packages, dimensionKey) {
+  const dim = scopeBlockDimension(dimensionKey);
+  const rows = Array.isArray(packages) ? packages : [];
+  const grouped = new Map();
+  for (const pkg of rows) {
+    const { key, label } = scopeBlockGroupKey(dim.key, pkg);
+    if (!grouped.has(key)) grouped.set(key, { groupKey: key, groupLabel: label, rows: [] });
+    grouped.get(key).rows.push(pkg);
+  }
+  const groups = [...grouped.values()].map((group) => {
+    const countsByStatus = new Map();
+    for (const pkg of group.rows) {
+      const status = pkg?.status || "draft";
+      countsByStatus.set(status, (countsByStatus.get(status) || 0) + 1);
+    }
+    const statuses = [];
+    for (const status of DASHBOARD_STATUS_ORDER) {
+      if (countsByStatus.has(status)) {
+        statuses.push({ statusKey: status, label: humanizeStatus(status), packageCount: countsByStatus.get(status) });
+      }
+    }
+    for (const [status, count] of countsByStatus) {
+      if (!DASHBOARD_STATUS_ORDER.includes(status)) {
+        statuses.push({ statusKey: status, label: humanizeStatus(status), packageCount: count });
+      }
+    }
+    return { groupKey: group.groupKey, groupLabel: group.groupLabel, packageCount: group.rows.length, statuses };
+  });
+  return { dimension: dim.key, groups: sortScopeGroups(groups, dim.noneKey) };
+}
+
 export function summarizePlannerDashboard(packages) {
   const rows = Array.isArray(packages) ? packages : [];
   let totalPlannedCostCents = 0;
