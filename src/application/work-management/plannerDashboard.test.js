@@ -6,9 +6,11 @@ import { describe, expect, it } from "vitest";
 import {
   DASHBOARD_STATUS_ORDER,
   PROGRESS_DIMENSIONS,
+  SCOPE_BLOCK_DIMENSIONS,
   statusChartColor,
   summarizePlannerDashboard,
   summarizePlannerProgress,
+  summarizeScopeBlockMap,
 } from "./plannerDashboard.js";
 
 const PKG = (overrides) => ({
@@ -225,5 +227,145 @@ describe("summarizePlannerProgress", () => {
     expect(summary.byUnit[0]).toMatchObject({ key: "__none__", label: "No unit" });
     expect(summary.bySystem[0]).toMatchObject({ key: "__none__", label: "No system" });
     expect(PROGRESS_DIMENSIONS.map((d) => d.key)).toEqual(["system", "planner", "unit"]);
+  });
+});
+
+describe("summarizeScopeBlockMap", () => {
+  it("fixed presentation order is Area/zone -> Unit -> Equipment type -> Scope item -> Planner", () => {
+    expect(SCOPE_BLOCK_DIMENSIONS.map((d) => d.key)).toEqual(["area", "unit", "system", "workscopeCode", "planner"]);
+    expect(SCOPE_BLOCK_DIMENSIONS.map((d) => d.label)).toEqual([
+      "Area / zone", "Unit", "Equipment type", "Scope item", "Planner",
+    ]);
+  });
+
+  it("empty input is an honest empty state, never a synthetic zero group", () => {
+    const summary = summarizeScopeBlockMap([], "system");
+    expect(summary).toEqual({ dimension: "system", groups: [] });
+  });
+
+  it("defaults to Equipment type (system) for an unknown dimension key", () => {
+    const summary = summarizeScopeBlockMap([PKG({ system: "Pumps" })], "not-a-real-dimension");
+    expect(summary.dimension).toBe("system");
+  });
+
+  it("groups by the default Equipment type dimension and nests status counts", () => {
+    const packages = [
+      PKG({ id: "wp_1", system: "Pumps", status: "in_progress" }),
+      PKG({ id: "wp_2", system: "Pumps", status: "in_progress" }),
+      PKG({ id: "wp_3", system: "Pumps", status: "complete" }),
+      PKG({ id: "wp_4", system: "Valves", status: "draft" }),
+    ];
+    const summary = summarizeScopeBlockMap(packages, "system");
+    expect(summary.dimension).toBe("system");
+    const pumps = summary.groups.find((g) => g.groupKey === "Pumps");
+    expect(pumps.packageCount).toBe(3);
+    expect(pumps.statuses).toEqual([
+      { statusKey: "in_progress", label: "in progress", packageCount: 2 },
+      { statusKey: "complete", label: "complete", packageCount: 1 },
+    ]);
+    const valves = summary.groups.find((g) => g.groupKey === "Valves");
+    expect(valves.packageCount).toBe(1);
+  });
+
+  it("maps Scope item to the existing workscope_code field and Area/zone to the existing area field", () => {
+    const packages = [
+      PKG({ id: "wp_1", workscope_code: "MECH-01", area: "North" }),
+      PKG({ id: "wp_2", workscope_code: "MECH-01", area: "North" }),
+      PKG({ id: "wp_3", workscope_code: "ELEC-02", area: "South" }),
+    ];
+    const byScope = summarizeScopeBlockMap(packages, "workscopeCode");
+    expect(byScope.groups.map((g) => g.groupKey).sort()).toEqual(["ELEC-02", "MECH-01"]);
+    const byArea = summarizeScopeBlockMap(packages, "area");
+    expect(byArea.groups.map((g) => g.groupKey).sort()).toEqual(["North", "South"]);
+  });
+
+  it("maps Planner to the responsible party's display name, same as D2", () => {
+    const packages = [
+      PKG({ id: "wp_1", responsible_party: { display_name: "Priya" } }),
+      PKG({ id: "wp_2", responsible_party: { display_name: "Priya" } }),
+      PKG({ id: "wp_3", responsible_party: null }),
+    ];
+    const summary = summarizeScopeBlockMap(packages, "planner");
+    const priya = summary.groups.find((g) => g.groupKey === "Priya");
+    expect(priya.packageCount).toBe(2);
+    const unassigned = summary.groups.find((g) => g.groupKey === "__unassigned__");
+    expect(unassigned).toMatchObject({ groupLabel: "Unassigned", packageCount: 1 });
+  });
+
+  it("every missing-value dimension gets its own explicit, counted, never-dropped bucket", () => {
+    const packages = [
+      PKG({ id: "wp_1", area: null }),
+      PKG({ id: "wp_2", unit: null }),
+      PKG({ id: "wp_3", system: null }),
+      PKG({ id: "wp_4", workscope_code: null }),
+    ];
+    for (const [dim, expectedKey, expectedLabel] of [
+      ["area", "__none__", "No area / zone"],
+      ["unit", "__none__", "No unit"],
+      ["system", "__none__", "No system"],
+      ["workscopeCode", "__none__", "No scope item"],
+    ]) {
+      const summary = summarizeScopeBlockMap(packages, dim);
+      const bucket = summary.groups.find((g) => g.groupKey === expectedKey);
+      expect(bucket, `expected a ${expectedKey} bucket for dimension ${dim}`).toBeTruthy();
+      expect(bucket.groupLabel).toBe(expectedLabel);
+    }
+  });
+
+  it("the missing-value bucket always sorts last, even when it is the biggest group", () => {
+    const packages = [
+      PKG({ id: "wp_1", system: null }),
+      PKG({ id: "wp_2", system: null }),
+      PKG({ id: "wp_3", system: null }),
+      PKG({ id: "wp_4", system: "Pumps" }),
+    ];
+    const summary = summarizeScopeBlockMap(packages, "system");
+    expect(summary.groups[summary.groups.length - 1].groupKey).toBe("__none__");
+  });
+
+  it("groups sort biggest-first, label-ascending on ties", () => {
+    const packages = [
+      PKG({ id: "wp_1", system: "Zulu" }),
+      PKG({ id: "wp_2", system: "Alpha" }),
+      PKG({ id: "wp_3", system: "Alpha" }),
+      PKG({ id: "wp_4", system: "Mike" }),
+    ];
+    const summary = summarizeScopeBlockMap(packages, "system");
+    expect(summary.groups.map((g) => g.groupKey)).toEqual(["Alpha", "Mike", "Zulu"]);
+  });
+
+  it("every group's packageCount equals the sum of its statuses' packageCounts, and the groups sum to the whole input (the reconciliation invariant)", () => {
+    const packages = [
+      PKG({ id: "wp_1", system: "Pumps", status: "draft" }),
+      PKG({ id: "wp_2", system: "Pumps", status: "in_progress" }),
+      PKG({ id: "wp_3", system: "Valves", status: "complete" }),
+      PKG({ id: "wp_4", system: null, status: "ready" }),
+    ];
+    const summary = summarizeScopeBlockMap(packages, "system");
+    let total = 0;
+    for (const group of summary.groups) {
+      const statusSum = group.statuses.reduce((sum, s) => sum + s.packageCount, 0);
+      expect(statusSum).toBe(group.packageCount);
+      total += group.packageCount;
+    }
+    expect(total).toBe(packages.length);
+  });
+
+  it("statuses within a group follow D1's lifecycle order, unknown statuses last", () => {
+    const packages = [
+      PKG({ id: "wp_1", system: "Pumps", status: "complete" }),
+      PKG({ id: "wp_2", system: "Pumps", status: "draft" }),
+      PKG({ id: "wp_3", system: "Pumps", status: "weird_unknown_status" }),
+    ];
+    const summary = summarizeScopeBlockMap(packages, "system");
+    const pumps = summary.groups.find((g) => g.groupKey === "Pumps");
+    const keys = pumps.statuses.map((s) => s.statusKey);
+    expect(keys.indexOf("draft")).toBeLessThan(keys.indexOf("complete"));
+    expect(keys[keys.length - 1]).toBe("weird_unknown_status");
+  });
+
+  it("null/undefined package arrays behave like an empty array", () => {
+    expect(summarizeScopeBlockMap(null, "system")).toEqual({ dimension: "system", groups: [] });
+    expect(summarizeScopeBlockMap(undefined, "system")).toEqual({ dimension: "system", groups: [] });
   });
 });

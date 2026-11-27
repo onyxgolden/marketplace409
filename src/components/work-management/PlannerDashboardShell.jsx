@@ -40,6 +40,7 @@ import {
   summarizePlannerDashboard,
   summarizePlannerProgress,
 } from "@/application/work-management/plannerDashboard.js";
+import PlannerScopeBlockMap from "./PlannerScopeBlockMap.jsx";
 
 // Donut geometry: a stroked circle, one dash per status. r=80 on a 200
 // viewBox leaves room for the 28px stroke inside the box.
@@ -135,7 +136,12 @@ function StatusRow({ entry, totalPackages, href, isActive, showBar }) {
             className="h-3 w-3 shrink-0 rounded-sm"
             style={{ backgroundColor: statusChartColor(entry.status) }}
           />
-          <span className="min-w-0 flex-1 truncate font-medium capitalize text-slate-900 dark:text-slate-100">
+          {/* D3 fix round 1, live finding (f): the label truncated to
+             "D..." at ~1100px — the donut eats most of the card's width
+             just above the lg breakpoint, leaving the label almost no
+             room. It wraps now instead of truncating; a status word is
+             never elided in the legend. */}
+          <span className="min-w-0 flex-1 break-words font-medium capitalize text-slate-900 dark:text-slate-100">
             {statusLabel(entry.status)}
           </span>
           <span className="shrink-0 font-semibold text-slate-900 tabular-nums dark:text-slate-100">
@@ -257,7 +263,7 @@ function CostRow({ category, total, packageCount, percent, href, isActive, showB
             className="h-3 w-3 shrink-0 rounded-sm"
             style={{ backgroundColor: budgetCategoryColor(category.value) }}
           />
-          <span className="min-w-0 flex-1 truncate font-medium text-slate-900 dark:text-slate-100">
+          <span className="min-w-0 flex-1 break-words font-medium text-slate-900 dark:text-slate-100">
             {budgetCategoryLabel(category.value)}
           </span>
           <span className="shrink-0 text-slate-500 tabular-nums dark:text-slate-400">
@@ -353,7 +359,10 @@ function CostSplitWidget({ costSummary, baseHref, activeCostCategory, activeAllo
         </p>
       ) : (
         <>
-          <div className="mt-3 flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+          {/* Same (f) fix as the scope legend: the category label wraps
+             instead of truncating, and the donut sits above the legend
+             until xl so the legend gets the full card width. */}
+          <div className="mt-3 flex flex-col items-center gap-4 xl:flex-row xl:items-start">
             {view === "donut" && (
               <CostDonutChart categoryTotals={categoryTotals} totalControlEstimateCents={total} />
             )}
@@ -636,6 +645,10 @@ export default function PlannerDashboardShell({
   activeCostCategory = null,
   activeAllocationFilter = null,
   costWidgetCanClaimActive = true,
+  scopeByParam = null,
+  scopeViewParam = null,
+  ownerId = null,
+  forgeProjectKey = null,
 }) {
   const [chartType, setChartType] = useState("donut");
   const summary = summarizePlannerDashboard(packages);
@@ -704,63 +717,87 @@ export default function PlannerDashboardShell({
         </Link>
       </div>
 
-      {/* Scope by status — pivot chart (donut ↔ bars) with click-to-filter.
-         D1 is status-only; the equipment dimension belongs to D3's block map. */}
-      <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900" data-testid="planner-scope">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Scope by status</h2>
-          <div role="group" aria-label="Chart type" className="flex rounded-lg border border-slate-300 dark:border-slate-600">
-            <button
-              type="button"
-              aria-pressed={chartType === "donut"}
-              onClick={() => setChartType("donut")}
-              className={`min-h-11 rounded-l-lg px-3 text-sm font-medium ${
-                chartType === "donut"
-                  ? "bg-slate-900 text-white"
-                  : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
-              }`}
-            >
-              Donut
-            </button>
-            <button
-              type="button"
-              aria-pressed={chartType === "bars"}
-              onClick={() => setChartType("bars")}
-              className={`min-h-11 rounded-r-lg px-3 text-sm font-medium ${
-                chartType === "bars"
-                  ? "bg-slate-900 text-white"
-                  : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
-              }`}
-            >
-              Bars
-            </button>
+      {/* D1 scope-by-status (pivot: donut <-> bars) and D3 scope block
+         map sit in one responsive row — D1 at roughly one third, D3 at
+         roughly two thirds on desktop; stacked (D1 then D3) below the
+         breakpoint, per the D3 brief's exact placement rule. */}
+      <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-start">
+        <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 lg:w-1/3 dark:border-slate-700 dark:bg-slate-900" data-testid="planner-scope">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Scope by status</h2>
+            <div role="group" aria-label="Chart type" className="flex rounded-lg border border-slate-300 dark:border-slate-600">
+              <button
+                type="button"
+                aria-pressed={chartType === "donut"}
+                onClick={() => setChartType("donut")}
+                className={`min-h-11 rounded-l-lg px-3 text-sm font-medium ${
+                  chartType === "donut"
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                }`}
+              >
+                Donut
+              </button>
+              <button
+                type="button"
+                aria-pressed={chartType === "bars"}
+                onClick={() => setChartType("bars")}
+                className={`min-h-11 rounded-r-lg px-3 text-sm font-medium ${
+                  chartType === "bars"
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                }`}
+              >
+                Bars
+              </button>
+            </div>
           </div>
+
+          {statusBreakdown.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+              No packages in this project yet — add the first one below.
+            </p>
+          ) : (
+            // D3 fix round 1, live finding (f): donut beside legend only
+            // from xl — just above the lg breakpoint the one-third card
+            // is ~330px wide, the 176px donut leaves the legend ~100px,
+            // and the status label collapsed to "D...". Stacked below xl
+            // the legend gets the full card width and every word fits.
+            <div className="mt-3 flex flex-col items-center gap-4 xl:flex-row xl:items-start">
+              {chartType === "donut" && <DonutChart breakdown={statusBreakdown} totalPackages={totalPackages} />}
+              <ul className="w-full min-w-0 flex-1 space-y-1" data-testid="planner-status-legend">
+                {statusBreakdown.map((entry) => {
+                  const isActive = activeStatus === entry.status;
+                  return (
+                    <StatusRow
+                      key={entry.status}
+                      entry={entry}
+                      totalPackages={totalPackages}
+                      href={isActive ? baseHref : statusHref(baseHref, entry.status)}
+                      isActive={isActive}
+                      showBar={chartType === "bars"}
+                    />
+                  );
+                })}
+              </ul>
+            </div>
+          )}
         </div>
 
-        {statusBreakdown.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
-            No packages in this project yet — add the first one below.
-          </p>
-        ) : (
-          <div className="mt-3 flex flex-col items-center gap-4 sm:flex-row sm:items-start">
-            {chartType === "donut" && <DonutChart breakdown={statusBreakdown} totalPackages={totalPackages} />}
-            <ul className="w-full min-w-0 flex-1 space-y-1" data-testid="planner-status-legend">
-              {statusBreakdown.map((entry) => {
-                const isActive = activeStatus === entry.status;
-                return (
-                  <StatusRow
-                    key={entry.status}
-                    entry={entry}
-                    totalPackages={totalPackages}
-                    href={isActive ? baseHref : statusHref(baseHref, entry.status)}
-                    isActive={isActive}
-                    showBar={chartType === "bars"}
-                  />
-                );
-              })}
-            </ul>
-          </div>
-        )}
+        <div className="lg:w-2/3">
+          {totalPackages > 0 && (
+            <PlannerScopeBlockMap
+              packages={packages}
+              baseHref={baseHref}
+              activeGroup={activeGroup}
+              activeStatus={activeStatus}
+              scopeByParam={scopeByParam}
+              scopeViewParam={scopeViewParam}
+              ownerId={ownerId}
+              forgeProjectKey={forgeProjectKey}
+            />
+          )}
+        </div>
       </div>
 
       {/* D2 planning-progress widget — below the scope chart, above the

@@ -13,6 +13,12 @@ vi.mock("next/link", () => ({
   default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a>,
 }));
 
+// D3 fix round 1: PlannerScopeBlockMap writes the canonical URL state
+// via router.replace when a scopeBy/scopeView override is active.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn() }),
+}));
+
 import PlannerDashboardShell from "./PlannerDashboardShell.jsx";
 import { summarizeCostSplit } from "@/domains/work-management/budgetAllocations";
 
@@ -362,5 +368,26 @@ describe("PlannerDashboardShell", () => {
       renderShell({ packages: [] });
       expect(container.querySelector('[data-testid="planner-cost-split"]')).toBeNull();
     });
+  });
+
+  // D3 fix round 1 — live-evidence finding (f): the scope-by-status
+  // donut legend truncated "Draft" to "D..." even at desktop width. The
+  // status label must render in full and wrap, never truncate.
+  it("scope-by-status legend labels render in full, never truncated with an ellipsis", () => {
+    renderShell({ costSummary: COST_SUMMARY });
+    const labels = [...container.querySelectorAll('[data-testid="planner-status-legend"] a > span > span:nth-child(2)')];
+    expect(labels.length).toBeGreaterThan(0);
+    for (const label of labels) {
+      expect(label.className).not.toContain("truncate");
+      expect(label.className).toContain("break-words");
+    }
+    expect(container.querySelector('[data-testid="planner-status-legend"]').textContent).toContain("draft");
+    expect(container.querySelector('[data-testid="planner-status-legend"]').textContent).toContain("in progress");
+    // Structural half of the fix: donut sits above the legend until xl,
+    // so just above the lg breakpoint the legend gets the full card
+    // width instead of the ~100px beside the donut.
+    const legendRow = container.querySelector('[data-testid="planner-status-legend"]').parentElement;
+    expect(legendRow.className).toContain("xl:flex-row");
+    expect(legendRow.className).not.toContain("sm:flex-row");
   });
 });

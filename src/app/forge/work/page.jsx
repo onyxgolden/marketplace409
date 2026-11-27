@@ -13,6 +13,7 @@ import {
 } from "@/application/work-management/projectScope";
 import { WP_STATUS, WP_MODES, inferEffectiveMode } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
+import { SCOPE_BLOCK_DIMENSIONS } from "@/application/work-management/plannerDashboard.js";
 import WorkPackageWorkspaceSwitcher from "@/components/work-management/WorkPackageWorkspaceSwitcher";
 import WorkPackagePageHeader from "./page-header";
 import WorkPackageFilterForm, { GROUP_NONE, PLANNER_UNASSIGNED, UNASSIGNED } from "./WorkPackageFilterForm.jsx";
@@ -31,15 +32,26 @@ const STATUS_VALUES = Object.values(WP_STATUS);
 // The filter sentinels live in WorkPackageFilterForm.jsx (single source
 // of truth — the form renders them as option values).
 const PROGRESS_DIMENSIONS = ["system", "planner", "unit"];
+// D3: the one active group filter now spans 5 dimensions, not D2's 3.
+// Canonical conflict precedence (brief: "preserve D2's existing relative
+// precedence and extend it explicitly") — planner still beats unit beats
+// system, with area inserted between planner and unit, and workscopeCode
+// appended after system.
+const GROUP_FILTER_PRECEDENCE = ["planner", "area", "unit", "system", "workscopeCode"];
+const SCOPE_BLOCK_DIMENSION_KEYS = SCOPE_BLOCK_DIMENSIONS.map((d) => d.key);
 
 function parseFilters(searchParams) {
   const rawStatus = typeof searchParams?.status === "string" ? searchParams.status : "";
   const rawProperty = typeof searchParams?.propertyId === "string" ? searchParams.propertyId : "";
   const rawMode = typeof searchParams?.mode === "string" ? searchParams.mode : "";
   const rawPlanner = typeof searchParams?.planner === "string" ? searchParams.planner : "";
+  const rawArea = typeof searchParams?.area === "string" ? searchParams.area : "";
   const rawUnit = typeof searchParams?.unit === "string" ? searchParams.unit : "";
   const rawSystem = typeof searchParams?.system === "string" ? searchParams.system : "";
+  const rawWorkscopeCode = typeof searchParams?.workscopeCode === "string" ? searchParams.workscopeCode : "";
   const rawProgressBy = typeof searchParams?.progressBy === "string" ? searchParams.progressBy : "";
+  const rawScopeBy = typeof searchParams?.scopeBy === "string" ? searchParams.scopeBy : "";
+  const rawScopeView = typeof searchParams?.scopeView === "string" ? searchParams.scopeView : "";
   const rawCostCategory = typeof searchParams?.costCategory === "string" ? searchParams.costCategory : "";
   const rawAllocation = typeof searchParams?.allocation === "string" ? searchParams.allocation : "";
 
@@ -60,34 +72,41 @@ function parseFilters(searchParams) {
   // by default (unlike status/property, which also default to "all").
   const mode = WP_MODES.includes(rawMode) ? rawMode : "all";
 
-  // D2 progress drill-down: planner / unit / system narrow the grid to
-  // the group a dashboard row counts. Any non-empty value filters; the
-  // sentinel values match packages with no value in that dimension.
-  // progressBy is the dashboard tab (null = default: the active group
-  // filter's dimension, else System).
+  // D2/D3 progress + block-map drill-down: planner / area / unit /
+  // system / workscopeCode narrow the grid to the group a dashboard row
+  // counts. Any non-empty value filters; the sentinel values match
+  // packages with no value in that dimension. progressBy / scopeBy are
+  // the two dashboards' own tabs (null = default: the active group
+  // filter's dimension if that widget supports it, else each widget's
+  // own default).
   //
-  // Mutual exclusion (D2 fix round 1, P1): planner / unit / system are
-  // ONE group filter, not three — the first active dimension wins
-  // (planner > unit > system, the same precedence activeGroup uses
-  // below), the others are cleared. The filter form is a plain GET form
-  // that submits all three selects at once, and a bookmarked link can
-  // carry several, so without this the widget highlighted one
-  // project-wide group row ("currently filtered") while the grid showed
-  // the intersection with the other dimensions — the displayed count did
-  // not reconcile with the rows. The page also redirects a combined URL
-  // to its canonical form (see the component), so the address bar
-  // agrees with the filters; this normalization is the safety net that
-  // makes the semantics true even if a combined URL ever reaches here.
-  let planner = rawPlanner || "all";
-  let unit = rawUnit || "all";
-  let system = rawSystem || "all";
-  if (planner !== "all") {
-    unit = "all";
-    system = "all";
-  } else if (unit !== "all") {
-    system = "all";
+  // Mutual exclusion (D2 fix round 1, P1; extended for D3): these five
+  // are ONE group filter, not five — the first active dimension by
+  // GROUP_FILTER_PRECEDENCE wins, the others are cleared. The filter
+  // form and either dashboard widget can submit more than one at once,
+  // and a bookmarked link can carry several, so without this a widget
+  // could highlight one project-wide group row ("currently filtered")
+  // while the grid showed the intersection with the other dimensions —
+  // the displayed count would not reconcile with the rows. The page also
+  // redirects a combined URL to its canonical form (see the component),
+  // so the address bar agrees with the filters; this normalization is
+  // the safety net that makes the semantics true even if a combined URL
+  // ever reaches here.
+  const rawGroupValues = { planner: rawPlanner, area: rawArea, unit: rawUnit, system: rawSystem, workscopeCode: rawWorkscopeCode };
+  const groupValues = {};
+  for (const dim of GROUP_FILTER_PRECEDENCE) groupValues[dim] = rawGroupValues[dim] || "all";
+  let winnerSeen = false;
+  for (const dim of GROUP_FILTER_PRECEDENCE) {
+    if (winnerSeen) {
+      groupValues[dim] = "all";
+    } else if (groupValues[dim] !== "all") {
+      winnerSeen = true;
+    }
   }
+  const { planner, area, unit, system, workscopeCode } = groupValues;
   const progressBy = PROGRESS_DIMENSIONS.includes(rawProgressBy) ? rawProgressBy : null;
+  const scopeBy = SCOPE_BLOCK_DIMENSION_KEYS.includes(rawScopeBy) ? rawScopeBy : null;
+  const scopeView = rawScopeView === "table" ? "table" : rawScopeView === "treemap" ? "treemap" : null;
   // D2b cost drill-down: costCategory is one of the five fixed
   // categories (allowlisted — anything else is ignored, never widened
   // into a filter); allocation=unallocated narrows to estimated
@@ -95,7 +114,10 @@ function parseFilters(searchParams) {
   const costCategory = BUDGET_CATEGORY_VALUES.includes(rawCostCategory) ? rawCostCategory : null;
   const allocation = rawAllocation === "unallocated" ? "unallocated" : null;
 
-  return { status, propertyId, mode, planner, unit, system, progressBy, costCategory, allocation };
+  return {
+    status, propertyId, mode, planner, area, unit, system, workscopeCode,
+    progressBy, scopeBy, scopeView, costCategory, allocation,
+  };
 }
 
 function filterValueMatches(rowValue, filter) {
@@ -108,13 +130,13 @@ function filterValueMatches(rowValue, filter) {
   return value !== "" && value === filter;
 }
 
-function filterPackages(packages, { status, propertyId, mode, planner, unit, system, costCategory, allocation }, costByPackage = null) {
+function filterPackages(packages, { status, propertyId, mode, planner, area, unit, system, workscopeCode, costCategory, allocation }, costByPackage = null) {
   return packages.filter((pkg) => {
     if (status !== "all" && pkg.status !== status) return false;
     if (mode !== "all" && inferEffectiveMode(pkg) !== mode) return false;
     // Guard clauses, never early returns: every active filter narrows
     // the same row (a property filter must not swallow the planner /
-    // unit / system filters below it).
+    // area / unit / system / workscopeCode filters below it).
     if (propertyId === UNASSIGNED && pkg.property_id != null) return false;
     if (propertyId !== "all" && propertyId !== UNASSIGNED) {
       // Packages store canonical slugs already; comparing canonical forms
@@ -122,8 +144,10 @@ function filterPackages(packages, { status, propertyId, mode, planner, unit, sys
       if (canonicalPropertySlug(pkg.property_id || "") !== propertyId) return false;
     }
     if (planner !== "all" && !filterValueMatches(pkg.responsible_party?.display_name, planner)) return false;
+    if (area !== "all" && !filterValueMatches(pkg.area, area)) return false;
     if (unit !== "all" && !filterValueMatches(pkg.unit, unit)) return false;
     if (system !== "all" && !filterValueMatches(pkg.system, system)) return false;
+    if (workscopeCode !== "all" && !filterValueMatches(pkg.workscope_code, workscopeCode)) return false;
     // D2b cost filters, read against the one bulk cost-split snapshot
     // (never per-package). A package with no cost entry has no category
     // total and no reconciled state, so it matches neither filter.
@@ -148,7 +172,7 @@ export default async function WorkPackagesPage({ searchParams }) {
   // all describe the same filter. This runs before any read, so a
   // combined load never pays for data it will not render.
   const filters = parseFilters(params);
-  const droppedGroupDimensions = ["planner", "unit", "system"].filter((dim) => {
+  const droppedGroupDimensions = GROUP_FILTER_PRECEDENCE.filter((dim) => {
     const raw = typeof params[dim] === "string" ? params[dim] : "";
     return raw && raw !== "all" && filters[dim] === "all";
   });
@@ -209,7 +233,7 @@ export default async function WorkPackagesPage({ searchParams }) {
   // runs after the bulk dashboard reads below: the D2b cost filters
   // need the cost-split snapshot.
   const hasFilters = filters.status !== "all" || filters.propertyId !== "all" || filters.mode !== "all"
-    || filters.planner !== "all" || filters.unit !== "all" || filters.system !== "all"
+    || filters.planner !== "all" || filters.area !== "all" || filters.unit !== "all" || filters.system !== "all" || filters.workscopeCode !== "all"
     || filters.costCategory != null || filters.allocation != null;
   const properties = propertyResult.ok ? propertyResult.properties : [];
 
@@ -249,14 +273,25 @@ export default async function WorkPackagesPage({ searchParams }) {
   // not hold.
   const costWidgetCanClaimActive = filters.status === "all"
     && filters.propertyId === "all" && filters.mode === "all"
-    && filters.planner === "all" && filters.unit === "all" && filters.system === "all";
-  // The dashboard tab: the explicit progressBy param wins; otherwise
-  // the active group filter's dimension; otherwise System.
+    && filters.planner === "all" && filters.area === "all" && filters.unit === "all"
+    && filters.system === "all" && filters.workscopeCode === "all";
+  // The one active group filter, in canonical precedence order (see
+  // GROUP_FILTER_PRECEDENCE above — parseFilters already enforced that
+  // at most one of these five is non-"all").
   const activeGroup = filters.planner !== "all" ? { dimension: "planner", key: filters.planner }
+    : filters.area !== "all" ? { dimension: "area", key: filters.area }
     : filters.unit !== "all" ? { dimension: "unit", key: filters.unit }
     : filters.system !== "all" ? { dimension: "system", key: filters.system }
+    : filters.workscopeCode !== "all" ? { dimension: "workscopeCode", key: filters.workscopeCode }
     : null;
-  const activeDimension = filters.progressBy || activeGroup?.dimension || "system";
+  // D2's progress tab: the explicit progressBy param wins; otherwise the
+  // active group's dimension IF D2 has a tab for it (D2 only groups by
+  // system/planner/unit — an active area or workscopeCode group leaves
+  // D2 on its own default, System, which ProgressWidget already falls
+  // back to for an unrecognized dimension key); otherwise System.
+  const activeDimension = filters.progressBy
+    || (activeGroup && PROGRESS_DIMENSIONS.includes(activeGroup.dimension) ? activeGroup.dimension : null)
+    || "system";
 
   // D2 filter selects: distinct in-scope values, so the dropdowns only
   // ever offer planners / units / systems the project actually has.
@@ -314,13 +349,16 @@ export default async function WorkPackagesPage({ searchParams }) {
   // unconditionally regardless of the active Status/Property filter.
   // D2: the same rule extends to the group filters — a blank row has no
   // planner / unit / system, so it matches only "all" or the sentinel.
+  // D3: same for the two it adds, area / workscopeCode.
   // D2b: a blank row has no cost data either, so it matches only when
   // no cost filter is active.
   const blankRowsMatchFilters = (filters.status === "all" || filters.status === "draft")
     && (filters.propertyId === "all" || filters.propertyId === UNASSIGNED)
     && (filters.planner === "all" || filters.planner === PLANNER_UNASSIGNED)
+    && (filters.area === "all" || filters.area === GROUP_NONE)
     && (filters.unit === "all" || filters.unit === GROUP_NONE)
     && (filters.system === "all" || filters.system === GROUP_NONE)
+    && (filters.workscopeCode === "all" || filters.workscopeCode === GROUP_NONE)
     && filters.costCategory == null && filters.allocation == null;
   const blankRowCount = blankRowsMatchFilters ? BLANK_ROWS : 0;
 
@@ -337,19 +375,24 @@ export default async function WorkPackagesPage({ searchParams }) {
           propertyId: filters.propertyId !== "all" ? filters.propertyId : "",
           mode: filters.mode !== "all" ? filters.mode : "",
           planner: filters.planner !== "all" ? filters.planner : "",
+          area: filters.area !== "all" ? filters.area : "",
           unit: filters.unit !== "all" ? filters.unit : "",
           system: filters.system !== "all" ? filters.system : "",
+          workscopeCode: filters.workscopeCode !== "all" ? filters.workscopeCode : "",
           progressBy: filters.progressBy || "",
+          scopeBy: filters.scopeBy || "",
+          scopeView: filters.scopeView || "",
           costCategory: filters.costCategory || "",
           allocation: filters.allocation || "",
           forgeProject: forgeProjectParam,
         }}
       />
 
-      {/* D1 dashboard shell — number strip + scope-by-status chart. It
-         describes the whole in-scope project (the unfiltered package
-         array), never the chooser state and never a failed load; the grid
-         below is the filtered view it drills into. */}
+      {/* D1/D3 dashboard shell — number strip + scope-by-status chart +
+         the D3 scope block map. It describes the whole in-scope project
+         (the unfiltered package array), never the chooser state and
+         never a failed load; the grid below is the filtered view it
+         drills into. */}
       {ok && scope.kind !== SCOPE_KINDS.NONE && (
         <div className="mt-6">
           <PlannerDashboardShell
@@ -365,6 +408,10 @@ export default async function WorkPackagesPage({ searchParams }) {
             activeCostCategory={filters.costCategory}
             activeAllocationFilter={filters.allocation}
             costWidgetCanClaimActive={costWidgetCanClaimActive}
+            scopeByParam={filters.scopeBy}
+            scopeViewParam={filters.scopeView}
+            ownerId={ownerId}
+            forgeProjectKey={forgeProjectParam || "none"}
           />
         </div>
       )}
