@@ -42,11 +42,22 @@ const BASE_PKG = {
 
 const OPTIONS = [{ slug: "1900-w-decker", label: "1900 W. Decker" }];
 
-function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = false, patchImpl = null, deleteImpl = null, getEligibility = undefined, freezeImpl = null, seedBaselines = [], seedChanges = [], decideImpl = null, steps = [] } = {}) {
+function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = false, patchImpl = null, deleteImpl = null, getEligibility = undefined, freezeImpl = null, seedBaselines = [], seedChanges = [], decideImpl = null, steps = [], allocationBefore = null, allocationAfter = null, changeSummary = null } = {}) {
   const patches = [];
   const deletes = [];
   const freezeRequests = [];
   const decideRequests = [];
+  // E4 (D4.1 fix round): held/controlled budget responses. The
+  // budget-allocation GET returns allocationBefore until a work-step
+  // PATCH lands, then allocationAfter — the server recomputes the
+  // labor forecast from step hours, so the stub mirrors a real
+  // backend that reflects writes (the same D1 rule as the baselines
+  // above). The work-steps GET returns the mutable committed list
+  // for the same reason.
+  const committedSteps = steps.map((s) => ({ ...s }));
+  let stepPatched = false;
+  const budgetCalls = [];
+  const stepPatches = [];
   // Approve-button fix: the decide stub mirrors the real backend's atomic
   // decision — a decided change leaves "proposed", and an approval inserts
   // the superseding baseline — so a test can prove the row moves to
@@ -173,7 +184,28 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
       // duplicate every row in the drill tests.
       const parsed = new URL(url, "https://test");
       const retiredOnly = parsed.searchParams.get("retiredOnly") === "true";
-      return { ok: true, json: async () => ({ steps: retiredOnly ? [] : steps, generation: 1, packageStatus: BASE_PKG.status }) };
+      return { ok: true, json: async () => ({ steps: retiredOnly ? [] : committedSteps, generation: 1, packageStatus: BASE_PKG.status }) };
+    }
+    // E4: the dashboard's Cost split reads the budget-allocation
+    // payload (the server-computed labor forecast lives there).
+    if (bare === `/api/work-packages/${BASE_PKG.id}/budget-allocation` && allocationBefore) {
+      budgetCalls.push({ at: Date.now(), patched: stepPatched });
+      return { ok: true, json: async () => (stepPatched ? allocationAfter : allocationBefore) };
+    }
+    if (bare === `/api/work-packages/${BASE_PKG.id}/change-orders` && changeSummary) {
+      return { ok: true, json: async () => changeSummary };
+    }
+    // E4: the grid cell commit PATCHes one step field.
+    const stepPatchMatch = typeof url === "string" && url.split("?")[0].match(new RegExp(`^/api/work-packages/${BASE_PKG.id}/work-steps/([^/]+)$`));
+    if (stepPatchMatch && options.method === "PATCH") {
+      const body = JSON.parse(options.body);
+      stepPatches.push(body);
+      const step = committedSteps.find((s) => s.id === stepPatchMatch[1]);
+      if (!step) return { ok: false, json: async () => ({ error: "Step not found." }) };
+      if ("plannedPersonHours" in body) step.plannedPersonHours = body.plannedPersonHours;
+      step.version = (step.version ?? 1) + 1;
+      stepPatched = true;
+      return { ok: true, json: async () => ({ step: { ...step } }) };
     }
     if (bare === `/api/work-packages/${BASE_PKG.id}/progress/summary`) {
       return { ok: true, json: async () => ({ summary: { packageId: BASE_PKG.id, asOf: "2026-11-15", lines: [] } }) };
@@ -189,7 +221,7 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
     }
     throw new Error(`unexpected fetch ${url}`);
   }));
-  return { patches, deletes, freezeRequests, decideRequests };
+  return { patches, deletes, freezeRequests, decideRequests, budgetCalls, stepPatches };
 }
 
 // D9: the unsaved-changes guard attaches a document-level click listener
@@ -1732,5 +1764,138 @@ describe("WorkPackageDetailClient D4 dashboard drill", () => {
     expect(container.textContent).toContain("Install supports");
     expect(container.textContent).not.toContain("electrician");
     expect(window.location.search).not.toContain("detailFocus");
+  });
+});
+
+describe("E4 stale labor forecast (D4.1 fix round)", () => {
+  // WP-0020 numbers from the disposable evidence pass: the Electrical
+  // 8h→12h edit moved the Cost split "Planned labor forecast"
+  // $2,136.00 → $2,492.00, but the dashboard only showed the new
+  // figure after a navigation/reload. The forecast is server-computed
+  // into the budget-allocation payload, so the dashboard can only
+  // learn it when its budget read revalidates — and a step edit never
+  // bumped the dashboard's refresh key, so the stale figure sat
+  // until a remount. This test proves the fix: one deterministic
+  // run with held/controlled responses and settled state, no remount.
+  const ELECTRICAL_STEP = {
+    id: "forge_wps_elec", workPackageId: "forge_wp_1", title: "Electrical",
+    description: null, sequenceNo: 1, craftKey: "electrical", craftLabel: "Electrical",
+    plannedDurationDays: 2, plannedPersonHours: 8, sourceNote: null,
+    supersedesStepId: null, version: 1, retiredAt: null, retiredBy: null,
+    createdBy: "user_1", updatedBy: "user_1", createdAt: "t1", updatedAt: "t1",
+  };
+
+  function allocationWithForecast(forecastCents) {
+    return {
+      packageCode: "WP-0001",
+      packageTitle: "Turnover",
+      packageStatus: "draft",
+      notApplied: false,
+      estimate: {
+        id: "est_1", workPackageId: "forge_wp_1",
+        originalControlEstimateCents: 10000000, currentControlEstimateCents: 10000000,
+        contingencyCents: 500000, version: 1,
+      },
+      allocation: {
+        id: "alloc_1", workPackageId: "forge_wp_1", controlEstimateId: "est_1",
+        controlEstimateVersion: 1, allocatedTotalCents: 10000000, version: 1,
+        lines: [
+          { id: "l1", category: "labor", description: "Crew", amountCents: 5000000, sortOrder: 0 },
+          { id: "l2", category: "material", description: "Pipe", amountCents: 5000000, sortOrder: 1 },
+        ],
+      },
+      plannedLaborForecastCents: forecastCents,
+    };
+  }
+
+  const CHANGE_SUMMARY_E4 = {
+    summary: {
+      hasEstimate: true, originalControlEstimateCents: 10000000,
+      currentEstimateCents: 10000000, contingencyCents: 500000,
+      runningContractPriceCents: 10000000, contingencyRemainingCents: 500000,
+      laborCostCents: 213600, totalJobCostCents: 10000000,
+      countsByStatus: {}, countedChangeOrderCount: 0,
+      countedNonDeviationCents: 0, countedDeviationCents: 0,
+      laborByCraft: [], stepsWithoutCraftHours: 0, totalsError: null, warnings: [],
+    },
+    changeOrders: [],
+  };
+
+  function tabButton(container, label) {
+    return [...container.querySelectorAll('[role="tab"]')].find((b) => b.textContent === label);
+  }
+
+  function setInputValue(input, value) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    act(() => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  async function waitFor(check, rounds = 20) {
+    for (let i = 0; i < rounds; i++) {
+      try {
+        check();
+        return;
+      } catch {
+        await act(async () => {});
+      }
+    }
+    check();
+  }
+
+  it("refreshes the Cost split Planned labor forecast to $2,492 after the Electrical 8h→12h edit, without a remount", async () => {
+    clearSWRCache();
+    const { budgetCalls, stepPatches } = stubFetch({
+      steps: [ELECTRICAL_STEP],
+      allocationBefore: allocationWithForecast(213600),
+      allocationAfter: allocationWithForecast(249200),
+      changeSummary: CHANGE_SUMMARY_E4,
+    });
+    const { container } = renderDetail(BASE_PKG, { ownerId: "owner_1" });
+    // Baseline: the dashboard first paints the stale forecast.
+    await waitFor(() => {
+      expect(container.textContent).toContain("Planned labor forecast $2,136.00");
+    });
+    const budgetCallsBeforeEdit = budgetCalls.length;
+
+    // Edit Electrical 8h → 12h through the Work steps grid (the same
+    // cell commit the evidence pass used). The dashboard stays mounted
+    // above the tabs the whole time — no remount, no navigation.
+    await act(async () => { tabButton(container, "Work steps").click(); });
+    await waitFor(() => {
+      expect(container.querySelector('[aria-label="Planned hours for step 1"]')).not.toBeNull();
+    });
+    const hoursCell = container.querySelector('[aria-label="Planned hours for step 1"]');
+    await act(async () => {
+      hoursCell.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    const editor = container.querySelector('input[aria-label="Planned hours for step 1"]');
+    expect(editor).not.toBeNull();
+    setInputValue(editor, "12");
+    await act(async () => {
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    await waitFor(() => {
+      expect(container.textContent).toContain("Work step updated");
+    });
+    expect(stepPatches).toHaveLength(1);
+    expect(stepPatches[0]).toMatchObject({ expectedVersion: 1, plannedPersonHours: 12 });
+    const patchDoneAt = performance.now();
+
+    // Settled state: the forecast refreshes on the still-mounted
+    // dashboard, with no second navigation or reload.
+    await waitFor(() => {
+      expect(container.textContent).toContain("Planned labor forecast $2,492.00");
+    });
+    const forecastUpdatedAt = performance.now();
+    const deltaMs = forecastUpdatedAt - patchDoneAt;
+    // eslint-disable-next-line no-console
+    console.info(`E4: forecast $2,136.00 → $2,492.00 in ${deltaMs.toFixed(0)} ms after the step PATCH; budget-allocation refetches after the edit: ${budgetCalls.length - budgetCallsBeforeEdit}`);
+    expect(container.textContent).not.toContain("$2,136.00");
+    expect(budgetCalls.length - budgetCallsBeforeEdit).toBeGreaterThan(0);
+    expect(budgetCalls.some((c) => c.patched)).toBe(true);
+    expect(deltaMs).toBeLessThan(5000);
   });
 });

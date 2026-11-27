@@ -52,11 +52,11 @@ import {
   validateWidgetTitle,
 } from "@/application/work-management/packageDashboardPreferences.js";
 
-const input = "min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
-const label = "block text-xs font-medium text-slate-600 mb-1";
+const input = "min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100";
+const label = "block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400";
 const btn = "min-h-11 rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
-const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`;
+const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700`;
 
 function money(cents) {
   return formatCents(cents) || "$0.00";

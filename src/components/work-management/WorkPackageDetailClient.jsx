@@ -1086,6 +1086,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
         <div className="mt-6 space-y-6">
           <WorkPackageSteps
             packageId={pkg.id}
+            onChanged={() => setCostRefreshKey((key) => key + 1)}
             onViewVerifications={navigateToFieldVerification}
             craftFilter={craftFilter}
             onClearCraftFilter={clearFocus}

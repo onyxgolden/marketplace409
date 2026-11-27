@@ -373,6 +373,109 @@ describe("customization", () => {
     unmount(rendered);
   });
 
+  it("Cancel and Reset are enabled controls in every state — never disabled", async () => {
+    const rendered = await renderDashboard();
+    const widget = rendered.container.querySelector('[data-testid="dashboard-cost"]');
+    const settings = [...widget.querySelectorAll("button")].find((b) => b.textContent === "Settings");
+    click(settings);
+    const input = widget.querySelector("#dashboard-title-cost");
+    setInputValue(input, "A changed draft");
+    let cancel = [...widget.querySelectorAll("button")].find((b) => b.textContent === "Cancel");
+    let reset = [...widget.querySelectorAll("button")].find((b) => b.textContent === "Reset to defaults");
+    expect(cancel.disabled).toBe(false);
+    expect(reset.disabled).toBe(false);
+    expect(cancel.getAttribute("aria-disabled")).toBeNull();
+    expect(reset.getAttribute("aria-disabled")).toBeNull();
+    // Save a nondefault title, reopen, and check again: Reset must be
+    // enabled exactly when there is something nondefault to restore.
+    click([...widget.querySelectorAll("button")].find((b) => b.textContent === "Save title"));
+    click(settings);
+    cancel = [...widget.querySelectorAll("button")].find((b) => b.textContent === "Cancel");
+    reset = [...widget.querySelectorAll("button")].find((b) => b.textContent === "Reset to defaults");
+    expect(cancel.disabled).toBe(false);
+    expect(reset.disabled).toBe(false);
+    unmount(rendered);
+  });
+
+  it("Cancel and Reset stay legible in dark mode — they carry dark variants, never light-only grey text", async () => {
+    // Regression pin for the D4.1 evidence finding: in dark mode the
+    // light-only slate-700 text on the slate-800 panel measured 1.48:1
+    // contrast, so Cancel / Reset looked permanently disabled. jsdom
+    // cannot compute contrast, so this test pins the dark-variant
+    // classes; the real contrast numbers (light and dark) are proven
+    // by the Chromium harness (see /tmp/d4-harness result files).
+    const rendered = await renderDashboard();
+    const widget = rendered.container.querySelector('[data-testid="dashboard-cost"]');
+    const settings = [...widget.querySelectorAll("button")].find((b) => b.textContent === "Settings");
+    click(settings);
+    const cancel = [...widget.querySelectorAll("button")].find((b) => b.textContent === "Cancel");
+    const reset = [...widget.querySelectorAll("button")].find((b) => b.textContent === "Reset to defaults");
+    for (const button of [cancel, reset]) {
+      expect(button.className).toContain("dark:text-slate-200");
+      expect(button.className).toContain("dark:border-slate-600");
+      expect(button.className).toContain("dark:hover:bg-slate-700");
+    }
+    const input = widget.querySelector("#dashboard-title-cost");
+    expect(input.className).toContain("dark:bg-slate-800");
+    expect(input.className).toContain("dark:text-slate-100");
+    const label = widget.querySelector('label[for="dashboard-title-cost"]');
+    expect(label.className).toContain("dark:text-slate-400");
+    unmount(rendered);
+  });
+
+  it("Cancel discards an unsaved draft, closes Settings, and returns focus to the trigger", async () => {
+    const rendered = await renderDashboard();
+    const widget = rendered.container.querySelector('[data-testid="dashboard-cost"]');
+    const settings = [...widget.querySelectorAll("button")].find((b) => b.textContent === "Settings");
+    settings.focus();
+    click(settings);
+    const input = widget.querySelector("#dashboard-title-cost");
+    setInputValue(input, "Discarded draft title");
+    click([...widget.querySelectorAll("button")].find((b) => b.textContent === "Cancel"));
+    expect(widget.querySelector("#dashboard-title-cost")).toBeNull();
+    expect(widget.querySelector("h3").textContent).toBe("Cost split");
+    expect(document.activeElement).toBe(settings);
+    // Nothing persisted: reopening shows the default title again.
+    click(settings);
+    expect(widget.querySelector("#dashboard-title-cost").value).toBe("Cost split");
+    unmount(rendered);
+  });
+
+  it("Reset restores the actual default from a saved nondefault title, scoped to this widget", async () => {
+    const rendered = await renderDashboard();
+    const cost = rendered.container.querySelector('[data-testid="dashboard-cost"]');
+    const strip = rendered.container.querySelector('[data-testid="dashboard-strip"]');
+    // Give the strip widget its own custom title so Reset can prove
+    // it only touches the widget it was opened for.
+    const stripSettings = [...strip.querySelectorAll("button")].find((b) => b.textContent === "Settings");
+    click(stripSettings);
+    setInputValue(strip.querySelector("#dashboard-title-strip"), "My package strip");
+    click([...strip.querySelectorAll("button")].find((b) => b.textContent === "Save title"));
+    expect(strip.querySelector("h3").textContent).toBe("My package strip");
+
+    const costSettings = [...cost.querySelectorAll("button")].find((b) => b.textContent === "Settings");
+    click(costSettings);
+    setInputValue(cost.querySelector("#dashboard-title-cost"), "My cost view");
+    click([...cost.querySelectorAll("button")].find((b) => b.textContent === "Save title"));
+    expect(cost.querySelector("h3").textContent).toBe("My cost view");
+
+    // Reopen and reset: the cost title returns to the real default,
+    // the strip's custom title survives, and the panel closes.
+    click(costSettings);
+    expect(cost.querySelector("#dashboard-title-cost").value).toBe("My cost view");
+    click([...cost.querySelectorAll("button")].find((b) => b.textContent === "Reset to defaults"));
+    expect(cost.querySelector("#dashboard-title-cost")).toBeNull();
+    expect(cost.querySelector("h3").textContent).toBe("Cost split");
+    expect(cost.textContent).toContain("reset to defaults");
+    expect(strip.querySelector("h3").textContent).toBe("My package strip");
+    const stored = JSON.parse(window.localStorage.getItem(
+      preferenceKey({ ownerId: "owner_1", forgeProjectId: "forge_project_1", packageId: "pkg_1" }),
+    ));
+    expect(stored.widgets.cost.title).toBeNull();
+    expect(stored.widgets.strip.title).toBe("My package strip");
+    unmount(rendered);
+  });
+
   it("hides a widget and restores it from the hidden-widgets manager", async () => {
     const rendered = await renderDashboard();
     const widget = rendered.container.querySelector('[data-testid="dashboard-cost"]');
