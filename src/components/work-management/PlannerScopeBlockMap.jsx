@@ -256,7 +256,7 @@ function TableView({ groups, dimension, baseHref, activeGroup, activeStatus }) {
   );
 }
 
-function SettingsPanel({ prefs, onChange, onGroupingChange, onReset }) {
+function SettingsPanel({ prefs, effectiveGrouping, onChange, onGroupingChange, onReset }) {
   return (
     <div className="mt-3 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950" data-testid="scope-block-settings-panel">
       <div>
@@ -276,9 +276,13 @@ function SettingsPanel({ prefs, onChange, onGroupingChange, onReset }) {
         <label htmlFor="scope-block-grouping" className="block text-xs font-medium text-slate-600 dark:text-slate-300">
           Group by
         </label>
+        {/* D3 fix round 2: the select shows the EFFECTIVE grouping (a
+           scopeBy URL override wins over stored prefs) — never the
+           stored value alone, which would say one grouping while the
+           widget labels, tiles, and grouping buttons show another. */}
         <select
           id="scope-block-grouping"
-          value={prefs.grouping}
+          value={effectiveGrouping}
           onChange={(event) => onGroupingChange(event.target.value)}
           className="mt-1 min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
         >
@@ -345,15 +349,63 @@ export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, 
     && SCOPE_BLOCK_DIMENSIONS.some((d) => d.key === scopeByParam);
   const scopeViewOverrideActive = scopeViewParam === "treemap" || scopeViewParam === "table";
 
+  // D3 fix round 2: rapid sequential grouping/pivot changes must not
+  // clobber each other. router.replace is async — window.location.search
+  // still holds the pre-replace URL when a second change lands before
+  // the first navigation commits, so building each replace from the
+  // live URL would let the second call overwrite the first. Keep the
+  // params we last wrote; a later call builds on them instead of the
+  // stale live URL. The pending base is discarded as soon as the live
+  // URL matches it (our replace committed) or diverges from it for
+  // another reason (an external navigation), so it never goes stale.
+  const pendingParamsRef = useRef(null);
+  const lastSeenSearchRef = useRef(null);
+
+  function latestUrlParams() {
+    const liveSearch = window.location.search;
+    const pending = pendingParamsRef.current;
+    if (pending) {
+      const pendingSearch = `?${pending.toString()}`;
+      if (liveSearch === pendingSearch) {
+        pendingParamsRef.current = null; // our replace committed
+      } else if (lastSeenSearchRef.current !== null && liveSearch !== lastSeenSearchRef.current) {
+        pendingParamsRef.current = null; // the URL moved for another reason
+      }
+    }
+    lastSeenSearchRef.current = liveSearch;
+    return new URLSearchParams(pendingParamsRef.current ?? liveSearch);
+  }
+
+  function replaceUrl(params) {
+    const query = params.toString();
+    router.replace(query ? `${window.location.pathname}?${query}` : window.location.pathname, { scroll: false });
+  }
+
   // Replace the one param in the current page's query string, keeping
   // scope, filters, and workspace intact; scroll:false so a grouping
   // click never jumps the user to the top of the page. The server
   // re-renders the route from the new URL, which is what makes the
   // click visible when an override is active.
   function updateUrlParam(param, value) {
-    const params = new URLSearchParams(window.location.search);
+    const params = latestUrlParams();
     params.set(param, value);
-    router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
+    pendingParamsRef.current = params;
+    replaceUrl(params);
+  }
+
+  // D3 fix round 2: Reset under a URL override must clear the override
+  // too — resetting only stored prefs leaves the widget showing the
+  // URL-pinned grouping/pivot, so "Reset to defaults" visibly does
+  // nothing. Delete both params in ONE replace (atomic with respect to
+  // the other), preserving owner/project scope, filters, and unrelated
+  // query params. Without overrides, Reset stays local-only (the caller
+  // checks), because there is nothing canonical to clear.
+  function resetUrlParams() {
+    const params = latestUrlParams();
+    params.delete("scopeBy");
+    params.delete("scopeView");
+    pendingParamsRef.current = params;
+    replaceUrl(params);
   }
 
   function handleGroupingChange(key) {
@@ -458,10 +510,12 @@ export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, 
         >
           <SettingsPanel
             prefs={prefs}
+            effectiveGrouping={groupingKey}
             onChange={updatePrefs}
             onGroupingChange={handleGroupingChange}
             onReset={() => {
               resetPrefs();
+              if (scopeByOverrideActive || scopeViewOverrideActive) resetUrlParams();
               setSettingsOpen(false);
             }}
           />

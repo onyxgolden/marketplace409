@@ -58,6 +58,7 @@ function byText(container, tag, text) {
 
 beforeEach(() => {
   window.localStorage.clear();
+  window.history.replaceState({}, "", "/");
   navigationMocks.replace.mockClear();
 });
 
@@ -467,5 +468,141 @@ describe("PlannerScopeBlockMap", () => {
       expect(link.className).toContain("min-h-11");
       expect(link.className).not.toContain("min-h-6");
     }
+  });
+
+  // D3 fix round 2: Settings must show the EFFECTIVE grouping (URL
+  // override wins over stored prefs), never the stored value alone —
+  // otherwise the select says one grouping while the widget shows another.
+  it("Settings shows the effective grouping under a scopeBy URL override, not the stored grouping", async () => {
+    window.localStorage.setItem(
+      "forge.dashboard.scopeBlockMap.v1.owner_1.proj_1",
+      JSON.stringify({ visible: true, title: "Scope block map", grouping: "unit", minLabelPercent: 4, pivot: "table" }),
+    );
+    const { container } = render({
+      packages: [PKG({ system: "Pumps" })], ownerId: "owner_1", forgeProjectKey: "proj_1",
+      scopeByParam: "system", scopeViewParam: "treemap",
+    });
+    await flush();
+    await openSettings(container);
+    const select = container.querySelector("#scope-block-grouping");
+    expect(select.value).toBe("system");
+    // The header pivot buttons already render the effective pivot.
+    const treemapBtn = byText(container, "button", "Treemap");
+    expect(treemapBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  // D3 fix round 2: Reset under a URL override must clear the override
+  // params too — resetting only stored prefs leaves the widget showing
+  // the URL-pinned grouping/pivot, so "Reset to defaults" visibly does
+  // nothing.
+  it("Reset under URL overrides removes scopeBy/scopeView from the canonical URL, keeps other params, and restores defaults", async () => {
+    window.history.replaceState({}, "", "/forge/work?forgeProject=proj_1&scopeBy=planner&scopeView=table");
+    window.localStorage.setItem(
+      "forge.dashboard.scopeBlockMap.v1.owner_1.proj_1",
+      JSON.stringify({ visible: true, title: "Scope block map", grouping: "unit", minLabelPercent: 4, pivot: "table" }),
+    );
+    const packages = [PKG({ system: "Pumps" })];
+    const { container, root } = render({
+      packages, ownerId: "owner_1", forgeProjectKey: "proj_1",
+      scopeByParam: "planner", scopeViewParam: "table",
+    });
+    await flush();
+    await openSettings(container);
+    click(byText(container, "button", "Reset to defaults"));
+    await flush();
+    expect(navigationMocks.replace).toHaveBeenCalledTimes(1);
+    const resetUrl = navigationMocks.replace.mock.calls[0][0];
+    const resetParams = new URLSearchParams(resetUrl.split("?")[1] || "");
+    expect(resetParams.has("scopeBy")).toBe(false);
+    expect(resetParams.has("scopeView")).toBe(false);
+    expect(resetParams.get("forgeProject")).toBe("proj_1");
+    const stored = JSON.parse(window.localStorage.getItem("forge.dashboard.scopeBlockMap.v1.owner_1.proj_1"));
+    expect(stored).toMatchObject({ visible: true, title: "Scope block map", grouping: "system", pivot: "treemap" });
+    expect(container.querySelector('[data-testid="scope-block-settings-panel"]')).toBeNull();
+    // Simulate the server re-render after the navigation: with the
+    // overrides gone, the widget must visibly show the defaults.
+    act(() => {
+      root.render(<PlannerScopeBlockMap baseHref="/forge/work" packages={packages} ownerId="owner_1" forgeProjectKey="proj_1" />);
+    });
+    await flush();
+    const groupByGroup = container.querySelector('[aria-label^="Group by"]');
+    const active = [...groupByGroup.querySelectorAll("button")].find((b) => b.getAttribute("aria-pressed") === "true");
+    expect(active.textContent).toBe("Equipment type");
+    expect(container.querySelector('[data-testid="scope-block-treemap"]')).not.toBeNull();
+  });
+
+  // D3 fix round 2: without overrides, Reset stays local-only (no
+  // navigation) — the plain-URL behavior is unchanged.
+  it("Reset without URL overrides stays local-only and does not navigate", async () => {
+    const { container } = render({ packages: [PKG({ system: "Pumps" })], ownerId: "owner_1", forgeProjectKey: "proj_1" });
+    await flush();
+    await openSettings(container);
+    click(byText(container, "button", "Unit"));
+    await flush();
+    click(byText(container, "button", "Reset to defaults"));
+    await flush();
+    expect(navigationMocks.replace).not.toHaveBeenCalled();
+    const stored = JSON.parse(window.localStorage.getItem("forge.dashboard.scopeBlockMap.v1.owner_1.proj_1"));
+    expect(stored).toMatchObject({ grouping: "system", pivot: "treemap" });
+  });
+
+  // D3 fix round 2: two rapid changes under overrides must both land —
+  // router.replace is async, so building each replace from the live URL
+  // would let the second call overwrite the first.
+  it("rapid grouping then pivot changes under overrides both land in the canonical URL", async () => {
+    window.history.replaceState({}, "", "/forge/work?forgeProject=proj_1&scopeBy=planner&scopeView=table");
+    const { container } = render({
+      packages: [PKG({ system: "Pumps" })], ownerId: "owner_1", forgeProjectKey: "proj_1",
+      scopeByParam: "planner", scopeViewParam: "table",
+    });
+    await flush();
+    click(byText(container, "button", "Area / zone"));
+    click(byText(container, "button", "Treemap"));
+    await flush();
+    expect(navigationMocks.replace).toHaveBeenCalledTimes(2);
+    const lastUrl = navigationMocks.replace.mock.calls[1][0];
+    const params = new URLSearchParams(lastUrl.split("?")[1] || "");
+    expect(params.get("scopeBy")).toBe("area");
+    expect(params.get("scopeView")).toBe("treemap");
+    expect(params.get("forgeProject")).toBe("proj_1");
+  });
+
+  it("rapid pivot then grouping changes under overrides both land in the canonical URL", async () => {
+    window.history.replaceState({}, "", "/forge/work?forgeProject=proj_1&scopeBy=planner&scopeView=table");
+    const { container } = render({
+      packages: [PKG({ system: "Pumps" })], ownerId: "owner_1", forgeProjectKey: "proj_1",
+      scopeByParam: "planner", scopeViewParam: "table",
+    });
+    await flush();
+    click(byText(container, "button", "Treemap"));
+    click(byText(container, "button", "Area / zone"));
+    await flush();
+    expect(navigationMocks.replace).toHaveBeenCalledTimes(2);
+    const lastUrl = navigationMocks.replace.mock.calls[1][0];
+    const params = new URLSearchParams(lastUrl.split("?")[1] || "");
+    expect(params.get("scopeBy")).toBe("area");
+    expect(params.get("scopeView")).toBe("treemap");
+    expect(params.get("forgeProject")).toBe("proj_1");
+  });
+
+  // D3 fix round 2: a cleared-preference reload preserves the
+  // documented defaults where the URL does not override — and the URL
+  // grouping where it does.
+  it("a cleared-preference reload shows documented defaults where the URL does not override, and the URL grouping where it does", async () => {
+    const packages = [PKG({ system: "Pumps" })];
+    const { container, root } = render({ packages, ownerId: "owner_1", forgeProjectKey: "proj_1", scopeByParam: "planner" });
+    await flush();
+    const groupByGroup = container.querySelector('[aria-label^="Group by"]');
+    const active = [...groupByGroup.querySelectorAll("button")].find((b) => b.getAttribute("aria-pressed") === "true");
+    expect(active.textContent).toBe("Planner");
+    // Simulate the reload after clearing saved prefs, with no override.
+    act(() => {
+      root.render(<PlannerScopeBlockMap baseHref="/forge/work" packages={packages} ownerId="owner_1" forgeProjectKey="proj_1" />);
+    });
+    await flush();
+    const groupByGroup2 = container.querySelector('[aria-label^="Group by"]');
+    const active2 = [...groupByGroup2.querySelectorAll("button")].find((b) => b.getAttribute("aria-pressed") === "true");
+    expect(active2.textContent).toBe("Equipment type");
+    expect(container.querySelector('[data-testid="scope-block-treemap"]')).not.toBeNull();
   });
 });
