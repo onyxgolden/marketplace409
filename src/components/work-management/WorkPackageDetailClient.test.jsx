@@ -1716,4 +1716,21 @@ describe("WorkPackageDetailClient D4 dashboard drill", () => {
     expect(container.textContent).toContain("Fabricate pipe spool");
     expect(container.textContent).toContain("Install supports");
   });
+
+  it("rejects a pattern-valid but nonexistent craft key from ?detailFocus= — full grid, no echo, focus cleared", async () => {
+    clearSWRCache();
+    stubFetch({ steps: [PIPEFITTER_STEP, WELDER_STEP] });
+    // The real route carries the focus in the URL (page.jsx passes it
+    // as initialDetailFocus); seed it the same way a shared link would.
+    window.history.replaceState(null, "", "/forge/work/forge_wp_1?tab=steps&detailFocus=craft%3Aelectrician");
+    const { container } = renderDetail(BASE_PKG, { ownerId: "owner_1", initialTab: "steps", initialDetailFocus: "craft:electrician" });
+    await settle();
+    await settle();
+    await settle();
+    expect(container.querySelector('[data-testid="steps-craft-filter-banner"]')).toBeNull();
+    expect(container.textContent).toContain("Fabricate pipe spool");
+    expect(container.textContent).toContain("Install supports");
+    expect(container.textContent).not.toContain("electrician");
+    expect(window.location.search).not.toContain("detailFocus");
+  });
 });

@@ -738,11 +738,16 @@ describe("WorkPackageSteps D4 craft drill", () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  it("says so in plain words when the craft has no steps", async () => {
+  it("rejects a pattern-valid craft key that names no loaded craft — full grid, no echo, focus cleared", async () => {
     setupFetch();
-    const { container } = await renderPanel({ craftFilter: "electrician", onClearCraftFilter: () => {} });
-    expect(container.querySelector('[data-testid="steps-craft-filter-banner"]').textContent)
-      .toContain("No steps in the electrician craft — 2 steps in total.");
-    expect(stepRows(container)).toHaveLength(0);
+    const onClear = vi.fn();
+    const { container } = await renderPanel({ craftFilter: "electrician", onClearCraftFilter: onClear });
+    // The invented key matches no loaded craft group, so the focus is
+    // rejected: the full grid stays visible and the raw URL token is
+    // never rendered — not in a banner, not as an empty-filter state.
+    expect(container.querySelector('[data-testid="steps-craft-filter-banner"]')).toBeNull();
+    expect(stepRows(container)).toHaveLength(2);
+    expect(container.textContent).not.toContain("electrician");
+    expect(onClear).toHaveBeenCalledTimes(1);
   });
 });
