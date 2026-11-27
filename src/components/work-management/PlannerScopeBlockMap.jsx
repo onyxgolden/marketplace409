@@ -12,8 +12,9 @@
 // no further arithmetic of its own, only layout and links.
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   SCOPE_BLOCK_DIMENSIONS,
   statusChartColor,
@@ -67,6 +68,17 @@ function writeStoredPrefs(ownerId, forgeProjectKey, prefs) {
     // Storage disabled/full/private window: the preference just does not
     // survive reload. Never breaks the widget over it.
   }
+}
+
+// D3 fix round 1 (P2): the title input could set and persist "" in the
+// live session, leaving a blank widget heading. Validate at the update
+// boundary — trim, fall back to the documented default on blank or
+// whitespace-only, cap at 80 characters — so no invalid title is ever
+// stored or rendered.
+function normalizeTitle(value) {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (trimmed.length === 0) return DEFAULT_PREFS.title;
+  return trimmed.slice(0, TITLE_MAX_LENGTH);
 }
 
 function statusLabelText(status) {
@@ -131,11 +143,17 @@ function TreemapView({ groups, dimension, baseHref, activeGroup, activeStatus, m
               height: `${(group.height / 560) * 100}%`,
             }}
           >
+            {/* D3 fix round 1 (P1): ~44px touch target — the min-h-6
+               header the verdict measured at ~24px is not a phone-safe
+               drill target. Status tiles keep geometry-driven sizes
+               (they cannot be forced to 44px without breaking the
+               treemap); the Table pivot is the exact phone-safe drill
+               path for them. */}
             <Link
               href={groupActive ? baseHref : groupHref(baseHref, dimension.param, group.groupKey)}
               aria-pressed={groupActive}
               aria-label={`${group.groupLabel}, ${group.packageCount} ${group.packageCount === 1 ? "package" : "packages"} — ${groupActive ? "currently filtered, activate to show all" : "activate to filter the list to this group"}`}
-              className={`flex min-h-6 shrink-0 items-center gap-1 truncate bg-slate-200 px-1.5 text-[11px] font-semibold text-slate-800 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 ${groupActive ? "ring-2 ring-inset ring-slate-500" : ""}`}
+              className={`flex min-h-11 shrink-0 items-center gap-1 truncate bg-slate-200 px-1.5 text-[11px] font-semibold text-slate-800 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 ${groupActive ? "ring-2 ring-inset ring-slate-500" : ""}`}
             >
               {showGroupLabel ? (
                 <>
@@ -238,7 +256,7 @@ function TableView({ groups, dimension, baseHref, activeGroup, activeStatus }) {
   );
 }
 
-function SettingsPanel({ prefs, onChange, onReset }) {
+function SettingsPanel({ prefs, onChange, onGroupingChange, onReset }) {
   return (
     <div className="mt-3 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950" data-testid="scope-block-settings-panel">
       <div>
@@ -261,7 +279,7 @@ function SettingsPanel({ prefs, onChange, onReset }) {
         <select
           id="scope-block-grouping"
           value={prefs.grouping}
-          onChange={(event) => onChange({ grouping: event.target.value })}
+          onChange={(event) => onGroupingChange(event.target.value)}
           className="mt-1 min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white"
         >
           {SCOPE_BLOCK_DIMENSIONS.map((dim) => (
@@ -303,6 +321,8 @@ export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, 
   // one render it is present on — handled below, not by gating render.
   const [prefs, setPrefs] = useState(DEFAULT_PREFS);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const router = useRouter();
+  const settingsTriggerRef = useRef(null);
 
   useEffect(() => {
     // setState runs inside a microtask callback, not synchronously in the
@@ -317,9 +337,39 @@ export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, 
     // own saved preferences, re-read rather than carrying the old ones.
   }, [ownerId, forgeProjectKey]);
 
+  // D3 fix round 1 (P1): an explicit URL param is the canonical state
+  // for its control — when one is active, the rendered grouping/pivot
+  // follows the URL, not local preferences. The controls therefore
+  // write the URL too, or the click changes storage but not the widget.
+  const scopeByOverrideActive = scopeByParam != null
+    && SCOPE_BLOCK_DIMENSIONS.some((d) => d.key === scopeByParam);
+  const scopeViewOverrideActive = scopeViewParam === "treemap" || scopeViewParam === "table";
+
+  // Replace the one param in the current page's query string, keeping
+  // scope, filters, and workspace intact; scroll:false so a grouping
+  // click never jumps the user to the top of the page. The server
+  // re-renders the route from the new URL, which is what makes the
+  // click visible when an override is active.
+  function updateUrlParam(param, value) {
+    const params = new URLSearchParams(window.location.search);
+    params.set(param, value);
+    router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
+  }
+
+  function handleGroupingChange(key) {
+    updatePrefs({ grouping: key });
+    if (scopeByOverrideActive) updateUrlParam("scopeBy", key);
+  }
+
+  function handlePivotChange(value) {
+    updatePrefs({ pivot: value });
+    if (scopeViewOverrideActive) updateUrlParam("scopeView", value);
+  }
+
   function updatePrefs(partial) {
     setPrefs((current) => {
       const next = { ...current, ...partial };
+      if (partial.title !== undefined) next.title = normalizeTitle(partial.title);
       writeStoredPrefs(ownerId, forgeProjectKey, next);
       return next;
     });
@@ -354,13 +404,16 @@ export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, 
   return (
     <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900" data-testid="scope-block-map">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-slate-900 dark:text-white">{prefs.title}</h2>
+        {/* D3 fix round 1 (P2): an 80-character single-token title must
+           wrap inside the card (break-words + min-w-0), never run past
+           the card's right edge. */}
+        <h2 className="min-w-0 break-words text-sm font-semibold text-slate-900 dark:text-white">{prefs.title}</h2>
         <div className="flex items-center gap-2">
           <div role="group" aria-label="Scope block map view" className="flex rounded-lg border border-slate-300 dark:border-slate-600">
             <button
               type="button"
               aria-pressed={pivot === "treemap"}
-              onClick={() => updatePrefs({ pivot: "treemap" })}
+              onClick={() => handlePivotChange("treemap")}
               className={`min-h-11 rounded-l-lg px-3 text-sm font-medium ${pivot === "treemap" ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"}`}
             >
               Treemap
@@ -368,13 +421,14 @@ export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, 
             <button
               type="button"
               aria-pressed={pivot === "table"}
-              onClick={() => updatePrefs({ pivot: "table" })}
+              onClick={() => handlePivotChange("table")}
               className={`min-h-11 rounded-r-lg px-3 text-sm font-medium ${pivot === "table" ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"}`}
             >
               Table
             </button>
           </div>
           <button
+            ref={settingsTriggerRef}
             type="button"
             aria-expanded={settingsOpen}
             aria-controls="scope-block-settings-panel"
@@ -390,10 +444,22 @@ export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, 
       </p>
 
       {settingsOpen && (
-        <div id="scope-block-settings-panel">
+        <div
+          id="scope-block-settings-panel"
+          onKeyDown={(event) => {
+            // D3 fix round 1 (P2): Escape dismisses the disclosure and
+            // focus returns to the Settings trigger (standing checklist).
+            if (event.key === "Escape") {
+              event.preventDefault();
+              setSettingsOpen(false);
+              settingsTriggerRef.current?.focus();
+            }
+          }}
+        >
           <SettingsPanel
             prefs={prefs}
             onChange={updatePrefs}
+            onGroupingChange={handleGroupingChange}
             onReset={() => {
               resetPrefs();
               setSettingsOpen(false);
@@ -414,7 +480,7 @@ export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, 
                 key={dim.key}
                 type="button"
                 aria-pressed={dim.key === dimension.key}
-                onClick={() => updatePrefs({ grouping: dim.key })}
+                onClick={() => handleGroupingChange(dim.key)}
                 className={`min-h-11 rounded-lg px-3 text-sm font-medium ${dim.key === dimension.key ? "bg-slate-900 text-white" : "border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"}`}
               >
                 {dim.label}

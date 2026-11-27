@@ -30,6 +30,14 @@
 //     donut + bars at phone width; clicking the labor row navigates
 //     toward costCategory=labor with the project scope; the default
 //     (no snapshot) shows the not-available note and the "—" strip
+//   - D3 fix round 1: the scope block map at phone width — treemap
+//     group headers measure ~44px, the donut legend label renders
+//     untruncated, every scope-map button sits inside the viewport;
+//     Table pivot drills (group + status) and treemap drills (group
+//     header + status tile) navigate toward their exact filters; and
+//     grouping/pivot clicks under a scopeBy/scopeView override update
+//     the canonical URL state (fresh-page reload proves the URL drives
+//     the regroup/pivot, with local prefs cleared first)
 //   - D2b: the budget-allocation editor (work-budget-editor case) with
 //     intercepted API responses — add-line + planned-labor helper +
 //     exact-sum save at phone width, no production writes
@@ -156,6 +164,40 @@ async function measureTargetSizes(page, fixtureTestId = "work-budget-editor-fixt
   }, fixtureTestId);
 }
 
+// D3 fix round 1 — treemap geometry + Table pivot + legend. Scoped to
+// the scope block map: group header heights (the ~44px touch target),
+// the donut legend label (live finding (f): "Draft" truncated to "D..."
+// just above the lg breakpoint), and every D3 button inside the
+// viewport. Status tiles keep geometry-driven sizes by design; the
+// Table pivot is their phone-safe drill path (asserted below).
+async function measureD3(page) {
+  return page.evaluate(() => {
+    const doc = document.documentElement;
+    const map = document.querySelector('[data-testid="scope-block-map"]');
+    const headerLinks = [...document.querySelectorAll('[data-testid="scope-block-treemap"] > div > a')].map((a) => {
+      const r = a.getBoundingClientRect();
+      return { label: a.getAttribute("aria-label")?.slice(0, 40), height: Math.round(r.height * 10) / 10, width: Math.round(r.width * 10) / 10 };
+    });
+    const legendLabels = [...document.querySelectorAll('[data-testid="planner-status-legend"] a')].map((a) => {
+      const label = a.querySelector("span > span:nth-child(2)");
+      return { text: label?.textContent, clientWidth: label?.clientWidth, scrollWidth: label?.scrollWidth, truncated: label ? label.scrollWidth > label.clientWidth + 1 : null };
+    });
+    const mapButtons = map ? [...map.querySelectorAll("button")].map((b) => {
+      const r = b.getBoundingClientRect();
+      return { label: b.textContent?.trim()?.slice(0, 30), height: Math.round(r.height * 10) / 10, right: Math.round(r.right), outside: r.right > window.innerWidth + 1 || r.left < -1 };
+    }) : [];
+    return {
+      innerWidth: window.innerWidth,
+      scrollWidth: doc.scrollWidth,
+      pageOverflow: doc.scrollWidth > window.innerWidth + 1,
+      mapRendered: Boolean(map),
+      headerLinks,
+      legendLabels,
+      mapButtons,
+    };
+  });
+}
+
 async function checkWidth(browser, width) {
   const failures = [];
   const page = await browser.newPage({ viewport: { width, height: 800 } });
@@ -249,6 +291,82 @@ async function checkWidth(browser, width) {
       failures.push(`${width}px: drill-down URL dropped the project scope: ${drillUrl}`);
     }
 
+    // D3 fix round 1 — treemap geometry, Table pivot drills, legend.
+    // The draft click above navigated away, so the fixture reloads
+    // (warm — the route is already compiled).
+    await page.goto(`${BASE}?case=work-dashboard`, { waitUntil: "networkidle" });
+    await page.waitForSelector('[data-fixture-ready="true"]');
+    await page.waitForSelector('[data-testid="scope-block-map"]');
+    const d3 = await measureD3(page);
+    if (!d3.mapRendered) failures.push(`${width}px D3: scope block map did not render`);
+    if (d3.pageOverflow) failures.push(`${width}px D3: page overflow (scrollWidth=${d3.scrollWidth})`);
+    const shortHeaders = d3.headerLinks.filter((h) => h.height < 43.5);
+    if (shortHeaders.length) failures.push(`${width}px D3: ${shortHeaders.length} treemap group header(s) under ~44px: ${JSON.stringify(shortHeaders)}`);
+    const truncatedLegend = d3.legendLabels.filter((l) => l.truncated);
+    if (truncatedLegend.length) failures.push(`${width}px D3: donut legend label(s) truncated: ${JSON.stringify(truncatedLegend)}`);
+    const badMapButtons = d3.mapButtons.filter((b) => b.height < 43.5 || b.outside);
+    if (badMapButtons.length) failures.push(`${width}px D3: ${badMapButtons.length} scope-map control(s) under ~44px or outside viewport: ${JSON.stringify(badMapButtons)}`);
+    await page.screenshot({ path: path.join(ROOT, ".phone-layout-evidence", `work-dashboard-d3-${width}.png`) });
+
+    // D3 Table pivot at phone width: the exact-value, narrow-screen
+    // drill surface. Same overflow checks, then the group + status
+    // row links must navigate toward their exact filters.
+    await page.locator('[data-testid="scope-block-map"]').getByRole("button", { name: "Table", exact: true }).click();
+    await page.waitForSelector('[data-testid="scope-block-table"]');
+    const d3Table = await measure(page);
+    if (d3Table.pageOverflow) failures.push(`${width}px D3 table: page overflow (scrollWidth=${d3Table.scrollWidth})`);
+    if (d3Table.outsideViewport.length) failures.push(`${width}px D3 table: ${d3Table.outsideViewport.length} control(s) outside viewport: ${JSON.stringify(d3Table.outsideViewport)}`);
+    const d3TableGroupBefore = navigationUrls.length;
+    await page.locator('[data-testid="scope-block-table"]').getByRole("link", { name: "Piping", exact: true }).click();
+    await page.waitForTimeout(3000);
+    const d3TableGroupUrl = navigationUrls.slice(d3TableGroupBefore).find((url) => url.includes("system=Piping") && !url.includes("status="));
+    if (!d3TableGroupUrl) {
+      failures.push(`${width}px D3 table: clicking the Piping row never requested a system=Piping URL (saw: ${JSON.stringify(navigationUrls)})`);
+    } else if (!d3TableGroupUrl.includes(`forgeProject=${TEST_PROJECT_ID}`)) {
+      failures.push(`${width}px D3 table: group drill-down URL dropped the project scope: ${d3TableGroupUrl}`);
+    }
+    await page.goto(`${BASE}?case=work-dashboard`, { waitUntil: "networkidle" });
+    await page.waitForSelector('[data-fixture-ready="true"]');
+    await page.waitForSelector('[data-testid="scope-block-map"]');
+    await page.locator('[data-testid="scope-block-map"]').getByRole("button", { name: "Table", exact: true }).click();
+    await page.waitForSelector('[data-testid="scope-block-table"]');
+    const d3TableStatusBefore = navigationUrls.length;
+    await page.locator('[data-testid="scope-block-table"]').getByRole("link", { name: /draft\s*2/ }).click();
+    await page.waitForTimeout(3000);
+    const d3TableStatusUrl = navigationUrls.slice(d3TableStatusBefore).find((url) => url.includes("system=Piping") && url.includes("status=draft"));
+    if (!d3TableStatusUrl) {
+      failures.push(`${width}px D3 table: clicking the Piping draft row never requested a system=Piping&status=draft URL (saw: ${JSON.stringify(navigationUrls)})`);
+    }
+
+    // D3 treemap drills at phone width: group header, then status tile.
+    // The Table pivot click above persisted lastPivot=table, so the
+    // reload clears saved scope prefs first — otherwise the table
+    // renders instead of the treemap (correct product behavior).
+    await page.evaluate(() => window.localStorage.clear());
+    await page.goto(`${BASE}?case=work-dashboard`, { waitUntil: "networkidle" });
+    await page.waitForSelector('[data-fixture-ready="true"]');
+    await page.waitForSelector('[data-testid="scope-block-treemap"]');
+    const d3TreemapGroupBefore = navigationUrls.length;
+    await page.locator('[data-testid="scope-block-treemap"]').getByRole("link", { name: /Piping, 2 packages/ }).click();
+    await page.waitForTimeout(3000);
+    const d3TreemapGroupUrl = navigationUrls.slice(d3TreemapGroupBefore).find((url) => url.includes("system=Piping") && !url.includes("status="));
+    if (!d3TreemapGroupUrl) {
+      failures.push(`${width}px D3 treemap: clicking the Piping group header never requested a system=Piping URL (saw: ${JSON.stringify(navigationUrls)})`);
+    } else if (!d3TreemapGroupUrl.includes(`forgeProject=${TEST_PROJECT_ID}`)) {
+      failures.push(`${width}px D3 treemap: group drill-down URL dropped the project scope: ${d3TreemapGroupUrl}`);
+    }
+    await page.evaluate(() => window.localStorage.clear());
+    await page.goto(`${BASE}?case=work-dashboard`, { waitUntil: "networkidle" });
+    await page.waitForSelector('[data-fixture-ready="true"]');
+    await page.waitForSelector('[data-testid="scope-block-treemap"]');
+    const d3TreemapStatusBefore = navigationUrls.length;
+    await page.locator('[data-testid="scope-block-treemap"]').getByRole("link", { name: /Piping, draft, 2 packages/ }).click();
+    await page.waitForTimeout(3000);
+    const d3TreemapStatusUrl = navigationUrls.slice(d3TreemapStatusBefore).find((url) => url.includes("system=Piping") && url.includes("status=draft"));
+    if (!d3TreemapStatusUrl) {
+      failures.push(`${width}px D3 treemap: clicking the Piping draft tile never requested a system=Piping&status=draft URL (saw: ${JSON.stringify(navigationUrls)})`);
+    }
+
     // D2b cost states — complete, then incomplete. Each is a fresh
     // fixture load (warm — the route is already compiled).
     await page.goto(`${BASE}?case=work-dashboard&cost=complete`, { waitUntil: "networkidle" });
@@ -292,7 +410,7 @@ async function checkWidth(browser, width) {
     if (!costIncomplete.costText?.includes("$1,000.00 unallocated")) failures.push(`${width}px cost incomplete: banner missing the precise $1,000.00 unallocated amount`);
     if (costIncomplete.costText?.includes("Labor $1,300.00")) failures.push(`${width}px cost incomplete: false chart — the stale package's labor is still counted`);
 
-    return { width, initial, bars, progressBars, drillUrl: drillUrl || null, progressDrillUrl: progressDrillUrl || null, costComplete, costBars, costDrillUrl: costDrillUrl || null, costIncomplete, failures };
+    return { width, initial, bars, progressBars, drillUrl: drillUrl || null, progressDrillUrl: progressDrillUrl || null, d3, d3Table, d3TableGroupUrl: d3TableGroupUrl || null, d3TableStatusUrl: d3TableStatusUrl || null, d3TreemapGroupUrl: d3TreemapGroupUrl || null, d3TreemapStatusUrl: d3TreemapStatusUrl || null, costComplete, costBars, costDrillUrl: costDrillUrl || null, costIncomplete, failures };
   } finally {
     await page.close();
   }
@@ -389,6 +507,53 @@ async function checkBudgetEditor(browser, width) {
   }
 }
 
+// D3 fix round 1 — URL-override proof (fresh page per width, so no
+// saved local preference can stand in for the URL state). Loads the
+// fixture with scopeBy/scopeView overrides, clicks the visible grouping
+// / pivot controls, and proves the controls update the canonical URL
+// state (router.replace) — then, with local prefs cleared, reloads the
+// new URL to prove the URL alone drives the regroup / pivot. The
+// fixture reads its params once on mount, so the regroup lands on
+// reload, not on the click itself; on the real page the server
+// re-renders from the new URL immediately.
+async function checkD3Override(browser, width) {
+  const failures = [];
+  const page = await browser.newPage({ viewport: { width, height: 800 } });
+  try {
+    await page.goto(`${BASE}?case=work-dashboard&scopeBy=planner&scopeView=treemap`, { waitUntil: "networkidle" });
+    await page.waitForSelector('[data-fixture-ready="true"]');
+    await page.waitForSelector('[data-testid="scope-block-treemap"]');
+    const overrideText = await page.evaluate(() => document.querySelector('[data-testid="scope-block-map"]').textContent);
+    if (!overrideText.includes("Unassigned")) failures.push(`${width}px D3 override: Planner grouping did not render (expected the Unassigned group)`);
+    const plannerPressed = await page.locator('[data-testid="scope-block-map"]').getByRole("button", { name: "Planner", exact: true }).getAttribute("aria-pressed");
+    if (plannerPressed !== "true") failures.push(`${width}px D3 override: Planner grouping button did not show pressed under the scopeBy=planner override (aria-pressed=${plannerPressed})`);
+    await page.locator('[data-testid="scope-block-map"]').getByRole("button", { name: "Area / zone", exact: true }).click();
+    await page.waitForTimeout(1000);
+    const afterClickUrl = page.url();
+    if (!afterClickUrl.includes("scopeBy=area")) failures.push(`${width}px D3 override: grouping click did not update the URL (still ${afterClickUrl})`);
+    await page.evaluate(() => window.localStorage.clear());
+    await page.goto(afterClickUrl, { waitUntil: "networkidle" });
+    await page.waitForSelector('[data-fixture-ready="true"]');
+    await page.waitForSelector('[data-testid="scope-block-treemap"]');
+    const regroupedText = await page.evaluate(() => document.querySelector('[data-testid="scope-block-map"]').textContent);
+    if (!regroupedText.includes("Process")) failures.push(`${width}px D3 override: reload with scopeBy=area did not render the Area grouping`);
+    await page.goto(`${BASE}?case=work-dashboard&scopeView=table`, { waitUntil: "networkidle" });
+    await page.waitForSelector('[data-fixture-ready="true"]');
+    await page.waitForSelector('[data-testid="scope-block-table"]');
+    await page.locator('[data-testid="scope-block-map"]').getByRole("button", { name: "Treemap", exact: true }).click();
+    await page.waitForTimeout(1000);
+    const afterPivotUrl = page.url();
+    if (!afterPivotUrl.includes("scopeView=treemap")) failures.push(`${width}px D3 override: pivot click did not update the URL (still ${afterPivotUrl})`);
+    await page.evaluate(() => window.localStorage.clear());
+    await page.goto(afterPivotUrl, { waitUntil: "networkidle" });
+    await page.waitForSelector('[data-fixture-ready="true"]');
+    await page.waitForSelector('[data-testid="scope-block-treemap"]');
+    return { width, failures };
+  } finally {
+    await page.close();
+  }
+}
+
 // The real /forge/work route with dummy env cannot load live data in this
 // VM (auth/SWRIdentityBridge needs real Supabase env). Load it once at
 // 400px and record honestly what renders — an observation, not a gate:
@@ -480,6 +645,10 @@ async function main() {
       const result = await checkWidth(browser, width);
       results.push(result);
       failures.push(...result.failures);
+      progress.phase(`checking D3 URL overrides ${width}px`);
+      const d3OverrideResult = await checkD3Override(browser, width);
+      results.push({ case: "work-dashboard-d3-override", ...d3OverrideResult });
+      failures.push(...d3OverrideResult.failures);
       progress.phase(`checking budget editor ${width}px`);
       const editorResult = await checkBudgetEditor(browser, width);
       results.push({ case: "work-budget-editor", ...editorResult });
@@ -496,7 +665,7 @@ async function main() {
       process.exitCode = 1;
       progress.done("FAIL", { exitCode: 1 });
     } else {
-      console.log("PASS: no overflow, no out-of-viewport controls at 390px and 400px (donut + scope bars + progress bars + cost complete/incomplete + cost bars states, budget editor add-line + save flow), every editor control measures ~44px or more on both axes (initial/editing/saved/delete states), draft drill-down requests the status filter, Piping progress drill-down requests system=Piping + progressBy=system with no narrowing filters, labor cost drill-down requests costCategory=labor with the project scope; real /forge/work observed separately (see JSON)");
+      console.log("PASS: no overflow, no out-of-viewport controls at 390px and 400px (donut + scope bars + progress bars + cost complete/incomplete + cost bars states, budget editor add-line + save flow), every editor control measures ~44px or more on both axes (initial/editing/saved/delete states), draft drill-down requests the status filter, Piping progress drill-down requests system=Piping + progressBy=system with no narrowing filters, labor cost drill-down requests costCategory=labor with the project scope; D3: treemap group headers measure ~44px, donut legend labels render untruncated, Table pivot drills request the exact group/status filters, treemap drills do the same, and grouping/pivot clicks under a scopeBy/scopeView override update the canonical URL state (reload proves the URL drives the regroup/pivot); real /forge/work observed separately (see JSON)");
       progress.done("PASS", { exitCode: 0 });
     }
   } finally {

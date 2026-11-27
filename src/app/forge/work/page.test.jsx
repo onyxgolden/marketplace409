@@ -25,7 +25,9 @@ const mocks = vi.hoisted(() => ({
   createAuthenticatedForgeApplication: vi.fn(),
 }));
 
-vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+// D3 fix round 1: PlannerScopeBlockMap writes the canonical URL state
+// via router.replace when a scopeBy/scopeView override is active.
+vi.mock("next/navigation", () => ({ redirect: mocks.redirect, useRouter: () => ({ replace: vi.fn() }) }));
 
 vi.mock("@/lib/supabase/createAuthenticatedForgeApplication", () => ({
   createAuthenticatedForgeApplication: mocks.createAuthenticatedForgeApplication,

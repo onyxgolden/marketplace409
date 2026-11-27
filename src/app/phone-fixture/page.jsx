@@ -75,6 +75,10 @@
  *                 so the strip shows "—" and the widget its
  *                 not-available note. ?costCategory=labor (with
  *                 ?cost=complete) marks the labor row active.
+ *                 D3: ?scopeBy=<dimension> / ?scopeView=<treemap|table>
+ *                 feed the scope block map's URL overrides, so the
+ *                 guard can prove the controls update canonical URL
+ *                 state instead of only local preferences.
  *   work-budget-editor — the real WorkPackageBudgetAllocation editor
  *                 (D2b package entry surface), fed by the guard's
  *                 intercepted /api/work-packages/.../budget-allocation
@@ -464,7 +468,7 @@ const WORK_DASHBOARD_FIXTURE_PLANNING = {
   forge_wp_synth_d1_05: { percentComplete: 0, initialized: false },
 };
 
-function WorkDashboardCase({ cost = null, costCategory = null }) {
+function WorkDashboardCase({ cost = null, costCategory = null, scopeBy = null, scopeView = null }) {
   // D2b synthetic cost snapshot, built by the REAL summarizeCostSplit
   // from the fixture rows' invented estimates — no production data.
   // Complete: SYN-01 $1,500.00 + SYN-02 $1,000.00 + SYN-03 $500.00,
@@ -510,6 +514,8 @@ function WorkDashboardCase({ cost = null, costCategory = null }) {
         planningByPackage={WORK_DASHBOARD_FIXTURE_PLANNING}
         costSummary={costSummary}
         activeCostCategory={costCategory}
+        scopeByParam={scopeBy}
+        scopeViewParam={scopeView}
       />
     </main>
   );
@@ -562,6 +568,8 @@ export default function PhoneFixturePage() {
       case: params.get("case") || "designer",
       cost: params.get("cost"),
       costCategory: params.get("costCategory"),
+      scopeBy: params.get("scopeBy"),
+      scopeView: params.get("scopeView"),
     });
   }, []);
   if (process.env.NODE_ENV === "production") notFound();
@@ -570,7 +578,7 @@ export default function PhoneFixturePage() {
   if (!Case) return <main data-fixture-ready="missing">Unknown case: {fixtureParams.case}</main>;
   return (
     <div data-fixture-ready="true" data-fixture-case={fixtureParams.case}>
-      <Case cost={fixtureParams.cost} costCategory={fixtureParams.costCategory} />
+      <Case cost={fixtureParams.cost} costCategory={fixtureParams.costCategory} scopeBy={fixtureParams.scopeBy} scopeView={fixtureParams.scopeView} />
     </div>
   );
 }

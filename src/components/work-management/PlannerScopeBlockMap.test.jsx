@@ -16,6 +16,13 @@ vi.mock("next/link", () => ({
   default: ({ href, children, ...props }) => <a href={href} {...props}>{children}</a>,
 }));
 
+// D3 fix round 1: the grouping/pivot controls write the canonical URL
+// state when a scopeBy/scopeView override is active, via router.replace.
+const navigationMocks = vi.hoisted(() => ({ replace: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: navigationMocks.replace }),
+}));
+
 import PlannerScopeBlockMap from "./PlannerScopeBlockMap.jsx";
 
 const PKG = (overrides) => ({
@@ -51,6 +58,7 @@ function byText(container, tag, text) {
 
 beforeEach(() => {
   window.localStorage.clear();
+  navigationMocks.replace.mockClear();
 });
 
 afterEach(() => {
@@ -323,5 +331,141 @@ describe("PlannerScopeBlockMap", () => {
     expect(tinyLink.getAttribute("aria-label")).toContain("1 package");
     // Visually elided: no visible count/label span, only the sr-only one.
     expect(tinyLink.querySelector(".sr-only")).not.toBeNull();
+  });
+
+  // D3 fix round 1 — P1: with a scopeBy URL override active, clicking a
+  // grouping button must update the canonical URL state (not only the
+  // local preference, which the override would keep beating).
+  it("with a scopeBy URL override active, clicking a grouping button updates the URL state and keeps the local preference in sync", async () => {
+    const { container } = render({
+      packages: [PKG({ system: "Pumps" })], ownerId: "owner_1", forgeProjectKey: "proj_1",
+      scopeByParam: "planner",
+    });
+    await flush();
+    click(byText(container, "button", "Area / zone"));
+    await flush();
+    expect(navigationMocks.replace).toHaveBeenCalledTimes(1);
+    expect(navigationMocks.replace.mock.calls[0][0]).toContain("scopeBy=area");
+    const stored = JSON.parse(window.localStorage.getItem("forge.dashboard.scopeBlockMap.v1.owner_1.proj_1"));
+    expect(stored.grouping).toBe("area");
+  });
+
+  // D3 fix round 1 — P1: same for the Treemap/Table pivot under a
+  // scopeView URL override.
+  it("with a scopeView URL override active, clicking Treemap updates the URL state", async () => {
+    const { container } = render({
+      packages: [PKG({ system: "Pumps" })], ownerId: "owner_1", forgeProjectKey: "proj_1",
+      scopeViewParam: "table",
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="scope-block-table"]')).not.toBeNull();
+    click(byText(container, "button", "Treemap"));
+    await flush();
+    expect(navigationMocks.replace).toHaveBeenCalledTimes(1);
+    expect(navigationMocks.replace.mock.calls[0][0]).toContain("scopeView=treemap");
+    const stored = JSON.parse(window.localStorage.getItem("forge.dashboard.scopeBlockMap.v1.owner_1.proj_1"));
+    expect(stored.pivot).toBe("treemap");
+  });
+
+  // D3 fix round 1 — P1: without an override, grouping clicks stay
+  // local-only (no navigation) — the plain-URL behavior is unchanged.
+  it("without a URL override, grouping clicks only update local preferences and do not navigate", async () => {
+    const { container } = render({ packages: [PKG({ system: "Pumps" })], ownerId: "owner_1", forgeProjectKey: "proj_1" });
+    await flush();
+    click(byText(container, "button", "Unit"));
+    await flush();
+    expect(navigationMocks.replace).not.toHaveBeenCalled();
+    const stored = JSON.parse(window.localStorage.getItem("forge.dashboard.scopeBlockMap.v1.owner_1.proj_1"));
+    expect(stored.grouping).toBe("unit");
+  });
+
+  function setTitle(container, value) {
+    const input = container.querySelector("#scope-block-title");
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  async function openSettings(container) {
+    click(byText(container, "button", "Settings"));
+    await flush();
+    expect(container.querySelector('[data-testid="scope-block-settings-panel"]')).not.toBeNull();
+  }
+
+  // D3 fix round 1 — P2: a blank title must fall back to the documented
+  // default instead of persisting an empty heading.
+  it("a blank title falls back to the documented default, never a blank heading", async () => {
+    const { container } = render({ packages: [PKG({ system: "Pumps" })], ownerId: "owner_1", forgeProjectKey: "proj_1" });
+    await flush();
+    await openSettings(container);
+    setTitle(container, "");
+    await flush();
+    expect(container.querySelector("h2").textContent).toBe("Scope block map");
+    const stored = JSON.parse(window.localStorage.getItem("forge.dashboard.scopeBlockMap.v1.owner_1.proj_1"));
+    expect(stored.title).toBe("Scope block map");
+  });
+
+  it("a whitespace-only title falls back to the documented default", async () => {
+    const { container } = render({ packages: [PKG({ system: "Pumps" })], ownerId: "owner_1", forgeProjectKey: "proj_1" });
+    await flush();
+    await openSettings(container);
+    setTitle(container, "   ");
+    await flush();
+    expect(container.querySelector("h2").textContent).toBe("Scope block map");
+  });
+
+  it("a 1-character title is kept", async () => {
+    const { container } = render({ packages: [PKG({ system: "Pumps" })], ownerId: "owner_1", forgeProjectKey: "proj_1" });
+    await flush();
+    await openSettings(container);
+    setTitle(container, "X");
+    await flush();
+    expect(container.querySelector("h2").textContent).toBe("X");
+  });
+
+  it("an 80-character title renders in full and wraps instead of overflowing the card", async () => {
+    const { container } = render({ packages: [PKG({ system: "Pumps" })], ownerId: "owner_1", forgeProjectKey: "proj_1" });
+    await flush();
+    await openSettings(container);
+    const longTitle = "A".repeat(80);
+    setTitle(container, longTitle);
+    await flush();
+    const heading = container.querySelector("h2");
+    expect(heading.textContent).toBe(longTitle);
+    expect(heading.className).toContain("break-words");
+  });
+
+  // D3 fix round 1 — P2: Escape dismisses the settings disclosure and
+  // focus returns to the Settings trigger.
+  it("Escape closes the settings disclosure and returns focus to the Settings trigger", async () => {
+    const { container } = render({ packages: [PKG({ system: "Pumps" })] });
+    await flush();
+    const trigger = byText(container, "button", "Settings");
+    click(trigger);
+    await flush();
+    const input = container.querySelector("#scope-block-title");
+    act(() => { input.focus(); });
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="scope-block-settings-panel"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  // D3 fix round 1 — P1: treemap group headers meet the ~44px touch
+  // target (min-h-11), not the ~24px min-h-6 the verdict measured.
+  it("treemap group headers carry the ~44px touch target", async () => {
+    const { container } = render({ packages: [PKG({ id: "wp_1", system: "Pumps" }), PKG({ id: "wp_2", system: "Valves" })] });
+    await flush();
+    const headerLinks = [...container.querySelectorAll('[data-testid="scope-block-treemap"] > div > a')];
+    expect(headerLinks.length).toBe(2);
+    for (const link of headerLinks) {
+      expect(link.className).toContain("min-h-11");
+      expect(link.className).not.toContain("min-h-6");
+    }
   });
 });

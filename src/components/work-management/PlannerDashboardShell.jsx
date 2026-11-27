@@ -136,7 +136,12 @@ function StatusRow({ entry, totalPackages, href, isActive, showBar }) {
             className="h-3 w-3 shrink-0 rounded-sm"
             style={{ backgroundColor: statusChartColor(entry.status) }}
           />
-          <span className="min-w-0 flex-1 truncate font-medium capitalize text-slate-900 dark:text-slate-100">
+          {/* D3 fix round 1, live finding (f): the label truncated to
+             "D..." at ~1100px — the donut eats most of the card's width
+             just above the lg breakpoint, leaving the label almost no
+             room. It wraps now instead of truncating; a status word is
+             never elided in the legend. */}
+          <span className="min-w-0 flex-1 break-words font-medium capitalize text-slate-900 dark:text-slate-100">
             {statusLabel(entry.status)}
           </span>
           <span className="shrink-0 font-semibold text-slate-900 tabular-nums dark:text-slate-100">
@@ -258,7 +263,7 @@ function CostRow({ category, total, packageCount, percent, href, isActive, showB
             className="h-3 w-3 shrink-0 rounded-sm"
             style={{ backgroundColor: budgetCategoryColor(category.value) }}
           />
-          <span className="min-w-0 flex-1 truncate font-medium text-slate-900 dark:text-slate-100">
+          <span className="min-w-0 flex-1 break-words font-medium text-slate-900 dark:text-slate-100">
             {budgetCategoryLabel(category.value)}
           </span>
           <span className="shrink-0 text-slate-500 tabular-nums dark:text-slate-400">
@@ -354,7 +359,10 @@ function CostSplitWidget({ costSummary, baseHref, activeCostCategory, activeAllo
         </p>
       ) : (
         <>
-          <div className="mt-3 flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+          {/* Same (f) fix as the scope legend: the category label wraps
+             instead of truncating, and the donut sits above the legend
+             until xl so the legend gets the full card width. */}
+          <div className="mt-3 flex flex-col items-center gap-4 xl:flex-row xl:items-start">
             {view === "donut" && (
               <CostDonutChart categoryTotals={categoryTotals} totalControlEstimateCents={total} />
             )}
@@ -750,7 +758,12 @@ export default function PlannerDashboardShell({
               No packages in this project yet — add the first one below.
             </p>
           ) : (
-            <div className="mt-3 flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+            // D3 fix round 1, live finding (f): donut beside legend only
+            // from xl — just above the lg breakpoint the one-third card
+            // is ~330px wide, the 176px donut leaves the legend ~100px,
+            // and the status label collapsed to "D...". Stacked below xl
+            // the legend gets the full card width and every word fits.
+            <div className="mt-3 flex flex-col items-center gap-4 xl:flex-row xl:items-start">
               {chartType === "donut" && <DonutChart breakdown={statusBreakdown} totalPackages={totalPackages} />}
               <ul className="w-full min-w-0 flex-1 space-y-1" data-testid="planner-status-legend">
                 {statusBreakdown.map((entry) => {
