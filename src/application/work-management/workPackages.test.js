@@ -25,7 +25,7 @@ function mockDb(chains = [], rpcImpl = null) {
 
 function chain(result = { data: null, error: null }) {
   const node = {
-    select: vi.fn(() => node), eq: vi.fn(() => node), in: vi.fn(() => node),
+    select: vi.fn(() => node), eq: vi.fn(() => node), neq: vi.fn(() => node), in: vi.fn(() => node),
     order: vi.fn(() => node), limit: vi.fn(() => node),
     insert: vi.fn(() => node), update: vi.fn(() => node),
     single: vi.fn(async () => result), maybeSingle: vi.fn(async () => result),
@@ -855,6 +855,63 @@ describe("listWorkPackages", () => {
     const db2 = mockDb([withoutMode]);
     await listWorkPackages(db2, { ownerId: "owner_1", scope: PROJECT_SCOPE });
     expect(withoutMode.eq).not.toHaveBeenCalledWith("mode", expect.anything());
+  });
+  it("filters by packageStatus at the database (Slice A)", async () => {
+    const canceledChain = chain({ data: [], error: null });
+    const db1 = mockDb([canceledChain]);
+    await listWorkPackages(db1, { ownerId: "owner_1", packageStatus: "canceled", scope: PROJECT_SCOPE });
+    expect(canceledChain.eq).toHaveBeenCalledWith("status", "cancelled");
+
+    const activeChain = chain({ data: [], error: null });
+    const db2 = mockDb([activeChain]);
+    await listWorkPackages(db2, { ownerId: "owner_1", packageStatus: "active", scope: PROJECT_SCOPE });
+    expect(activeChain.neq).toHaveBeenCalledWith("status", "cancelled");
+
+    const allChain = chain({ data: [], error: null });
+    const db3 = mockDb([allChain]);
+    await listWorkPackages(db3, { ownerId: "owner_1", packageStatus: "all", scope: PROJECT_SCOPE });
+    expect(allChain.eq).not.toHaveBeenCalledWith("status", expect.anything());
+    expect(allChain.neq).not.toHaveBeenCalledWith("status", expect.anything());
+  });
+  it("attaches the latest cancel transition with includeCancellation, in one bounded query (Slice A)", async () => {
+    const cancelledPkg = { ...PKG, id: "forge_wp_cancelled", status: "cancelled" };
+    const listChain = chain({ data: [PKG, cancelledPkg], error: null });
+    const cancelRows = [
+      { package_id: "forge_wp_cancelled", from_status: "in_progress", actor: "owner_1", reason: "Duplicate scope", at: "2026-11-05T10:00:00Z" },
+      { package_id: "forge_wp_cancelled", from_status: "draft", actor: "user_9", reason: "First cancel", at: "2026-11-01T10:00:00Z" },
+    ];
+    const cancelChain = chain({ data: cancelRows, error: null });
+    const db = mockDb([listChain, cancelChain]);
+    const result = await listWorkPackages(db, { ownerId: "owner_1", includeCancellation: true, scope: PROJECT_SCOPE });
+    expect(result.ok).toBe(true);
+    // One extra query, owner-scoped, cancel rows only, newest first — never N+1.
+    expect(db.from).toHaveBeenCalledTimes(2);
+    expect(cancelChain.select).toHaveBeenCalledWith("package_id,from_status,actor,reason,at");
+    expect(cancelChain.eq).toHaveBeenCalledWith("owner_id", "owner_1");
+    expect(cancelChain.eq).toHaveBeenCalledWith("to_status", "cancelled");
+    // Latest row wins; the active package gets cancellation: null.
+    const cancelled = result.packages.find((p) => p.id === "forge_wp_cancelled");
+    expect(cancelled.cancellation).toEqual({
+      fromStatus: "in_progress", actor: "owner_1", reason: "Duplicate scope", at: "2026-11-05T10:00:00Z",
+    });
+    expect(result.packages.find((p) => p.id === PKG.id).cancellation).toBe(null);
+  });
+  it("issues no transitions query when includeCancellation is false (Slice A)", async () => {
+    const db = mockDb([chain({ data: [PKG], error: null })]);
+    const result = await listWorkPackages(db, { ownerId: "owner_1", scope: PROJECT_SCOPE });
+    expect(result.ok).toBe(true);
+    expect(db.from).toHaveBeenCalledTimes(1);
+    expect(result.packages[0].cancellation).toBeUndefined();
+  });
+  it("gives a cancelled package with no cancel row cancellation: null, never fabricated metadata (Slice A)", async () => {
+    const cancelledPkg = { ...PKG, id: "forge_wp_cancelled", status: "cancelled" };
+    const db = mockDb([
+      chain({ data: [cancelledPkg], error: null }),
+      chain({ data: [], error: null }),
+    ]);
+    const result = await listWorkPackages(db, { ownerId: "owner_1", includeCancellation: true, scope: PROJECT_SCOPE });
+    expect(result.packages).toHaveLength(1);
+    expect(result.packages[0].cancellation).toBe(null);
   });
 });
 

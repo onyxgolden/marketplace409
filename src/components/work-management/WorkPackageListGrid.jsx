@@ -24,7 +24,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { WP_STATUS, WP_PACKAGE_TYPES_BY_MODE, isTerminalStatus, inferEffectiveMode, formatPackageCode } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_PACKAGE_TYPES_BY_MODE, isTerminalStatus, inferEffectiveMode, formatPackageCode, cancellationActorLabel } from "@/domains/work-management/workPackage.js";
 import { formatCents } from "@/domains/work-management/packageCosts.js";
 import EditableGridCell from "./EditableGridCell.jsx";
 import WorkPackageImportDialog from "./WorkPackageImportDialog.jsx";
@@ -242,7 +242,7 @@ function SortHeader({ children, sortKey, sort, onSort }) {
   );
 }
 
-export default function WorkPackageListGrid({ initialPackages, properties, workspaceQuery = "", activeMode = "industrial", blankRowCount = BLANK_ROWS }) {
+export default function WorkPackageListGrid({ initialPackages, properties, workspaceQuery = "", activeMode = "industrial", blankRowCount = BLANK_ROWS, ownerId = "" }) {
   const [rows, setRows] = useState(initialPackages || []);
   const [drafts, setDrafts] = useState(() => Array.from({ length: blankRowCount }, emptyDraft));
 
@@ -404,7 +404,31 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
                 </Link>
               </div>
               <EditableGridCell
-                value={pkg.title} display={pkg.title} ariaLabel={`Title for ${formatPackageCode(pkg.code)}`}
+                value={pkg.title}
+                // Slice A: a cancelled package shows when and by whom it
+                // was cancelled under its title — date, actor label
+                // ("Owner" / "User <8>" / legacy, never a fabricated
+                // name), and a brief reason preview (full reason in the
+                // title tooltip and on the detail page). A cancelled
+                // package with no cancel row (legacy data) shows nothing
+                // extra — the status badge already says "cancelled".
+                display={pkg.status === "cancelled" && pkg.cancellation ? (
+                  <>
+                    <span className="block">{pkg.title}</span>
+                    <span
+                      className="block text-xs font-normal text-slate-500"
+                      title={pkg.cancellation.reason
+                        ? `Canceled ${shortDate(pkg.cancellation.at)} — ${cancellationActorLabel(pkg.cancellation.actor, ownerId)} — ${pkg.cancellation.reason}`
+                        : `Canceled ${shortDate(pkg.cancellation.at)} — ${cancellationActorLabel(pkg.cancellation.actor, ownerId)}`}
+                    >
+                      Canceled {shortDate(pkg.cancellation.at)} — {cancellationActorLabel(pkg.cancellation.actor, ownerId)}
+                      {pkg.cancellation.reason
+                        ? ` — ${pkg.cancellation.reason.length > 80 ? `${pkg.cancellation.reason.slice(0, 80)}…` : pkg.cancellation.reason}`
+                        : ""}
+                    </span>
+                  </>
+                ) : pkg.title}
+                ariaLabel={`Title for ${formatPackageCode(pkg.code)}`}
                 readOnly={terminal} placeholder="Package title"
                 validate={(next) => (next.trim() === "" ? "Title is required." : null)}
                 onCommit={(next) => commitField(pkg, { title: next })}

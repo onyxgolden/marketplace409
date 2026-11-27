@@ -45,7 +45,7 @@ describe("GET /api/work-packages", () => {
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.packages).toHaveLength(1);
-    expect(listWorkPackages).toHaveBeenCalledWith({}, { ownerId: "owner_1", status: "draft", packageType: undefined, propertyId: undefined, mode: undefined, scope: NO_SCOPE });
+    expect(listWorkPackages).toHaveBeenCalledWith({}, { ownerId: "owner_1", status: "draft", packageType: undefined, propertyId: undefined, mode: undefined, scope: NO_SCOPE, packageStatus: undefined, includeCancellation: false });
   });
   it("passes the property filter through to the service", async () => {
     listWorkPackages.mockResolvedValue({ ok: true, packages: [] });
@@ -53,8 +53,24 @@ describe("GET /api/work-packages", () => {
     expect(response.status).toBe(200);
     expect(listWorkPackages).toHaveBeenCalledWith({}, {
       ownerId: "owner_1", status: undefined, packageType: undefined, propertyId: "1900-west-decker",
-      mode: undefined, scope: NO_SCOPE,
+      mode: undefined, scope: NO_SCOPE, packageStatus: undefined, includeCancellation: false,
     });
+  });
+  it("passes packageStatus=canceled through and asks for cancellation metadata (Slice A)", async () => {
+    listWorkPackages.mockResolvedValue({ ok: true, packages: [] });
+    const response = await GET(request(null, "GET", "?packageStatus=canceled"));
+    expect(response.status).toBe(200);
+    expect(listWorkPackages).toHaveBeenCalledWith({}, {
+      ownerId: "owner_1", status: undefined, packageType: undefined, propertyId: undefined,
+      mode: undefined, scope: NO_SCOPE, packageStatus: "canceled", includeCancellation: true,
+    });
+  });
+  it("passes packageStatus=all through with cancellation metadata, and ignores an invalid value (Slice A)", async () => {
+    listWorkPackages.mockResolvedValue({ ok: true, packages: [] });
+    await GET(request(null, "GET", "?packageStatus=all"));
+    expect(listWorkPackages).toHaveBeenCalledWith({}, expect.objectContaining({ packageStatus: "all", includeCancellation: true }));
+    await GET(request(null, "GET", "?packageStatus=bogus"));
+    expect(listWorkPackages).toHaveBeenCalledWith({}, expect.objectContaining({ packageStatus: undefined, includeCancellation: false }));
   });
   // Fix round 1 (PR #799 P1): the route always passes the validated
   // scope workAuth resolved. A request that omits ?forgeProject=

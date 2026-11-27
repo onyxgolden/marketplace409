@@ -1643,3 +1643,60 @@ describe("WorkPackageDetailClient post-freeze change approval (Approve button)",
     expect(decideRequests).toHaveLength(0);
   });
 });
+
+describe("Cancellation block (Slice A)", () => {
+  const CANCEL_TRANSITION = {
+    id: "t_cancel", from_status: "in_progress", to_status: "cancelled",
+    reason: "Duplicate scope — superseded by WP-0001", at: "2026-11-05T10:00:00Z", actor: "owner_1",
+  };
+  it("shows the Cancellation block with date, actor, from-status, and the full reason", () => {
+    const { container } = renderDetail(
+      { ...BASE_PKG, owner_id: "owner_1", status: "cancelled" },
+      { transitions: [CANCEL_TRANSITION] },
+    );
+    const text = container.textContent;
+    expect(text).toContain("Cancellation");
+    expect(text).toContain("Canceled on ");
+    expect(text).toMatch(/Canceled on 11\/5\/2026/);
+    expect(text).toContain("by Owner");
+    expect(text).toContain("From in progress → Cancelled");
+    expect(text).toContain("Reason: Duplicate scope — superseded by WP-0001");
+  });
+  it("labels a non-owner actor as User plus the first 8 id characters — never a fabricated name", () => {
+    const { container } = renderDetail(
+      { ...BASE_PKG, owner_id: "owner_1", status: "cancelled" },
+      { transitions: [{ ...CANCEL_TRANSITION, actor: "e1b22131-9100-4a79-bbe2-b82d43af922e" }] },
+    );
+    expect(container.textContent).toContain("by User e1b22131");
+  });
+  it("uses the newest cancel row when several exist", () => {
+    const older = { ...CANCEL_TRANSITION, id: "t_old", from_status: "draft", at: "2026-11-01T10:00:00Z", reason: "First cancel" };
+    const { container } = renderDetail(
+      { ...BASE_PKG, owner_id: "owner_1", status: "cancelled" },
+      { transitions: [older, CANCEL_TRANSITION] },
+    );
+    const text = container.textContent;
+    expect(text).toContain("Reason: Duplicate scope — superseded by WP-0001");
+    expect(text).not.toContain("First cancel");
+  });
+  it("shows the legacy fallbacks when the cancel row is absent", () => {
+    const { container } = renderDetail(
+      { ...BASE_PKG, owner_id: "owner_1", status: "cancelled" },
+      { transitions: [] },
+    );
+    const text = container.textContent;
+    expect(text).toContain("Cancellation");
+    expect(text).toContain("by Actor unavailable (legacy)");
+    expect(text).toContain("Reason: No reason recorded");
+    expect(text).not.toContain("From in progress");
+  });
+  it("shows no Cancellation block for a non-cancelled package, or a reopened one", () => {
+    const draft = renderDetail(BASE_PKG, { transitions: [CANCEL_TRANSITION] });
+    expect(draft.container.textContent).not.toContain("Cancellation");
+    const reopened = renderDetail(
+      { ...BASE_PKG, owner_id: "owner_1", status: "draft" },
+      { transitions: [CANCEL_TRANSITION] },
+    );
+    expect(reopened.container.textContent).not.toContain("Cancellation");
+  });
+});

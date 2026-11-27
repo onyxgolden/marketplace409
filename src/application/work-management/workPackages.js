@@ -921,7 +921,7 @@ export async function getWorkPackageDetail(db, { ownerId, packageId, actor, scop
   return result;
 }
 
-export async function listWorkPackages(db, { ownerId, status, packageType, propertyId, mode, scope }) {
+export async function listWorkPackages(db, { ownerId, status, packageType, propertyId, mode, scope, packageStatus, includeCancellation }) {
   // PR B fix round 1: the list is project-scoped, always.
   // - scope undefined: treated exactly like NO_SCOPE — the chooser
   //   state (an empty list plus the Unassigned count), never an
@@ -962,9 +962,44 @@ export async function listWorkPackages(db, { ownerId, status, packageType, prope
   // packages — alias-tagged submissions were normalized at write, and
   // unassigned (NULL) rows never match an equality filter.
   if (propertyId) q = q.eq("property_id", canonicalPropertySlug(propertyId));
+  // Slice A (control-estimate versioning): the active / canceled / all
+  // lens, at the database — mirrors the page's in-memory semantics
+  // (matchesPackageStatus). "all" / omitted / unknown applies no
+  // constraint; callers own the allowlist (the page and API route both
+  // allowlist before calling).
+  if (packageStatus === "canceled") q = q.eq("status", "cancelled");
+  else if (packageStatus === "active") q = q.neq("status", "cancelled");
   const { data, error } = await q;
   if (error) throw error;
-  return { ok: true, scope: scope.kind, packages: data || [] };
+  let packages = data || [];
+  // Slice A: one extra bounded query — never N+1 — attaching the latest
+  // cancel transition (actor, reason, time, from-status) to each
+  // cancelled package. The transitions table carries the indexed
+  // (owner_id, package_id, at desc) lookup; the query is owner-scoped
+  // and the map only ever matches ids in the returned list, so no row
+  // outside the scope can leak in. A cancelled package with no cancel
+  // transition row (legacy / inconsistent data) gets cancellation: null
+  // — the badge already says "cancelled", never fabricated metadata.
+  if (includeCancellation && packages.length > 0) {
+    const { data: cancelRows, error: cancelError } = await db.from(TABLES.transitions)
+      .select("package_id,from_status,actor,reason,at")
+      .eq("owner_id", ownerId)
+      .eq("to_status", "cancelled")
+      .order("at", { ascending: false });
+    if (cancelError) throw cancelError;
+    const latestByPackage = new Map();
+    for (const row of cancelRows || []) {
+      if (!latestByPackage.has(row.package_id)) {
+        latestByPackage.set(row.package_id, {
+          fromStatus: row.from_status, actor: row.actor, reason: row.reason, at: row.at,
+        });
+      }
+    }
+    packages = packages.map((pkg) => (pkg.status === "cancelled"
+      ? { ...pkg, cancellation: latestByPackage.get(pkg.id) || null }
+      : { ...pkg, cancellation: null }));
+  }
+  return { ok: true, scope: scope.kind, packages };
 }
 
 // PR B fix round 1 — the Rental property ledger's read boundary.

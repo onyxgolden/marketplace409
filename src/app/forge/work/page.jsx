@@ -11,7 +11,7 @@ import {
   resolvePlannerProjectScope,
   SCOPE_KINDS,
 } from "@/application/work-management/projectScope";
-import { WP_STATUS, WP_MODES, inferEffectiveMode } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_MODES, inferEffectiveMode, matchesPackageStatus } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 import WorkPackageWorkspaceSwitcher from "@/components/work-management/WorkPackageWorkspaceSwitcher";
 import WorkPackagePageHeader from "./page-header";
@@ -42,6 +42,7 @@ function parseFilters(searchParams) {
   const rawProgressBy = typeof searchParams?.progressBy === "string" ? searchParams.progressBy : "";
   const rawCostCategory = typeof searchParams?.costCategory === "string" ? searchParams.costCategory : "";
   const rawAllocation = typeof searchParams?.allocation === "string" ? searchParams.allocation : "";
+  const rawPackageStatus = typeof searchParams?.packageStatus === "string" ? searchParams.packageStatus : "";
 
   const status = rawStatus && rawStatus !== "all" && STATUS_VALUES.includes(rawStatus)
     ? rawStatus
@@ -94,8 +95,15 @@ function parseFilters(searchParams) {
   // packages with no reconciled allocation.
   const costCategory = BUDGET_CATEGORY_VALUES.includes(rawCostCategory) ? rawCostCategory : null;
   const allocation = rawAllocation === "unallocated" ? "unallocated" : null;
+  // Slice A (control-estimate versioning): the active / canceled / all
+  // lens. Default "active" — canceled packages are excluded until the
+  // owner asks for them; an invalid value fails closed to "active",
+  // never widened into a filter.
+  const packageStatus = ["active", "canceled", "all"].includes(rawPackageStatus)
+    ? rawPackageStatus
+    : "active";
 
-  return { status, propertyId, mode, planner, unit, system, progressBy, costCategory, allocation };
+  return { status, propertyId, mode, planner, unit, system, progressBy, costCategory, allocation, packageStatus };
 }
 
 function filterValueMatches(rowValue, filter) {
@@ -108,8 +116,11 @@ function filterValueMatches(rowValue, filter) {
   return value !== "" && value === filter;
 }
 
-function filterPackages(packages, { status, propertyId, mode, planner, unit, system, costCategory, allocation }, costByPackage = null) {
+function filterPackages(packages, { status, propertyId, mode, planner, unit, system, costCategory, allocation, packageStatus }, costByPackage = null) {
   return packages.filter((pkg) => {
+    // Slice A: the active / canceled / all lens applies first, then the
+    // existing predicates — they compose as an intersection.
+    if (!matchesPackageStatus(pkg, packageStatus)) return false;
     if (status !== "all" && pkg.status !== status) return false;
     if (mode !== "all" && inferEffectiveMode(pkg) !== mode) return false;
     // Guard clauses, never early returns: every active filter narrows
@@ -198,9 +209,12 @@ export default async function WorkPackagesPage({ searchParams }) {
 
   // Same owner-scoped read as before — no new endpoint or query. Filters
   // are applied to the already-loaded array in memory (D5), so a filter
-  // can never widen the result beyond this owner's packages.
+  // can never widen the result beyond this owner's packages. Slice A
+  // asks the loader to attach each cancelled package's cancel transition
+  // (one bounded query, never N+1) so the grid can show when and by whom
+  // it was cancelled.
   const [{ ok, packages, unassignedCount }, propertyResult] = await Promise.all([
-    listWorkPackages(db, { ownerId, scope }),
+    listWorkPackages(db, { ownerId, scope, includeCancellation: true }),
     listPackagePropertyOptions(db, { ownerId }).catch(() => ({ ok: false, properties: [] })),
   ]);
 
@@ -210,7 +224,8 @@ export default async function WorkPackagesPage({ searchParams }) {
   // need the cost-split snapshot.
   const hasFilters = filters.status !== "all" || filters.propertyId !== "all" || filters.mode !== "all"
     || filters.planner !== "all" || filters.unit !== "all" || filters.system !== "all"
-    || filters.costCategory != null || filters.allocation != null;
+    || filters.costCategory != null || filters.allocation != null
+    || filters.packageStatus !== "active";
   const properties = propertyResult.ok ? propertyResult.properties : [];
 
   // D2 dashboard: one bulk planning-% read for the whole in-scope
@@ -249,7 +264,8 @@ export default async function WorkPackagesPage({ searchParams }) {
   // not hold.
   const costWidgetCanClaimActive = filters.status === "all"
     && filters.propertyId === "all" && filters.mode === "all"
-    && filters.planner === "all" && filters.unit === "all" && filters.system === "all";
+    && filters.planner === "all" && filters.unit === "all" && filters.system === "all"
+    && filters.packageStatus === "active";
   // The dashboard tab: the explicit progressBy param wins; otherwise
   // the active group filter's dimension; otherwise System.
   const activeGroup = filters.planner !== "all" ? { dimension: "planner", key: filters.planner }
@@ -321,7 +337,10 @@ export default async function WorkPackagesPage({ searchParams }) {
     && (filters.planner === "all" || filters.planner === PLANNER_UNASSIGNED)
     && (filters.unit === "all" || filters.unit === GROUP_NONE)
     && (filters.system === "all" || filters.system === GROUP_NONE)
-    && filters.costCategory == null && filters.allocation == null;
+    && filters.costCategory == null && filters.allocation == null
+    // Slice A: a blank row is a draft — it matches the active / all
+    // lens, never the canceled-only lens.
+    && filters.packageStatus !== "canceled";
   const blankRowCount = blankRowsMatchFilters ? BLANK_ROWS : 0;
 
   return (
@@ -342,6 +361,7 @@ export default async function WorkPackagesPage({ searchParams }) {
           progressBy: filters.progressBy || "",
           costCategory: filters.costCategory || "",
           allocation: filters.allocation || "",
+          packageStatus: filters.packageStatus !== "active" ? filters.packageStatus : "",
           forgeProject: forgeProjectParam,
         }}
       />
@@ -394,7 +414,7 @@ export default async function WorkPackagesPage({ searchParams }) {
 
       {ok && packages.length > 0 && scope.kind !== SCOPE_KINDS.NONE && (
         <WorkPackageFilterForm
-          key={`filters-${filters.status}-${filters.propertyId}-${filters.mode}-${filters.planner}-${filters.unit}-${filters.system}-${filters.costCategory}-${filters.allocation}`}
+          key={`filters-${filters.status}-${filters.propertyId}-${filters.mode}-${filters.planner}-${filters.unit}-${filters.system}-${filters.costCategory}-${filters.allocation}-${filters.packageStatus}`}
           filters={filters}
           statusOptions={STATUS_VALUES}
           properties={properties}
@@ -413,6 +433,21 @@ export default async function WorkPackagesPage({ searchParams }) {
         />
       )}
 
+      {/* Slice A: the count line states what the grid holds — the
+         filtered count against the loaded total — and whether canceled
+         packages are in or out, so the totals surface never silently
+         disagrees with the rows. */}
+      {ok && packages.length > 0 && scope.kind !== SCOPE_KINDS.NONE && (
+        <p className="mt-4 text-sm text-slate-500">
+          Showing {filtered.length} of {packages.length} {packages.length === 1 ? "package" : "packages"}
+          {filters.packageStatus === "active"
+            ? " · canceled packages excluded"
+            : filters.packageStatus === "canceled"
+              ? " · canceled packages only"
+              : " · including canceled packages"}
+        </p>
+      )}
+
       {scope.kind === SCOPE_KINDS.NONE ? null : !ok ? (
         <p className="mt-8 rounded-lg bg-red-50 p-4 text-sm text-red-700">
           Unable to load work packages.
@@ -429,6 +464,7 @@ export default async function WorkPackagesPage({ searchParams }) {
             workspaceQuery={pageQueryString}
             activeMode={filters.mode !== "all" ? filters.mode : "industrial"}
             blankRowCount={blankRowCount}
+            ownerId={ownerId}
           />
         </>
       ) : filtered.length === 0 && hasFilters && blankRowCount === 0 ? (
@@ -448,6 +484,7 @@ export default async function WorkPackagesPage({ searchParams }) {
           workspaceQuery={pageQueryString}
           activeMode={filters.mode !== "all" ? filters.mode : "industrial"}
           blankRowCount={blankRowCount}
+          ownerId={ownerId}
         />
       )}
     </main>

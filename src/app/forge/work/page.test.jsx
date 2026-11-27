@@ -119,7 +119,7 @@ describe("/forge/work list filters (D5)", () => {
     // Same owner-scoped read as before filtering existed: ownerId plus
     // the explicit Unassigned scope, no status/property filter pushed
     // into the query.
-    expect(mocks.listWorkPackages).toHaveBeenCalledWith({ fakeDb: true }, { ownerId: "owner_1", scope: { kind: "unassigned" } });
+    expect(mocks.listWorkPackages).toHaveBeenCalledWith({ fakeDb: true }, { ownerId: "owner_1", scope: { kind: "unassigned" }, includeCancellation: true });
   });
 
   it("shows the project chooser when no scope is selected (fix round 1)", async () => {
@@ -129,7 +129,7 @@ describe("/forge/work list filters (D5)", () => {
     expect(html).not.toContain("Kent kitchen");
     // The read still runs, but under NO_SCOPE — the service answers
     // with the chooser state, never an all-projects aggregate.
-    expect(mocks.listWorkPackages).toHaveBeenCalledWith({ fakeDb: true }, { ownerId: "owner_1", scope: { kind: "none" } });
+    expect(mocks.listWorkPackages).toHaveBeenCalledWith({ fakeDb: true }, { ownerId: "owner_1", scope: { kind: "none" }, includeCancellation: true });
   });
 
   it("treats status=all and propertyId=all as no filter", async () => {
@@ -341,7 +341,7 @@ describe("/forge/work workspace switcher (UI-density redesign)", () => {
     // The switch passes the requested workspace through to auth.
     expect(mocks.createAuthenticatedForgeApplication).toHaveBeenCalledWith({ requestedOwnerId: "owner_2" });
     // And the resolved workspace scopes the read.
-    expect(mocks.listWorkPackages).toHaveBeenCalledWith({ fakeDb: true }, { ownerId: "owner_2", scope: { kind: "unassigned" } });
+    expect(mocks.listWorkPackages).toHaveBeenCalledWith({ fakeDb: true }, { ownerId: "owner_2", scope: { kind: "unassigned" }, includeCancellation: true });
   });
 
   it("carries the workspace selection through row links, the new-package link, and the filter form", async () => {
@@ -759,3 +759,99 @@ describe("/forge/work cost split (D2b)", () => {
   });
 });
 
+
+describe("/forge/work cancellation visibility (Slice A)", () => {
+  const CANCELLED_PKG = {
+    id: "wp_cancelled", code: "WP-0004", title: "Scrapped ductwork", package_type: "industrial",
+    priority: "normal", status: "cancelled", planned_start: null, planned_finish: null,
+    percent_complete: 0, unit: "A", area: "Process", system: "Piping",
+    property_id: "1900-w-decker", planned_cost_cents: null,
+    responsible_party: { domain: "contractor", type: "contractor", display_name: "Crew Alpha" },
+    updated_at: "2026-11-05T00:00:00Z",
+    cancellation: { fromStatus: "in_progress", actor: "owner_1", reason: "Duplicate scope — superseded by WP-0001", at: "2026-11-05T10:00:00Z" },
+  };
+  const WITH_CANCELLED = [...PACKAGES, CANCELLED_PKG];
+
+  function renderWithCancelled(params = {}) {
+    mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: WITH_CANCELLED });
+    return renderPage(params);
+  }
+
+  it("excludes canceled packages by default and says so in the count line", async () => {
+    const html = await renderWithCancelled();
+    expect(html).not.toContain("Scrapped ductwork");
+    expect(html).toContain("Decker turnover");
+    expect(html).toContain("Showing 3 of 4 packages");
+    expect(html).toContain("canceled packages excluded");
+  });
+
+  it("shows only the canceled package under packageStatus=canceled, with its cancellation record", async () => {
+    const html = await renderWithCancelled({ packageStatus: "canceled" });
+    expect(html).toContain("Scrapped ductwork");
+    expect(html).not.toContain("Decker turnover");
+    expect(html).not.toContain("Kent kitchen");
+    expect(html).toContain("Showing 1 of 4 packages");
+    expect(html).toContain("canceled packages only");
+    // Badge plus the cancellation note: date, actor label, reason preview.
+    expect(html).toContain("cancelled");
+    expect(html).toContain("Canceled 2026-11-05 — Owner");
+    expect(html).toContain("Duplicate scope — superseded by WP-0001");
+    // The canceled package stays reachable via its stable detail link.
+    expect(html).toContain('href="/forge/work/wp_cancelled?forgeProject=unassigned"');
+  });
+
+  it("shows everything under packageStatus=all and says canceled are included", async () => {
+    const html = await renderWithCancelled({ packageStatus: "all" });
+    expect(html).toContain("Scrapped ductwork");
+    expect(html).toContain("Decker turnover");
+    expect(html).toContain("Showing 4 of 4 packages");
+    expect(html).toContain("including canceled packages");
+  });
+
+  it("falls back to active for an invalid packageStatus — no error, no widening", async () => {
+    const html = await renderWithCancelled({ packageStatus: "bogus" });
+    expect(html).not.toContain("Scrapped ductwork");
+    expect(html).toContain("Showing 3 of 4 packages");
+    expect(html).toContain("canceled packages excluded");
+  });
+
+  it("composes packageStatus with the status and property filters", async () => {
+    const byStatus = await renderWithCancelled({ packageStatus: "canceled", status: "cancelled" });
+    expect(byStatus).toContain("Scrapped ductwork");
+    const wrongStatus = await renderWithCancelled({ packageStatus: "canceled", status: "draft" });
+    expect(wrongStatus).toContain("No work packages match these filters");
+    expect(wrongStatus).not.toContain("Scrapped ductwork");
+    const wrongProperty = await renderWithCancelled({ packageStatus: "canceled", propertyId: "4800-kent-ave" });
+    expect(wrongProperty).toContain("No work packages match these filters");
+    expect(wrongProperty).not.toContain("Scrapped ductwork");
+  });
+
+  it("renders the Show select in the filter form, reflecting the active lens", async () => {
+    const html = await renderWithCancelled();
+    expect(html).toContain('for="filter-package-status"');
+    expect(html).toContain('id="filter-package-status" name="packageStatus"');
+    expect(html).toContain("Active packages");
+    expect(html).toContain("Canceled packages");
+    expect(html).toContain("All packages");
+    expect(html).toContain('value="active" selected=""');
+    const canceled = await renderWithCancelled({ packageStatus: "canceled" });
+    expect(canceled).toContain('value="canceled" selected=""');
+  });
+
+  it("renders a cancelled package with no cancel row as the badge only — never fabricated metadata", async () => {
+    mocks.listWorkPackages.mockResolvedValue({ ok: true, packages: [...PACKAGES, { ...CANCELLED_PKG, cancellation: null }] });
+    const html = await renderPage({ packageStatus: "canceled" });
+    expect(html).toContain("Scrapped ductwork");
+    expect(html).toContain("cancelled");
+    expect(html).not.toContain("Canceled 2026-11-05");
+    expect(html).not.toContain("Duplicate scope");
+  });
+
+  it("hides blank add-rows under the canceled-only lens — a blank row is a draft", async () => {
+    const canceled = await renderWithCancelled({ packageStatus: "canceled" });
+    expect(canceled).not.toContain("New package title");
+    expect(canceled).toContain("Scrapped ductwork");
+    const plain = await renderWithCancelled();
+    expect(plain).toContain("New package title");
+  });
+});
