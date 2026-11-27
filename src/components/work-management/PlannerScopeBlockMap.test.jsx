@@ -605,4 +605,76 @@ describe("PlannerScopeBlockMap", () => {
     expect(active2.textContent).toBe("Equipment type");
     expect(container.querySelector('[data-testid="scope-block-treemap"]')).not.toBeNull();
   });
+
+  // D3 fix round 3: the "Power distribution" group header must show
+  // the full label at phone width — the verdict measured ~17px of
+  // clipping at 392px from the old truncate. The header wraps the
+  // label (break-words, flex-wrap) instead of truncating it, keeps
+  // the exact drill href, and keeps the full accessible name.
+  it("the Power distribution group header shows the full label and count with the exact drill link", async () => {
+    const packages = [
+      PKG({ id: "wp_1", system: "Exchanger" }),
+      PKG({ id: "wp_2", system: "Pumping" }),
+      PKG({ id: "wp_3", system: "Piping" }),
+      PKG({ id: "wp_4", system: "Piping" }),
+      PKG({ id: "wp_5", system: "Power distribution" }),
+      PKG({ id: "wp_6", system: "Instrumentation" }),
+    ];
+    const { container } = render({ packages });
+    await flush();
+    const headerLinks = [...container.querySelectorAll('[data-testid="scope-block-treemap"] > div > a')];
+    expect(headerLinks.length).toBe(5);
+    const powerLink = headerLinks.find((a) => a.getAttribute("aria-label")?.startsWith("Power distribution,"));
+    expect(powerLink).toBeTruthy();
+    expect(powerLink.getAttribute("href")).toBe("/forge/work?system=Power%20distribution");
+    expect(powerLink.getAttribute("aria-label")).toContain("Power distribution, 1 package");
+    // The visible label is the full text, never an ellipsis cut, and
+    // the markup lets it wrap (break-words) instead of truncating.
+    const labelSpan = powerLink.querySelector("span:not(.sr-only)");
+    expect(labelSpan.textContent).toBe("Power distribution");
+    expect(labelSpan.className).toContain("break-words");
+    expect(labelSpan.className).not.toContain("truncate");
+    expect(powerLink.className).toContain("flex-wrap");
+    expect(powerLink.className).not.toContain("truncate");
+    // Counts still reconcile: 2 + 1 + 1 + 1 + 1 = 6 packages.
+    const counts = headerLinks.map((a) => a.querySelector("span:not(.sr-only) + span")?.textContent);
+    expect(counts.sort()).toEqual(["1", "1", "1", "1", "2"]);
+  });
+
+  it("group and status drills are unchanged for the full fixture set", async () => {
+    const packages = [
+      PKG({ id: "wp_1", system: "Exchanger", status: "draft" }),
+      PKG({ id: "wp_2", system: "Pumping", status: "in_progress" }),
+      PKG({ id: "wp_3", system: "Piping", status: "draft" }),
+      PKG({ id: "wp_4", system: "Piping", status: "draft" }),
+      PKG({ id: "wp_5", system: "Power distribution", status: "complete" }),
+      PKG({ id: "wp_6", system: "Instrumentation", status: "draft" }),
+    ];
+    const { container } = render({ packages });
+    await flush();
+    const links = [...container.querySelectorAll('[data-testid="scope-block-treemap"] a')];
+    const pipingDraft = links.find((a) => a.getAttribute("href") === "/forge/work?system=Piping&status=draft");
+    expect(pipingDraft).toBeTruthy();
+    expect(pipingDraft.getAttribute("aria-label")).toContain("Piping, draft, 2 packages");
+    const powerComplete = links.find((a) => a.getAttribute("href") === "/forge/work?system=Power+distribution&status=complete");
+    expect(powerComplete).toBeTruthy();
+    expect(powerComplete.getAttribute("aria-label")).toContain("Power distribution, complete, 1 package");
+  });
+
+  // D3 fix round 3 — negative control at the component level: a single
+  // unbreakable 34-character token cannot wrap at a word boundary, so
+  // the label must still break the word (break-words) and keep the
+  // full text in the DOM — never silently truncate it to an ellipsis.
+  it("a single unbreakable long label still renders in full with break-words, never truncated", async () => {
+    const longToken = "Supercalifragilisticexpialidocious";
+    const { container } = render({ packages: [PKG({ system: longToken })] });
+    await flush();
+    const headerLink = container.querySelector('[data-testid="scope-block-treemap"] > div > a');
+    expect(headerLink).toBeTruthy();
+    const labelSpan = headerLink.querySelector("span:not(.sr-only)");
+    expect(labelSpan.textContent).toBe(longToken);
+    expect(labelSpan.className).toContain("break-words");
+    expect(labelSpan.className).not.toContain("truncate");
+    expect(headerLink.getAttribute("aria-label")).toContain(`${longToken}, 1 package`);
+  });
 });

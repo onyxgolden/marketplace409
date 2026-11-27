@@ -6,7 +6,7 @@
 // Spawns the Next dev server for THIS checkout (unless --keep-server, which
 // assumes one is already running on --port), renders the REAL
 // PlannerDashboardShell at /phone-fixture?case=work-dashboard via real
-// Chromium (Playwright), at 390px and 400px, and measures:
+// Chromium (Playwright), at 390px, 392px and 400px, and measures:
 //   - no page-level horizontal overflow (documentElement.scrollWidth <=
 //     innerWidth + 1)
 //   - every button/link in the fixture fully inside the viewport
@@ -75,7 +75,7 @@ function argValue(flag, fallback) {
 const port = Number(argValue("--port", "3102"));
 const keepServer = args.includes("--keep-server");
 const BASE = `http://localhost:${port}/phone-fixture`;
-const WIDTHS = [390, 400];
+const WIDTHS = [390, 392, 400];
 const TEST_PROJECT_ID = "forge_project_synth_d1_dashboard";
 
 // Progress heartbeat (FORGE-P-20261119-MUSE-LONG-RUN-PROGRESS-HEARTBEAT):
@@ -170,13 +170,30 @@ async function measureTargetSizes(page, fixtureTestId = "work-budget-editor-fixt
 // just above the lg breakpoint), and every D3 button inside the
 // viewport. Status tiles keep geometry-driven sizes by design; the
 // Table pivot is their phone-safe drill path (asserted below).
+// D3 fix round 3 — treemap group-label readability at phone width
+// (verdict: the "Power distribution" tile label clipped ~17px at 392px).
+// Every group header's visible label is measured for real: a label is
+// truncated when its text needs more width than the header gives it
+// (scrollWidth > clientWidth). The fix lets the label wrap, so a
+// wrapped two-line label reports two client rects and is NOT
+// truncated; an ellipsis-clipped label reports truncated and fails.
 async function measureD3(page) {
   return page.evaluate(() => {
     const doc = document.documentElement;
     const map = document.querySelector('[data-testid="scope-block-map"]');
     const headerLinks = [...document.querySelectorAll('[data-testid="scope-block-treemap"] > div > a')].map((a) => {
       const r = a.getBoundingClientRect();
-      return { label: a.getAttribute("aria-label")?.slice(0, 40), height: Math.round(r.height * 10) / 10, width: Math.round(r.width * 10) / 10 };
+      const labelSpan = [...a.querySelectorAll("span")].find((s) => !s.classList.contains("sr-only"));
+      return {
+        label: a.getAttribute("aria-label")?.slice(0, 40),
+        height: Math.round(r.height * 10) / 10,
+        width: Math.round(r.width * 10) / 10,
+        labelText: labelSpan?.textContent ?? null,
+        labelTruncated: labelSpan ? labelSpan.scrollWidth > labelSpan.clientWidth + 1 : null,
+        labelClientWidth: labelSpan?.clientWidth ?? null,
+        labelScrollWidth: labelSpan?.scrollWidth ?? null,
+        labelLines: labelSpan ? labelSpan.getClientRects().length : null,
+      };
     });
     const legendLabels = [...document.querySelectorAll('[data-testid="planner-status-legend"] a')].map((a) => {
       const label = a.querySelector("span > span:nth-child(2)");
@@ -302,6 +319,16 @@ async function checkWidth(browser, width) {
     if (d3.pageOverflow) failures.push(`${width}px D3: page overflow (scrollWidth=${d3.scrollWidth})`);
     const shortHeaders = d3.headerLinks.filter((h) => h.height < 43.5);
     if (shortHeaders.length) failures.push(`${width}px D3: ${shortHeaders.length} treemap group header(s) under ~44px: ${JSON.stringify(shortHeaders)}`);
+    // D3 fix round 3: no treemap group label may truncate at phone
+    // width — "Power distribution" clipped ~17px at 392px before the
+    // wrap fix. A wrapped label is fine (2 lines, full text visible);
+    // only an ellipsis-clipped label fails. The full label text must
+    // also be present in the DOM (never silently dropped).
+    const clippedLabels = d3.headerLinks.filter((h) => h.labelTruncated);
+    if (clippedLabels.length) failures.push(`${width}px D3: ${clippedLabels.length} treemap group label(s) clipped: ${JSON.stringify(clippedLabels)}`);
+    const powerLabel = d3.headerLinks.find((h) => h.label?.startsWith("Power distribution"));
+    if (!powerLabel) failures.push(`${width}px D3: "Power distribution" group header missing (fixture must carry it)`);
+    else if (powerLabel.labelText !== "Power distribution") failures.push(`${width}px D3: "Power distribution" header shows "${powerLabel.labelText}" instead of the full label`);
     const truncatedLegend = d3.legendLabels.filter((l) => l.truncated);
     if (truncatedLegend.length) failures.push(`${width}px D3: donut legend label(s) truncated: ${JSON.stringify(truncatedLegend)}`);
     const badMapButtons = d3.mapButtons.filter((b) => b.height < 43.5 || b.outside);
@@ -661,11 +688,11 @@ async function main() {
     }
     console.log(JSON.stringify({ results, realPage }, null, 2));
     if (failures.length) {
-      console.error(`FAIL: ${failures.length} phone-width issue(s) at 390/400px`);
+      console.error(`FAIL: ${failures.length} phone-width issue(s) at 390/392/400px`);
       process.exitCode = 1;
       progress.done("FAIL", { exitCode: 1 });
     } else {
-      console.log("PASS: no overflow, no out-of-viewport controls at 390px and 400px (donut + scope bars + progress bars + cost complete/incomplete + cost bars states, budget editor add-line + save flow), every editor control measures ~44px or more on both axes (initial/editing/saved/delete states), draft drill-down requests the status filter, Piping progress drill-down requests system=Piping + progressBy=system with no narrowing filters, labor cost drill-down requests costCategory=labor with the project scope; D3: treemap group headers measure ~44px, donut legend labels render untruncated, Table pivot drills request the exact group/status filters, treemap drills do the same, and grouping/pivot clicks under a scopeBy/scopeView override update the canonical URL state (reload proves the URL drives the regroup/pivot); real /forge/work observed separately (see JSON)");
+      console.log("PASS: no overflow, no out-of-viewport controls at 390px, 392px and 400px (donut + scope bars + progress bars + cost complete/incomplete + cost bars states, budget editor add-line + save flow), every editor control measures ~44px or more on both axes (initial/editing/saved/delete states), draft drill-down requests the status filter, Piping progress drill-down requests system=Piping + progressBy=system with no narrowing filters, labor cost drill-down requests costCategory=labor with the project scope; D3: treemap group headers measure ~44px, treemap group labels render in full with no clipping (Power distribution wraps, never truncates), donut legend labels render untruncated, Table pivot drills request the exact group/status filters, treemap drills do the same, and grouping/pivot clicks under a scopeBy/scopeView override update the canonical URL state (reload proves the URL drives the regroup/pivot); real /forge/work observed separately (see JSON)");
       progress.done("PASS", { exitCode: 0 });
     }
   } finally {

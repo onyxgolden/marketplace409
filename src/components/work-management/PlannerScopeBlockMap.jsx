@@ -148,16 +148,25 @@ function TreemapView({ groups, dimension, baseHref, activeGroup, activeStatus, m
                drill target. Status tiles keep geometry-driven sizes
                (they cannot be forced to 44px without breaking the
                treemap); the Table pivot is the exact phone-safe drill
-               path for them. */}
+               path for them.
+               D3 fix round 3 (P2): the group label wraps instead of
+               truncating — the verdict measured "Power distribution"
+               clipping ~17px at 392px. flex-wrap + break-words lets
+               the two-word label take two lines inside the same
+               44px header (2 x 11px/leading-tight + py-1 < 44px), so
+               the status area keeps its geometry; the full name stays
+               visible, in the accessible name, and on hover (title).
+               Never silently truncate a category identity. */}
             <Link
               href={groupActive ? baseHref : groupHref(baseHref, dimension.param, group.groupKey)}
               aria-pressed={groupActive}
               aria-label={`${group.groupLabel}, ${group.packageCount} ${group.packageCount === 1 ? "package" : "packages"} — ${groupActive ? "currently filtered, activate to show all" : "activate to filter the list to this group"}`}
-              className={`flex min-h-11 shrink-0 items-center gap-1 truncate bg-slate-200 px-1.5 text-[11px] font-semibold text-slate-800 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 ${groupActive ? "ring-2 ring-inset ring-slate-500" : ""}`}
+              title={group.groupLabel}
+              className={`flex min-h-11 shrink-0 flex-wrap items-center gap-1 bg-slate-200 px-1.5 py-1 text-[11px] font-semibold leading-tight text-slate-800 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 ${groupActive ? "ring-2 ring-inset ring-slate-500" : ""}`}
             >
               {showGroupLabel ? (
                 <>
-                  <span className="truncate">{group.groupLabel}</span>
+                  <span className="min-w-0 break-words">{group.groupLabel}</span>
                   <span className="shrink-0 tabular-nums">{group.packageCount}</span>
                 </>
               ) : (
