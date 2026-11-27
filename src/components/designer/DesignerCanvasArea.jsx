@@ -60,6 +60,11 @@ export default function DesignerCanvasArea({
   onPlanCenterChange = null,
   onFloorCenterChange = null,
   onFileImport = null,
+  // Loading-feedback fix (Jason's live report, 2026-11-21): called with
+  // true/false as the 2D -> 3D/Split loading overlay opens/clears, so
+  // the view-switch buttons upstream can show a busy state and ignore
+  // repeat clicks while it's in flight.
+  onSwitchingChange = null,
 }) {
   const [ratio, setRatio] = useState(readSplitRatio);
   const containerRef = useRef(null);
@@ -136,6 +141,76 @@ export default function DesignerCanvasArea({
   const show2d = view !== "3d";
   const show3d = view !== "2d";
   const isSplit = view === "split";
+
+  // Loading-feedback fix (Jason's live report, 2026-11-21): un-hiding the
+  // 3D pane (2D -> Split/3D) could take ~30s with zero acknowledgement —
+  // a defect under the functionality-buttons checklist (every button must
+  // visibly do something). Local UI state, not reducer state, same as the
+  // split ratio above: ephemeral feedback, never persisted, never part of
+  // the design document.
+  //
+  // Derived from the show3d prop DURING render (React's own documented
+  // pattern for "adjust state when a prop changes," already used
+  // elsewhere in this codebase, e.g. HierarchyProjectSelector's value
+  // sync) rather than in a useEffect — the overlay then paints in the
+  // SAME commit as the view switch itself, not one render-and-effect
+  // round trip later. (Date.now() is impure, so the start time itself is
+  // captured in the effect below, not here.)
+  const [prevShow3d, setPrevShow3d] = useState(show3d);
+  const [switchingTo3D, setSwitchingTo3D] = useState(false);
+  if (show3d !== prevShow3d) {
+    setPrevShow3d(show3d);
+    setSwitchingTo3D(show3d);
+  }
+
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  useEffect(() => {
+    if (!switchingTo3D) return undefined;
+    // setState runs inside a microtask callback, not synchronously in the
+    // effect body (react-hooks/set-state-in-effect — same idiom used
+    // elsewhere in this codebase for an effect that hydrates state).
+    let cancelled = false;
+    let timer = null;
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      const startedAt = Date.now();
+      setElapsedSeconds(0);
+      timer = setInterval(() => {
+        if (!cancelled) setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+      }, 1000);
+    });
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [switchingTo3D]);
+
+  useEffect(() => {
+    onSwitchingChange?.(switchingTo3D);
+  }, [switchingTo3D, onSwitchingChange]);
+
+  // Fix round 2 (PR #850, verdict finding A): a scene build can fail
+  // (buildThreeScene throws for a transiently invalid design), and the
+  // loading overlay must never claim success for it. The viewport reports
+  // the failure here as { message, retry } — and null when a later build
+  // commits, clearing a previously reported failure — so this state is
+  // always current: it survives a view switch (the failed design is still
+  // unbuilt on the next switch) and clears only on a real success. While
+  // set, the overlay shows the error + Retry instead of spinning forever.
+  const [sceneBuildError, setSceneBuildError] = useState(null);
+  const handleSceneBuildError = useCallback((error) => {
+    setSceneBuildError(error);
+  }, []);
+  const handleBuildRetry = useCallback(() => {
+    const retry = sceneBuildError?.retry;
+    setSceneBuildError(null); // back to the spinner while the retry runs
+    retry?.();
+  }, [sceneBuildError]);
+
+  const handleFirstFrameRendered = useCallback(() => {
+    setSceneBuildError(null);
+    setSwitchingTo3D(false);
+  }, []);
 
   const applyRatioFromClientX = useCallback((clientX) => {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -296,7 +371,42 @@ export default function DesignerCanvasArea({
           multiSelection={multiSelection}
           dispatch={dispatch}
           onFloorCenterChange={onFloorCenterChange}
+          onFirstFrameRendered={handleFirstFrameRendered}
+          onSceneBuildError={handleSceneBuildError}
         />
+        {switchingTo3D && (
+          <div
+            data-testid="viewport-3d-loading-overlay"
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-[#0b1220]/90 text-gray-200"
+          >
+            {sceneBuildError ? (
+              <>
+                <p className="text-sm font-semibold">3D view couldn&apos;t build this design</p>
+                <p className="max-w-md px-4 text-center text-xs text-gray-400">{sceneBuildError.message}</p>
+                <button
+                  type="button"
+                  data-testid="viewport-3d-build-error-retry"
+                  onClick={handleBuildRetry}
+                  className="pointer-events-auto rounded border border-emerald-500 px-3 py-1.5 text-sm text-emerald-300 hover:bg-emerald-500/10"
+                >
+                  Retry 3D build
+                </button>
+              </>
+            ) : (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="h-8 w-8 animate-spin rounded-full border-2 border-gray-500 border-t-emerald-500"
+                />
+                <p className="text-sm">
+                  Loading 3D view… {elapsedSeconds}s
+                </p>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
