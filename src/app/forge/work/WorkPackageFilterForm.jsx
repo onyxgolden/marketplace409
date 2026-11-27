@@ -137,6 +137,21 @@ export default function WorkPackageFilterForm({
           ))}
         </select>
       </div>
+      {/* Slice A (control-estimate versioning): the active / canceled /
+         all lens. "Active" is the default — canceled packages stay out
+         of the way until the owner asks for them. Uncontrolled like
+         Status / Property / Mode: an independent filter, not part of
+         the one-group-filter rule. */}
+      <div className="flex items-center gap-2">
+        <label className="text-xs font-medium text-slate-600 dark:text-slate-300" htmlFor="filter-package-status">Show</label>
+        <select id="filter-package-status" name="packageStatus" defaultValue={filters.packageStatus}
+          key={`package-status-${filters.packageStatus}`}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-white">
+          <option value="active">Active packages</option>
+          <option value="canceled">Canceled packages</option>
+          <option value="all">All packages</option>
+        </select>
+      </div>
       {/* D2 progress drill-down filters — the same dimensions the
          dashboard widget groups by, so a row's drill landing and a
          hand-picked filter agree. Sentinel options match packages

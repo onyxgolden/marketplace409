@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { WP_STATUS, WP_PACKAGE_TYPES, WP_PACKAGE_TYPES_BY_MODE, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor, inferEffectiveMode, formatPackageCode } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_PACKAGE_TYPES, WP_PACKAGE_TYPES_BY_MODE, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor, inferEffectiveMode, formatPackageCode, latestCancellationTransition, cancellationActorLabel } from "@/domains/work-management/workPackage.js";
 import WorkPackageLinks from "./WorkPackageLinks.jsx";
 import WorkPackagePermitAnnotations from "./WorkPackagePermitAnnotations.jsx";
 import WorkPackageDocuments from "./WorkPackageDocuments.jsx";
@@ -307,6 +307,14 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
 
   const allowed = allowedTransitionsFrom(pkg);
   const target = transitionTarget ? findTransition(pkg, transitionTarget) : null;
+  // Slice A: the cancellation record for a cancelled package — the
+  // newest cancel transition (actor, reason, time, from-status).
+  // Keyed off the CURRENT status, not history: a package reopened from
+  // cancelled shows no block. A cancelled package with no cancel row
+  // (legacy data) still renders the block with the legacy fallbacks.
+  const cancellation = pkg.status === WP_STATUS.CANCELLED
+    ? latestCancellationTransition(transitions || [])
+    : null;
 
   async function call(path, method, body) {
     setBusy(true);
@@ -912,6 +920,22 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
             </p>
             {pkg.blocked_reason && (
               <p className="mt-2 text-sm text-red-700">Blocked: {pkg.blocked_reason}</p>
+            )}
+            {/* Slice A: read-only cancellation record, directly under the
+               current status — when and by whom it was cancelled, from
+               where, and the full reason. No edit controls, no delete
+               affordance; the Danger zone below is untouched. */}
+            {pkg.status === WP_STATUS.CANCELLED && (
+              <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                <p className="font-medium text-slate-900">Cancellation</p>
+                <p className="mt-1">
+                  Canceled{cancellation?.at ? ` on ${new Date(cancellation.at).toLocaleString()}` : ""} · by {cancellationActorLabel(cancellation?.actor ?? null, pkg.owner_id)}
+                </p>
+                {cancellation?.from_status && (
+                  <p className="mt-1">From {cancellation.from_status.replace(/_/g, " ")} → Cancelled</p>
+                )}
+                <p className="mt-1">Reason: {cancellation?.reason ? cancellation.reason : "No reason recorded"}</p>
+              </div>
             )}
             {allowed.length > 0 ? (
               <div className="mt-4 space-y-3">

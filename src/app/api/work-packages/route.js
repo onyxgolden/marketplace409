@@ -14,6 +14,12 @@ export async function GET(request) {
     // Rental property ledger reads through its own explicit boundary
     // (GET /api/rental/work-packages), not through this route.
     if (auth.scopeError) return fail(auth.scopeError);
+    // Slice A: the active / canceled / all lens, allowlisted — an
+    // invalid value is ignored (no constraint), never widened. The
+    // cancellation metadata rides along only when the view can show
+    // canceled packages.
+    const rawPackageStatus = url.searchParams.get("packageStatus");
+    const packageStatus = ["active", "canceled", "all"].includes(rawPackageStatus) ? rawPackageStatus : undefined;
     const result = await listWorkPackages(auth.db, {
       ownerId: auth.ownerId,
       status: url.searchParams.get("status") || undefined,
@@ -21,6 +27,8 @@ export async function GET(request) {
       propertyId: url.searchParams.get("propertyId") || undefined,
       mode: url.searchParams.get("mode") || undefined,
       scope: auth.scope,
+      packageStatus,
+      includeCancellation: packageStatus === "canceled" || packageStatus === "all",
     });
     return ok(result);
   } catch (error) {

@@ -470,3 +470,46 @@ export function deriveCurrentBaseline(baselines) {
   heads.sort((a, b) => b.version - a.version);
   return heads[0] || null;
 }
+
+// Slice A (control-estimate versioning): cancellation visibility.
+//
+// The cancel transition is already an append-only audit row
+// (forge_work_package_transitions): actor, reason, at, from/to. The
+// stored actor is the auth user id (UUID), never a display name, and no
+// display-name source exists anywhere in the codebase — so the label
+// rule below never fabricates a name: the workspace owner reads
+// "Owner", any other actor reads "User <first 8 chars of the id>" (the
+// full id belongs in a title attribute at the call site), and a missing
+// actor reads "Actor unavailable (legacy)".
+
+// Active / canceled / all list membership. Unknown or missing values
+// fail closed toward "active" (fewer rows), never widen.
+export function matchesPackageStatus(pkg, packageStatus) {
+  if (packageStatus === "canceled") return pkg.status === WP_STATUS.CANCELLED;
+  if (packageStatus === "all") return true;
+  return pkg.status !== WP_STATUS.CANCELLED;
+}
+
+export function cancellationActorLabel(actor, ownerId) {
+  const id = typeof actor === "string" ? actor.trim() : "";
+  if (id === "") return "Actor unavailable (legacy)";
+  if (ownerId != null && id === String(ownerId)) return "Owner";
+  return `User ${id.slice(0, 8)}`;
+}
+
+// Newest row whose transition ends in cancelled, by `at` desc — or null.
+// Non-cancel rows are ignored; a row with an unparseable `at` sorts as
+// the oldest, never as the newest.
+export function latestCancellationTransition(transitions) {
+  const rows = (transitions || []).filter((t) => t && t.to_status === WP_STATUS.CANCELLED);
+  if (rows.length === 0) return null;
+  const timeOf = (row) => {
+    const ms = Date.parse(row.at);
+    return Number.isFinite(ms) ? ms : -Infinity;
+  };
+  let latest = rows[0];
+  for (const row of rows.slice(1)) {
+    if (timeOf(row) > timeOf(latest)) latest = row;
+  }
+  return latest;
+}
