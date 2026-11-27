@@ -23,6 +23,7 @@ import { withPageQuery } from "./workspaceQuery.js";
 import { PackagePageProvider } from "./packagePageContext.jsx";
 import WorkPackageProjectLink from "./WorkPackageProjectLink.jsx";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard.js";
+import { formatServerInstant } from "@/lib/serverDates";
 import { PLANNING_PROCESS_COMPLEXITIES, complexityLabel } from "@/domains/work-management/planningProcess.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
@@ -929,7 +930,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
               <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
                 <p className="font-medium text-slate-900">Cancellation</p>
                 <p className="mt-1">
-                  Canceled{cancellation?.at ? ` on ${new Date(cancellation.at).toLocaleString()}` : ""} · by {cancellationActorLabel(cancellation?.actor ?? null, pkg.owner_id)}
+                  Canceled{cancellation?.at ? ` on ${formatServerInstant(cancellation.at)}` : ""} · by {cancellationActorLabel(cancellation?.actor ?? null, pkg.owner_id)}
                 </p>
                 {cancellation?.from_status && (
                   <p className="mt-1">From {cancellation.from_status.replace(/_/g, " ")} → Cancelled</p>

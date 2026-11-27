@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const routerMocks = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }));
@@ -1954,5 +1955,69 @@ describe("Cancellation block (Slice A)", () => {
       { transitions: [CANCEL_TRANSITION] },
     );
     expect(reopened.container.textContent).not.toContain("Cancellation");
+  });
+});
+
+describe("Cancellation block hydration (Slice A fix round, React #418)", () => {
+  // The cancellation instant sits across the UTC/Chicago midnight line:
+  // 2026-11-05T02:30:00Z is 11/5/2026 2:30 AM in UTC but 11/4/2026
+  // 8:30 PM in America/Chicago. A locale-dependent render therefore
+  // produces different server and client markup — React #418. With the
+  // default Overview tab and empty attestations/baselines, the
+  // Cancellation block is the only locale-dependent timestamp in the
+  // server tree, so this test isolates the Slice A occurrence.
+  const CROSS_MIDNIGHT_CANCEL = {
+    id: "t_cancel_x", from_status: "in_progress", to_status: "cancelled",
+    reason: "Duplicate scope — superseded by WP-0001", at: "2026-11-05T02:30:00Z", actor: "owner_1",
+  };
+  it("renders server markup under UTC and hydrates under America/Chicago without mismatch", async () => {
+    stubFetch();
+    const pkg = { ...BASE_PKG, owner_id: "owner_1", status: "cancelled" };
+    const element = (
+      <WorkPackageDetailClient
+        initial={{
+          package: pkg,
+          transitions: [CROSS_MIDNIGHT_CANCEL],
+          attestations: [],
+          baselines: [],
+          currentBaseline: null,
+          scopeChanges: [],
+          observations: [],
+        }}
+        initialLinks={[]}
+      />
+    );
+    const prevTz = process.env.TZ;
+    const onRecoverableError = vi.fn();
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    let root = null;
+    try {
+      process.env.TZ = "UTC";
+      const serverHtml = renderToString(element);
+      // The pinned server representation is America/Chicago, so the
+      // server markup already reads the Chicago date — not the UTC one.
+      expect(serverHtml).toContain("11/4/2026, 8:30:00 PM");
+
+      process.env.TZ = "America/Chicago";
+      container.innerHTML = serverHtml;
+      await act(async () => {
+        root = hydrateRoot(container, element, { onRecoverableError });
+        await Promise.resolve();
+      });
+      expect(onRecoverableError).not.toHaveBeenCalled();
+      const hydrationErrors = consoleSpy.mock.calls.filter((args) =>
+        String(args[0]).includes("hydrat"),
+      );
+      expect(hydrationErrors).toEqual([]);
+      expect(container.textContent).toContain("Canceled on 11/4/2026, 8:30:00 PM");
+    } finally {
+      if (root) await act(async () => { root.unmount(); });
+      container.remove();
+      consoleSpy.mockRestore();
+      if (prevTz === undefined) delete process.env.TZ;
+      else process.env.TZ = prevTz;
+    }
   });
 });
