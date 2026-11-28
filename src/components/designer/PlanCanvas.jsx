@@ -198,19 +198,30 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // when a pinch takes over (the surviving finger then starts fresh,
   // exactly like a non-tag drag after a pinch). pointerId or null.
   const tagPanArmedRef = useRef(null);
-  // FR1 (capture lifecycle, C2 live-check finding): the pointerId whose
-  // capture was lost mid-gesture, or null. Set SYNCHRONOUSLY by the
-  // lostpointercapture handler — the browser delivers that event lazily
-  // (with the next move, not at release time), and the React `drag`
-  // state still shows the old drag until the next render, so without
-  // this ref the first move after the loss pans one step on the stale
-  // drag (measured live: +8,+6 on a +40,+30 move). onPointerMove bails
-  // for a dead pointer before doing anything; a fresh pointerdown for
-  // the same id clears it (pointerIds are reused after release, so a
-  // stale flag must never outlive the gesture). Per-pointer on purpose:
-  // losing one pointer's capture must not nuke a pinch driven by the
-  // others.
-  const lostCaptureRef = useRef(null);
+  // FR1 (capture lifecycle, C2 live-check finding) + FR2 (residual touch
+  // capture lifecycle): the set of pointerIds whose capture was lost
+  // mid-gesture. Set SYNCHRONOUSLY by the lostpointercapture handler —
+  // the browser delivers that event lazily (with the next move, not at
+  // release time), and the React `drag` state still shows the old drag
+  // until the next render, so without this ref the first move after the
+  // loss pans one step on the stale drag (measured live: +8,+6 on a
+  // +40,+30 move). Every pointer handler bails for a dead pointer
+  // before doing anything; a fresh pointerdown for the same id clears
+  // it (pointerIds are reused after release, so a stale flag must never
+  // outlive the gesture). A SET on purpose (FR2): one scalar cannot
+  // invalidate several pointers — losing one pointer's capture must not
+  // nuke a pinch driven by the others, and a dead touch must never
+  // drive a pinch through the capture-phase move path.
+  const deadPointersRef = useRef(new Set());
+  // FR2: the pointerId that owns the current single-pointer drag (the
+  // most recent pointerdown whose gesture has not closed), or null.
+  // The drag state itself carries no pointerId, so without this the
+  // loss handler cannot tell a loss for the drag's own pointer from a
+  // late loss for an unrelated id that must never tear down a newer
+  // drag. Set on every pointerdown (svg-level and tag-level); cleared
+  // on up/cancel/leave, when a pinch takes over, and when the loss
+  // handler tears the drag down.
+  const dragPointerRef = useRef(null);
   // A touch tap whose commit is deferred to pointerup, so a second finger can
   // still turn the gesture into a pinch (which discards the tap instead of
   // committing it). {pointerId, run} or null.
@@ -882,9 +893,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // pointerup: if a second finger lands first, trackTouchDown starts a pinch
   // and discards the tap. Only a value snapshot is held, never the event.
   const onPointerDown = (e) => {
-    // FR1: a fresh press starts a new gesture for this pointer — clear
-    // a stale capture-loss flag (pointerIds are reused after release).
-    if (lostCaptureRef.current === e.pointerId) lostCaptureRef.current = null;
+    // FR1/FR2: a fresh press starts a new gesture for this pointer —
+    // clear a stale capture-loss flag (pointerIds are reused after
+    // release).
+    deadPointersRef.current.delete(e.pointerId);
     gestureTrace("pointerdown", {
       trusted: e.isTrusted, button: e.button, pointerId: e.pointerId, pointerType: e.pointerType,
       x: e.clientX, y: e.clientY, target: e.target ? `${e.target.tagName}${e.target.getAttribute?.("data-testid") ? `#${e.target.getAttribute("data-testid")}` : ""}` : null,
@@ -910,6 +922,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       // just without off-element tracking.
     }
     if (trackTouchDown(e)) return;
+    // FR2: this down owns whatever single-pointer gesture follows
+    // (pan, draw, tap) — see dragPointerRef. Set after the pinch
+    // check: a pinch finger returns above and owns no single drag.
+    dragPointerRef.current = e.pointerId;
     if (e.pointerType === "touch" && TAP_COMMIT_TOOLS.has(tool)) {
       // Snapshot the tap; the action body only needs these fields.
       const snap = { clientX: e.clientX, clientY: e.clientY, button: e.button, shiftKey: e.shiftKey };
@@ -1320,11 +1336,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   };
 
   const onPointerMove = (e) => {
-    // FR1: a pointer whose capture was lost mid-gesture is dead — its
-    // drag was torn down, but the `drag` state below still shows the
-    // old drag until the next render (see lostCaptureRef). Bail before
-    // arming or panning so no move after the loss can move the view.
-    if (lostCaptureRef.current === e.pointerId) return;
+    // FR1/FR2: a pointer whose capture was lost mid-gesture is dead —
+    // its drag was torn down, but the `drag` state below still shows
+    // the old drag until the next render (see deadPointersRef). Bail
+    // before arming or panning so no move after the loss can move the
+    // view.
+    if (deadPointersRef.current.has(e.pointerId)) return;
     const screen = eventPoint(e);
     // A move consumed by an active pinch stashes its cursor instead of
     // writing state: the view already rides the coalesced frame, and a
@@ -1617,6 +1634,17 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       x: e.clientX, y: e.clientY, dragKind: drag?.kind ?? null,
       pending: pendingViewRef.current ? { ...pendingViewRef.current } : null,
     });
+    // FR2: a pointer whose capture was lost mid-gesture is dead — the
+    // loss handler already tore its gesture down synchronously. A
+    // pointerup arriving for it (in the same batch as the loss, or
+    // late) must commit nothing: no deferred tap, no draw. Retire any
+    // surviving touch tracking (a no-op when the loss handler already
+    // retired it) and return before any commit path.
+    if (deadPointersRef.current.has(e.pointerId)) {
+      trackTouchEnd(e);
+      deadPointersRef.current.delete(e.pointerId);
+      return;
+    }
     // Release touch tracking (ends a pinch when fewer than 2 remain). The
     // drag/commit logic below is a no-op during a pinch: the second finger
     // landing already cleared drag and the draw preview.
@@ -1676,7 +1704,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     lastPanPointRef.current = null;
     tagDragStart.current = null;
     tagPanArmedRef.current = null;
-    if (lostCaptureRef.current === e.pointerId) lostCaptureRef.current = null;
+    dragPointerRef.current = null;
     if (drawPreview !== null) setDrawPreview(null);
   };
 
@@ -1684,6 +1712,15 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // tap. (Separate from onPointerUp, which commits completed drags.)
   const onPointerCancel = (e) => {
     gestureTrace("pointercancel", { trusted: e.isTrusted, pointerId: e.pointerId, dragKind: drag?.kind ?? null });
+    // FR2: a cancel for a pointer whose capture was already lost is
+    // stale — its gesture was retired by the loss handler. Retire any
+    // surviving tracking, clear the flag, and return instead of tearing
+    // down whatever gesture (if any) a newer pointer has since started.
+    if (deadPointersRef.current.has(e.pointerId)) {
+      trackTouchEnd(e);
+      deadPointersRef.current.delete(e.pointerId);
+      return;
+    }
     trackTouchEnd(e);
     // A cancelled gesture keeps the last computed view (the old per-move
     // commits had already landed it); when no pinch survives the cancel,
@@ -1694,7 +1731,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     lastPanPointRef.current = null;
     tagDragStart.current = null;
     tagPanArmedRef.current = null;
-    if (lostCaptureRef.current === e.pointerId) lostCaptureRef.current = null;
+    dragPointerRef.current = null;
     setDrawPreview(null);
   };
 
@@ -1770,6 +1807,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       pendingTap.current = null;
       tagDragStart.current = null;
       tagPanArmedRef.current = null;
+      // FR2: a pinch takes over the single-pointer gesture — its owner
+      // is gone with the drag (see dragPointerRef).
+      dragPointerRef.current = null;
       // FR1: a cancelled pan must not leave a stale origin behind —
       // the surviving finger starts fresh after a pinch, exactly
       // like a non-tag drag (whose state was just cleared above).
@@ -1783,6 +1823,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // Advances an in-progress pinch. Returns true when consumed.
   const trackTouchMove = (e) => {
     if (e.pointerType !== "touch") return false;
+    // FR2: a pointer whose capture was lost is dead — it was retired
+    // from tracking by the loss handler, and a move arriving for it
+    // (the browser delivers the loss lazily, with the next move) must
+    // never update the stored point or drive a pinch. The capture-phase
+    // move handler calls this BEFORE the bubble-phase dead guard, so
+    // the check lives here, not only in onPointerMove.
+    if (deadPointersRef.current.has(e.pointerId)) return false;
     if (!touchPointers.current.has(e.pointerId)) return false;
     // Keep the stored position fresh even before the second finger lands, so
     // the pinch baseline never uses a stale first-finger coordinate (which
@@ -1800,12 +1847,18 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     return true;
   };
 
-  // Ends touch tracking for a lifted/cancelled pointer. Returns true when
-  // the pointer was being tracked.
-  const trackTouchEnd = (e) => {
-    if (e.pointerType !== "touch") return false;
-    const had = touchPointers.current.delete(e.pointerId);
-    if (pinch.current && pinch.current.ids.includes(e.pointerId)) {
+  // FR2: retire one touch pointer from tracking, with the same pair
+  // rebase/end semantics as a lift: a driving finger's loss rebases the
+  // pinch onto the surviving pair (or ends it); a non-driving (third+)
+  // finger's loss leaves the pinch untouched. Called by trackTouchEnd
+  // AND by the lostpointercapture handler — a finger that lifts outside
+  // the svg after losing capture never sends pointerup/cancel, so
+  // without this its stale id stays in touchPointers and the NEXT touch
+  // pairs with it into a phantom pinch. Returns true when the pointer
+  // was being tracked.
+  const retireTouchPointer = (id) => {
+    const had = touchPointers.current.delete(id);
+    if (pinch.current && pinch.current.ids.includes(id)) {
       // A driving finger lifted: rebase the baseline onto the remaining
       // pair with no zoom step, so the gesture continues without a jump —
       // or end the pinch if fewer than two fingers remain. Lifting a
@@ -1825,6 +1878,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       if (!pinch.current) flushGestureView();
     }
     return had;
+  };
+
+  // Ends touch tracking for a lifted/cancelled pointer. Returns true when
+  // the pointer was being tracked.
+  const trackTouchEnd = (e) => {
+    if (e.pointerType !== "touch") return false;
+    return retireTouchPointer(e.pointerId);
   };
 
   const onWheel = (e) => {
@@ -1958,6 +2018,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         setHoverPoint(null);
         setGhost(null);
         setDrag(null);
+        dragPointerRef.current = null; // Escape aborts the drag (FR2)
         setMeasureStart(null);
         setMeasureLivePoint(null);
         setMeasurement(null);
@@ -2166,11 +2227,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             style={{ cursor: "pointer" }}
             onPointerDown={(e) => {
               e.stopPropagation();
-              // FR1: a fresh press starts a new gesture for this
+              // FR1/FR2: a fresh press starts a new gesture for this
               // pointer — clear a stale capture-loss flag (pointerIds
               // are reused after release; the svg-level down handler
-              // never fires for a tag press).
-              if (lostCaptureRef.current === e.pointerId) lostCaptureRef.current = null;
+              // never fires for a tag press) and record the drag owner
+              // (see dragPointerRef).
+              deadPointersRef.current.delete(e.pointerId);
+              dragPointerRef.current = e.pointerId;
               tagDragStart.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
               tagPanArmedRef.current = null;
               // FR1 P1 (selection side effect): explicit pan intent
@@ -3163,38 +3226,62 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           // leave mid-gesture; this guards browsers that fire it anyway so
           // a drag is never torn down while its pointer is still captured.
           if (e.currentTarget.hasPointerCapture?.(e.pointerId)) return;
+          // FR2: a leave for a pointer whose capture was already lost
+          // is stale — its gesture was retired by the loss handler.
+          // Without this, the unconditional teardown below would nuke
+          // a newer gesture a different pointer has since started.
+          if (deadPointersRef.current.has(e.pointerId)) return;
           flushGestureView(); setDrag(null); setDrawPreview(null); setGhost(null); setCursorScreen(null); touchPointers.current.clear(); pinch.current = null; pendingTap.current = null; tagDragStart.current = null; tagPanArmedRef.current = null; lastPanPointRef.current = null;
-          if (lostCaptureRef.current === e.pointerId) lostCaptureRef.current = null;
+          dragPointerRef.current = null;
         }}
         onLostPointerCapture={(e) => {
-          // FR1: capture was lost mid-gesture without a pointerup/cancel
-          // (the capture element was removed, or the browser released
-          // it). The drag can no longer complete — its moves stop
-          // arriving — so tear it down rather than leaving a stale
-          // drag/origin that swallows the next gesture. No-op when idle:
-          // a normal pointerup releases capture after the drag is
-          // already cleared, and the guard below skips the work.
-          // Narrow teardown on purpose: multi-touch tracking is left
-          // alone (capture is per-pointer; losing one must not nuke a
-          // pinch driven by the others). The flag is set synchronously
-          // in the ref AFTER the idle guard, so a normal pointerup
-          // (capture released after the drag is already cleared) never
-          // marks the pointer dead and hover keeps working: the browser
-          // delivers lostpointercapture lazily (with the next move),
-          // and the React `drag` state still shows the old drag until
-          // the next render — without the ref the first move after the
-          // loss pans one step on the stale drag (measured live: +8,+6
-          // on a +40,+30 move). onPointerMove bails for a dead pointer.
-          if (drag === null && !tagDragStart.current) return;
-          lostCaptureRef.current = e.pointerId;
-          gestureTrace("lostpointercapture", { pointerId: e.pointerId, dragKind: drag?.kind ?? null });
-          if (!pinch.current) flushGestureView();
-          if (drag !== null) setDrag(null);
-          lastPanPointRef.current = null;
-          tagDragStart.current = null;
-          tagPanArmedRef.current = null;
-          pendingTap.current = null;
-          setDrawPreview(null);
+          // FR2 (residual touch capture lifecycle): a lost capture must
+          // retire the lost pointer from touch tracking SYNCHRONOUSLY,
+          // with the same pair rebase/end semantics as a lift — the
+          // browser delivers lostpointercapture lazily, and a finger
+          // that lifts outside the svg after losing capture never sends
+          // pointerup/cancel, so without this its stale id stays in
+          // touchPointers and the NEXT touch pairs with it into a
+          // phantom pinch. A normal active pinch has drag===null and no
+          // tagDragStart, so the old idle guard returned early for
+          // exactly the case that needs retiring — the guard is now an
+          // ownership check instead (below).
+          //
+          // Ownership: only act on a pointer that belongs to live
+          // gesture state — touch tracking, a deferred tap, a tag press
+          // waiting to arm, or the current drag. A late loss for an id
+          // that owns nothing (its gesture already ended, or a newer
+          // gesture owns the drag) must never tear down a newer drag.
+          // And if the svg currently holds capture for this id, a newer
+          // gesture re-captured it after this loss was queued (the
+          // browser delivers the loss lazily) — the loss is stale.
+          const id = e.pointerId;
+          const ownsTouch = touchPointers.current.has(id);
+          const ownsTap = pendingTap.current?.pointerId === id;
+          const ownsTag = tagDragStart.current?.pointerId === id;
+          const ownsDrag = drag !== null && dragPointerRef.current === id;
+          if (!ownsTouch && !ownsTap && !ownsTag && !ownsDrag) return;
+          if (svgRef.current?.hasPointerCapture?.(id)) return;
+          // Mark the pointer dead FIRST, synchronously: a move/up
+          // arriving in the same batch (the loss is delivered with the
+          // next move) must see the flag before any commit path runs.
+          // The flag is per-pointer (a Set, FR2): losing one pointer
+          // must not nuke a pinch driven by the others.
+          deadPointersRef.current.add(id);
+          gestureTrace("lostpointercapture", { pointerId: id, dragKind: drag?.kind ?? null });
+          if (ownsTouch) retireTouchPointer(id);
+          if (ownsDrag) {
+            if (!pinch.current) flushGestureView();
+            setDrag(null);
+            lastPanPointRef.current = null;
+            dragPointerRef.current = null;
+            setDrawPreview(null);
+          }
+          if (ownsTag) {
+            tagDragStart.current = null;
+            tagPanArmedRef.current = null;
+          }
+          if (ownsTap) pendingTap.current = null;
         }}
         onWheel={onWheel}
         onDoubleClick={onDoubleClick}

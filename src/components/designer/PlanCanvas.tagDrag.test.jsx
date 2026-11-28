@@ -30,6 +30,21 @@
 //     still closes over the pre-loss drag state and pans one step on
 //     the stale drag (+8,+6 measured live) unless the synchronous
 //     lostCaptureRef stops it.
+// FR2 (ChatGPT NEEDS CHANGES at 340069e, drop 468953784) adds:
+// (10) a touch tag-drag whose capture is lost, then an outside release
+//     (no pointerup ever delivered) and a next fresh touch, pans fresh
+//     with no phantom pinch — the lost id is retired synchronously, so
+//     the new touch does not pair with a stale finger;
+// (11) losing a driving pinch finger ends the pinch and the survivor
+//     cannot drive a phantom pinch from the stale point; a move from
+//     the dead finger after the loss moves nothing (capture-phase guard);
+// (12) three-finger: losing a non-driving third finger keeps the
+//     driving pair intact, and losing a driving finger rebases the
+//     pinch onto the surviving pair with no zoom step (exact scale
+//     factor pinned);
+// (13) a same-batch capture loss followed by pointerup cannot commit
+//     a stale deferred tap (room tool) or a stale draw (wall tool) —
+//     the up handler bails for a dead pointer before any commit path.
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -481,6 +496,186 @@ describe("PlanCanvas phone-overview tag drag", () => {
     const after = view();
     expect(after.x - mid.x).toBeCloseTo(60, 3);
     expect(after.y - mid.y).toBeCloseTo(40, 3);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("a touch tag-drag whose capture is lost, then a fresh touch, pans fresh with no phantom pinch (FR2 P1)", () => {
+    renderFittedCanvas();
+    const { el: tag, x: tagX, y: tagY } = tagPoint();
+    const before = view();
+    touch(tag, "pointerdown", 1, tagX, tagY);
+    touch(svg, "pointermove", 1, tagX + 30, tagY + 20); // arms the pan
+    fireFrames();
+    const mid = view();
+    expect(mid.x - before.x).toBeCloseTo(30, 3);
+    expect(mid.y - before.y).toBeCloseTo(20, 3);
+    // Capture lost mid-drag; the finger lifts OUTSIDE the svg, so no
+    // pointerup/cancel is ever delivered for pointer 1.
+    pointer(svg, "lostpointercapture", 1, "touch", tagX + 30, tagY + 20);
+    // A move arriving for the dead pointer after the loss must not pan.
+    touch(svg, "pointermove", 1, tagX + 60, tagY + 40);
+    fireFrames();
+    const afterLoss = view();
+    expect(afterLoss.x).toBeCloseTo(mid.x, 3);
+    expect(afterLoss.y).toBeCloseTo(mid.y, 3);
+    // The next touch is a NEW pointer id: with the stale id retired it
+    // is a plain pan (scale unchanged); with the FR1 bug it pairs with
+    // the stale id into a phantom pinch and zooms instead of panning.
+    touch(tag, "pointerdown", 2, tagX, tagY);
+    touch(svg, "pointermove", 2, tagX + 60, tagY + 40);
+    touch(svg, "pointerup", 2, tagX + 60, tagY + 40);
+    fireFrames();
+    const after = view();
+    expect(after.scale).toBeCloseTo(before.scale, 4); // no zoom: no phantom pinch
+    expect(after.x - mid.x).toBeCloseTo(60, 3);
+    expect(after.y - mid.y).toBeCloseTo(40, 3);
+  });
+
+  it("losing a driving pinch finger ends the pinch and the survivor cannot drive a phantom pinch (FR2 P1)", () => {
+    renderFittedCanvas();
+    const before = view();
+    touch(svg, "pointerdown", 1, 100, 100);
+    touch(svg, "pointerdown", 2, 200, 100); // pinch starts
+    touch(svg, "pointermove", 1, 80, 100);
+    touch(svg, "pointermove", 2, 220, 100); // 100px -> 140px = 1.4x
+    fireFrames();
+    const pinched = view();
+    expect(pinched.scale).toBeCloseTo(before.scale * 1.4, 3);
+    // Finger 1 loses capture mid-pinch and lifts outside: no up/cancel
+    // is ever delivered for it.
+    pointer(svg, "lostpointercapture", 1, "touch", 80, 100);
+    // A move arriving for the dead finger must not drive the pinch
+    // (the capture-phase move path must respect the dead guard).
+    touch(svg, "pointermove", 1, 60, 100);
+    fireFrames();
+    const afterDeadMove = view();
+    expect(afterDeadMove.scale).toBeCloseTo(pinched.scale, 4);
+    expect(afterDeadMove.x).toBeCloseTo(pinched.x, 3);
+    expect(afterDeadMove.y).toBeCloseTo(pinched.y, 3);
+    // The surviving finger moving alone must not drive a phantom pinch
+    // from the stale finger-1 point.
+    touch(svg, "pointermove", 2, 260, 100);
+    fireFrames();
+    const afterSurvivor = view();
+    expect(afterSurvivor.scale).toBeCloseTo(pinched.scale, 4);
+    expect(afterSurvivor.x).toBeCloseTo(pinched.x, 3);
+    expect(afterSurvivor.y).toBeCloseTo(pinched.y, 3);
+    // Finger 2 lifts; a fresh touch pans plainly with no zoom.
+    touch(svg, "pointerup", 2, 260, 100);
+    const { el: tag, x: tagX, y: tagY } = tagPoint();
+    touch(tag, "pointerdown", 3, tagX, tagY);
+    touch(svg, "pointermove", 3, tagX + 60, tagY + 40);
+    touch(svg, "pointerup", 3, tagX + 60, tagY + 40);
+    fireFrames();
+    const after = view();
+    expect(after.scale).toBeCloseTo(pinched.scale, 4);
+    expect(after.x - pinched.x).toBeCloseTo(60, 3);
+    expect(after.y - pinched.y).toBeCloseTo(40, 3);
+  });
+
+  it("losing a non-driving third finger keeps the pinch pair; losing a driving finger rebases onto the surviving pair (FR2 P1)", () => {
+    renderFittedCanvas();
+    const before = view();
+    touch(svg, "pointerdown", 1, 100, 100);
+    touch(svg, "pointerdown", 2, 200, 100); // pinch [1,2]
+    touch(svg, "pointerdown", 3, 150, 300); // third finger: tracked, not driving
+    touch(svg, "pointermove", 1, 80, 100);
+    touch(svg, "pointermove", 2, 220, 100); // 100 -> 140 = 1.4x
+    fireFrames();
+    const pinched = view();
+    expect(pinched.scale).toBeCloseTo(before.scale * 1.4, 3);
+    // Lose the NON-driving third finger: the [1,2] pair survives
+    // untouched — the pinch keeps running from the same baseline.
+    pointer(svg, "lostpointercapture", 3, "touch", 150, 300);
+    touch(svg, "pointermove", 1, 60, 100);
+    touch(svg, "pointermove", 2, 240, 100); // 140 -> 180
+    fireFrames();
+    const afterThirdLoss = view();
+    expect(afterThirdLoss.scale).toBeCloseTo(pinched.scale * (180 / 140), 3);
+    // A move from the dead third finger must not touch the pinch.
+    touch(svg, "pointermove", 3, 150, 320);
+    fireFrames();
+    const afterDeadThird = view();
+    expect(afterDeadThird.scale).toBeCloseTo(afterThirdLoss.scale, 4);
+    expect(afterDeadThird.x).toBeCloseTo(afterThirdLoss.x, 3);
+    // A FOURTH finger lands (fresh id) and finger 1 — a driving
+    // finger — loses capture: the pinch rebases onto the surviving
+    // pair [2,4] with NO zoom step, then keeps pinching from there.
+    touch(svg, "pointerdown", 4, 150, 300);
+    pointer(svg, "lostpointercapture", 1, "touch", 60, 100);
+    const rebased = view();
+    expect(rebased.scale).toBeCloseTo(afterThirdLoss.scale, 4); // no jump on rebase
+    expect(rebased.x).toBeCloseTo(afterThirdLoss.x, 3);
+    // The rebased pair [2,4] pinches on: 2 at (240,100), 4 at
+    // (150,300) -> moving 2 to (260,100) grows the pair distance
+    // from hypot(90,200) to hypot(110,200) — and ONLY by that factor.
+    // With the FR1 bug the pinch still drives on the stale finger-1
+    // point, so the same move grows it by 200/180 instead.
+    touch(svg, "pointermove", 2, 260, 100);
+    fireFrames();
+    const afterRebase = view();
+    expect(afterRebase.scale).toBeCloseTo(
+      rebased.scale * (Math.hypot(110, 200) / Math.hypot(90, 200)),
+      3,
+    );
+    touch(svg, "pointerup", 2, 260, 100);
+    touch(svg, "pointerup", 4, 150, 300);
+  });
+
+  it("a same-batch capture loss followed by pointerup cannot commit a stale deferred tap (FR2 P1)", () => {
+    renderFittedCanvas("room");
+    const before = view();
+    // Touch down on empty background with a tap-commit tool: the tap
+    // is deferred to pointerup (a second finger could still turn it
+    // into a pinch). Nothing dispatches yet.
+    touch(svg, "pointerdown", 1, 100, 100);
+    expect(dispatch).not.toHaveBeenCalled();
+    // Capture is lost, then the pointerup arrives in the SAME batch —
+    // the loss aborted the gesture, so the up must not run the tap.
+    act(() => {
+      svg.dispatchEvent(
+        new window.PointerEvent("lostpointercapture", {
+          bubbles: true, button: 0, pointerId: 1, pointerType: "touch",
+          clientX: 100, clientY: 100,
+        }),
+      );
+      svg.dispatchEvent(
+        new window.PointerEvent("pointerup", {
+          bubbles: true, button: 0, pointerId: 1, pointerType: "touch",
+          clientX: 100, clientY: 100,
+        }),
+      );
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+    const after = view();
+    expect(after.x).toBeCloseTo(before.x, 5);
+    expect(after.y).toBeCloseTo(before.y, 5);
+  });
+
+  it("a same-batch capture loss followed by pointerup cannot commit a stale wall draw (FR2 P1)", () => {
+    renderFittedCanvas("wall");
+    // Mouse down starts a draw-wall drag; a move sets the preview.
+    mouse(svg, "pointerdown", 100, 100, { button: 0 });
+    mouse(svg, "pointermove", 160, 140);
+    fireFrames();
+    expect(dispatch).not.toHaveBeenCalled();
+    // Capture is lost, then the pointerup arrives in the SAME batch —
+    // the loss aborted the draw, so the up must not commit the wall
+    // (the pre-loss drag state still closes over draw-wall + preview).
+    act(() => {
+      svg.dispatchEvent(
+        new window.PointerEvent("lostpointercapture", {
+          bubbles: true, button: 0, pointerId: 1, pointerType: "mouse",
+          clientX: 160, clientY: 140,
+        }),
+      );
+      svg.dispatchEvent(
+        new window.PointerEvent("pointerup", {
+          bubbles: true, button: 0, pointerId: 1, pointerType: "mouse",
+          clientX: 160, clientY: 140,
+        }),
+      );
+    });
     expect(dispatch).not.toHaveBeenCalled();
   });
 
