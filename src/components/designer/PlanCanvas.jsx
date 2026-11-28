@@ -461,10 +461,20 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     });
   }, [onViewCenterChange, view, canvasSize]);
 
-  const toPlan = useCallback(
-    (s) => ({ x: (s.x - view.ox) / view.scale, y: (s.y - view.oy) / view.scale }),
-    [view],
-  );
+    // Pointing policy (D2 fix round 2 — mixed-gesture audit): toPlan maps
+    // through the COMMITTED (rendered) view, never the pending gesture
+    // view. The user aims at what they can see, and the pending view is
+    // not painted yet — mapping a click through it would silently shift
+    // hit-testing and drawing coordinates under the cursor (a hidden
+    // coordinate change). A pointerdown therefore does NOT flush a pending
+    // wheel/pinch zoom first. The pan drag origin is the exception: it is
+    // captured from the effective view (see handlePointerDownAction)
+    // because a pan is a view gesture whose own moves chain through
+    // gestureView(), not a pointing gesture.
+    const toPlan = useCallback(
+      (s) => ({ x: (s.x - view.ox) / view.scale, y: (s.y - view.oy) / view.scale }),
+      [view],
+    );
 
   const snapTargets = useMemo(() => {
     const pts = [];
@@ -825,7 +835,16 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
 
   const handlePointerDownAction = (e) => {
     if (e.button === 1 || tool === "pan" || spaceDown) {
-      setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
+      // D2 fix round 2 (mixed-gesture P1): the pan origin is captured
+      // from the EFFECTIVE view (gestureView), not the committed view.
+      // A wheel zoom may be pending (scheduled, not yet committed) when
+      // the pointer lands; capturing the committed offsets would bake the
+      // stale origin into the drag, and the next move would overwrite the
+      // wheel's anchor correction with ox = staleOx + dx. The effective
+      // view is the pending zoom when one exists, so the pan chains
+      // exactly from it — no jump, no lost anchor.
+      const gv = gestureView();
+      setDrag({ kind: "pan", start: eventPoint(e), ox: gv.ox, oy: gv.oy });
       return;
     }
     if (e.button !== 0) return;
@@ -1071,7 +1090,11 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       !hitMovesWithSelection(design, selection, hit) &&
       !(selection && hit.kind === selection.kind && hit.id === selection.id)
     ) {
-      setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
+      // Same effective-view origin as the mouse pan branch above (D2 fix
+      // round 2): a pending wheel zoom must not be overwritten by the
+      // drag's first move.
+      const gv = gestureView();
+      setDrag({ kind: "pan", start: eventPoint(e), ox: gv.ox, oy: gv.oy });
       dispatch({ type: "SELECT", selection: hit });
       return;
     }
@@ -1194,7 +1217,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // equivalent of space+drag / the Pan tool on desktop. (Tap behavior is
     // unchanged: the SELECT below still fires on pointerdown.)
     if (e.pointerType === "touch" && !hit) {
-      setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
+      // Effective-view origin (D2 fix round 2) — see the mouse pan branch.
+      const gv = gestureView();
+      setDrag({ kind: "pan", start: eventPoint(e), ox: gv.ox, oy: gv.oy });
     }
     dispatch({ type: "SELECT", selection: hit });
   };
@@ -1686,11 +1711,28 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     const v = gestureView();
     const scale = Math.min(MAX_SCALE, Math.max(floor, v.scale * factor));
     const applied = scale / v.scale;
-    scheduleGestureView({
+    const next = {
       scale,
       ox: screen.x - (screen.x - v.ox) * applied,
       oy: screen.y - (screen.y - v.oy) * applied,
-    });
+    };
+    // D2 fix round 2 (mixed-gesture P1): rebase an in-progress pan drag
+    // onto the zoomed view. A pan move recomputes its offsets ABSOLUTELY
+    // from the drag origin captured at pointerdown, so a wheel step
+    // landing mid-drag would be overwritten by the next move (which
+    // recomputes ox/oy from the stale origin) — the zoom's anchor
+    // correction would be lost and the view would jump. Folding the
+    // zoomed offsets into the origin keeps the pan exact: at the wheel's
+    // own pointer position the rebased formula yields the zoomed view,
+    // so no jump and no lost input. The functional update chains
+    // correctly across back-to-back wheel events within one frame, and
+    // returns the drag unchanged when no pan is active (no extra render).
+    setDrag((d) =>
+      d?.kind === "pan"
+        ? { ...d, ox: next.ox - (screen.x - d.start.x), oy: next.oy - (screen.y - d.start.y) }
+        : d,
+    );
+    scheduleGestureView(next);
   };
 
   const onDoubleClick = (e) => {
@@ -1925,7 +1967,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
               const start = tagDragStart.current;
               if (!start || start.pointerId !== e.pointerId) return;
               if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 6) return;
-              setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
+              // Effective-view origin (D2 fix round 2) — see the mouse pan
+              // branch in handlePointerDownAction.
+              const gv = gestureView();
+              setDrag({ kind: "pan", start: eventPoint(e), ox: gv.ox, oy: gv.oy });
             }}
           >
             <rect

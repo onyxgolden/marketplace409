@@ -17,7 +17,7 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import PlanCanvas from "./PlanCanvas";
-import { createEmptyDesign } from "@/domains/roomDesigner/designerDocument";
+import { createEmptyDesign, addWall } from "@/domains/roomDesigner/designerDocument";
 
 if (typeof window.ResizeObserver === "undefined") {
   window.ResizeObserver = class {
@@ -127,18 +127,26 @@ describe("PlanCanvas gesture coalescing — wheel + mouse pan (D2 Gate 5)", () =
   let dispatch;
   let svg;
 
-  const renderCanvas = (tool) => {
+  const renderCanvas = (tool, design = createEmptyDesign()) => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     dispatch = vi.fn();
     act(() => {
       root.render(
-        <PlanCanvas design={createEmptyDesign()} tool={tool} selection={null} dispatch={dispatch} />,
+        <PlanCanvas design={design} tool={tool} selection={null} dispatch={dispatch} />,
       );
     });
     svg = container.querySelector("svg");
     expect(svg).not.toBeNull();
+  };
+
+  // Screen point for a plan point under the default view (scale 1.6,
+  // offset (60,60)) — same convention as PlanCanvas.measure.test.jsx.
+  const toScreen = (plan) => ({ x: 60 + 1.6 * plan.x, y: 60 + 1.6 * plan.y });
+  const mouseAtPlan = (target, type, plan, button = 0) => {
+    const { x, y } = toScreen(plan);
+    mouse(target, type, x, y, button);
   };
 
   beforeEach(() => {
@@ -223,5 +231,132 @@ describe("PlanCanvas gesture coalescing — wheel + mouse pan (D2 Gate 5)", () =
     expectView(svg, DEFAULT_VIEW);
     mouse(svg, "pointerup", 180, 140);
     expectView(svg, { scale: 1.6, ox: 140, oy: 100 });
+  });
+});
+
+describe("PlanCanvas mixed gestures — wheel/pan interleaving (D2 fix round 2)", () => {
+  let container;
+  let root;
+  let dispatch;
+  let svg;
+
+  const renderCanvas = (tool, design = createEmptyDesign()) => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    dispatch = vi.fn();
+    act(() => {
+      root.render(
+        <PlanCanvas design={design} tool={tool} selection={null} dispatch={dispatch} />,
+      );
+    });
+    svg = container.querySelector("svg");
+    expect(svg).not.toBeNull();
+  };
+
+  // Screen point for a plan point under the default view (scale 1.6,
+  // offset (60,60)) — same convention as PlanCanvas.measure.test.jsx.
+  const toScreen = (plan) => ({ x: 60 + 1.6 * plan.x, y: 60 + 1.6 * plan.y });
+  const mouseAtPlan = (target, type, plan, button = 0) => {
+    const { x, y } = toScreen(plan);
+    mouse(target, type, x, y, button);
+  };
+
+  beforeEach(() => {
+    rafMode = "queued";
+    installRafMock();
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    window.requestAnimationFrame = realRaf;
+    window.cancelAnimationFrame = realCancelRaf;
+  });
+
+  it("wheel then pan before the frame commits: the pan chains from the zoomed view, anchor correction preserved", () => {
+    renderCanvas("pan");
+    // Wheel IN around a non-origin anchor (100,100), frame NOT fired:
+    // pending view is scale 1.792, ox = oy = 100 - (100-60)*1.12 = 55.2.
+    wheel(svg, -100, 100, 100);
+    expect(rafScheduled).toBe(1);
+    expectView(svg, DEFAULT_VIEW); // nothing committed yet
+    // Pointerdown captures the drag origin, then a (30,20) move.
+    mouse(svg, "pointerdown", 200, 200);
+    mouse(svg, "pointermove", 230, 220);
+    // Still one frame scheduled — the pan reused the wheel's slot, no
+    // runaway callbacks — and still nothing committed.
+    expect(rafScheduled).toBe(1);
+    expect(rafQueue.size).toBe(1);
+    expectView(svg, DEFAULT_VIEW);
+    fireFrames();
+    // Exact chained result: the zoomed view plus the pan delta.
+    // On the pre-fix code the drag origin was the stale committed (60,60),
+    // so the move overwrote the anchor correction: ox 90 / oy 80.
+    expectView(svg, { scale: 1.792, ox: 85.2, oy: 75.2 });
+    expect(rafScheduled).toBe(1); // the commit scheduled no further frame
+  });
+
+  it("pan then wheel then pan: the wheel rebases the drag origin, no jump, no lost anchor", () => {
+    renderCanvas("pan");
+    mouse(svg, "pointerdown", 100, 100);
+    mouse(svg, "pointermove", 130, 120);
+    // Pending pan view is { scale 1.6, ox 90, oy 80 }; the wheel zooms
+    // around (200,200): scale 1.792, ox 76.8, oy 65.6. The next move
+    // must pan from THAT view, not from the pointerdown origin.
+    wheel(svg, -100, 200, 200);
+    mouse(svg, "pointermove", 150, 140);
+    expect(rafScheduled).toBe(1);
+    expect(rafQueue.size).toBe(1);
+    expectView(svg, DEFAULT_VIEW);
+    fireFrames();
+    // Wheel result (76.8, 65.6) shifted by the move relative to the
+    // wheel point: (150-200, 140-200) = (-50,-60) → (26.8, 5.6).
+    // On the pre-fix code the second move recomputed from the stale
+    // origin (60,60): ox 110 / oy 100 — anchor correction destroyed.
+    expectView(svg, { scale: 1.792, ox: 26.8, oy: 5.6 });
+    expect(rafScheduled).toBe(1);
+  });
+
+  it("selection immediately after a wheel uses the rendered view, not the pending zoom (pointing policy)", () => {
+    // Wall (0,0)-(120,0), id pinned so the SELECT assertion is exact.
+    let design = createEmptyDesign();
+    design = addWall(design, { x: 0, y: 0 }, { x: 120, y: 0 }, { id: "wall-1" });
+    renderCanvas("select", design);
+    // Wheel IN around (300,300), frame NOT fired: the pending view is
+    // scale 1.792, ox = oy = 31.2 — but the user still SEES the committed
+    // view, so a click on the wall's rendered midpoint must select it.
+    wheel(svg, -100, 300, 300);
+    expectView(svg, DEFAULT_VIEW);
+    // Wall midpoint plan (60,0) → screen (156,60) under the committed
+    // view. Under the pending view that screen point maps to plan
+    // (69.6, 16.1) — 16 in off the wall, outside the hit tolerance —
+    // so a pending-view hit-test would miss and select nothing.
+    mouseAtPlan(svg, "pointerdown", { x: 60, y: 0 });
+    mouseAtPlan(svg, "pointerup", { x: 60, y: 0 });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SELECT",
+      selection: { kind: "wall", id: "wall-1" },
+    });
+  });
+
+  it("a wall drawn immediately after a wheel starts at the rendered-view point (pointing policy)", () => {
+    renderCanvas("wall");
+    // Wheel IN around (300,300), frame NOT fired — same pending view as
+    // the selection test; the draw start must use the committed view.
+    wheel(svg, -100, 300, 300);
+    expectView(svg, DEFAULT_VIEW);
+    // Start plan (60,60) and end plan (120,60) are both on the 6" grid,
+    // so grid snapping is identity and the dispatched points are exact.
+    mouseAtPlan(svg, "pointerdown", { x: 60, y: 60 });
+    mouseAtPlan(svg, "pointermove", { x: 120, y: 60 });
+    mouseAtPlan(svg, "pointerup", { x: 120, y: 60 });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "ADD_WALL",
+      a: { x: 60, y: 60 },
+      b: { x: 120, y: 60 },
+    });
   });
 });
