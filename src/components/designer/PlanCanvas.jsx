@@ -1251,11 +1251,17 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       return;
     }
     if (drag.kind === "pan") {
-      // Touch pan is intercepted above and rides the gesture frame
-      // scheduler (with its cursor stashed for the final flush); the mouse
-      // keeps the direct per-move commit it has always had.
+      // D2 fix round, Gate 5: the mouse pan drag used to call setView on
+      // every pointermove, re-rendering the whole SVG per move — the same
+      // fall-behind-the-pointer failure the touch pan had before PR #675.
+      // It now rides the gesture frame scheduler like touch pan (and wheel):
+      // the offsets are absolute from the drag origin, so each move
+      // recomputes the same view the direct commit produced, with at most
+      // one commit per frame. onPointerUp flushes synchronously, so release
+      // lands the exact final view with no trailing lag.
       userNavRef.current = true; // a pan moves the view: cancels the pending fit
-      setView((v) => ({ ...v, ox: drag.ox + (screen.x - drag.start.x), oy: drag.oy + (screen.y - drag.start.y) }));
+      const v = gestureView();
+      scheduleGestureView({ ...v, ox: drag.ox + (screen.x - drag.start.x), oy: drag.oy + (screen.y - drag.start.y) });
       return;
     }
     const plan = toPlan(screen);
@@ -1667,14 +1673,23 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // exactly MIN_SCALE, as before. The pinch step (applyPinchStep)
     // uses the same floor.
     const floor = fitFloor !== null ? Math.min(MIN_SCALE, fitFloor) : MIN_SCALE;
-    setView((v) => {
-      const scale = Math.min(MAX_SCALE, Math.max(floor, v.scale * factor));
-      const applied = scale / v.scale;
-      return {
-        scale,
-        ox: screen.x - (screen.x - v.ox) * applied,
-        oy: screen.y - (screen.y - v.oy) * applied,
-      };
+    // D2 fix round, Gate 5: wheel zoom used to call setView on EVERY wheel
+    // event, and a fast scroll fires dozens — each commit re-renders the
+    // whole SVG (and re-runs validation) while the 3D loop burns the same
+    // thread. Wheel steps now ride the gesture frame scheduler like pinch
+    // and touch pan: identical step math, chained from the pending view
+    // (gestureView) so a burst lands on exactly the view the old
+    // step-by-step commits produced — no step lost, anchor preserved —
+    // with at most one commit per frame. userNavRef is set synchronously
+    // above, so the open-time fit cancellation is unaffected by the
+    // one-frame commit lag; pointerup/pinch-end flush covers gesture end.
+    const v = gestureView();
+    const scale = Math.min(MAX_SCALE, Math.max(floor, v.scale * factor));
+    const applied = scale / v.scale;
+    scheduleGestureView({
+      scale,
+      ox: screen.x - (screen.x - v.ox) * applied,
+      oy: screen.y - (screen.y - v.oy) * applied,
     });
   };
 
@@ -2180,10 +2195,17 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // D2 (c): flanges grouped by run ONCE per render. connectionFlanges
   // scans the whole design (every pipe, every junction) and renderPipe
   // used to run it per pipe — 91 full scans per render of the FCCU plan.
-  // The grouped map is memoized on the design object (WeakMap in the
-  // domain layer) and on the render (useMemo): view-only re-renders reuse
-  // it, any design edit rebuilds it. Same flange objects, same order.
-  const flangesByRun = useMemo(() => connectionFlangesByRun(design), [design]);
+  // The grouped map lives in the domain layer's WeakMap
+  // (connectionFlangesByRun, keyed on design identity + registry
+  // generation), so this call is an O(1) lookup on a hit and a single
+  // grouping on a miss — it is deliberately NOT wrapped in useMemo:
+  // useMemo([design]) bypassed the registry-generation guard, so a
+  // re-render of the SAME design object after a registration/reset
+  // served the old flange geometry while the memoized elevation path
+  // already used the new generation (D2 fix-round Gate 3). Calling the
+  // domain function directly every render keeps the two paths in lockstep.
+  // Same flange objects, same order.
+  const flangesByRun = connectionFlangesByRun(design);
   // dimension label (length + diameter) on its longest segment. Selected
   // runs show draggable vertex handles.
   const renderPipe = (run) => {

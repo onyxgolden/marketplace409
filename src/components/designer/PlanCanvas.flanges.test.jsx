@@ -116,3 +116,103 @@ describe("PlanCanvas flanges — D2 (c) hoist", () => {
     expect(container.querySelector("polyline")).not.toBeNull();
   });
 });
+
+// Registry-change regression — MUST stay last in this file: it resets the
+// global symbol registry (clearing the catalogs too), and earlier tests
+// use catalog symbols via placeSymbol. D2 fix-round Gate 3: PlanCanvas
+// used to memoize connectionFlangesByRun on [design] alone, so a
+// re-render of the SAME design object after a registration/reset served
+// the old flange geometry while the memoized elevation path already used
+// the new generation. The canvas now reads the domain WeakMap directly
+// per render, so the two paths stay in lockstep.
+describe("PlanCanvas flanges — registry change on unchanged design identity", () => {
+  let container;
+  let root;
+  let dispatch;
+
+  const renderCanvas = (design) => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    dispatch = vi.fn();
+    act(() => {
+      root.render(<PlanCanvas design={design} tool="select" selection={null} dispatch={dispatch} />);
+    });
+  };
+  const rerenderCanvas = (design) => {
+    act(() => {
+      root.render(<PlanCanvas design={design} tool="select" selection={null} dispatch={dispatch} />);
+    });
+  };
+  const flangeGlyphs = () => [...container.querySelectorAll('[data-testid^="pipe-flange-"]')];
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("same design object, new registry generation: flanges re-derive (z changes), plan geometry and order preserved", async () => {
+    const { __resetSymbolRegistry, registerSymbolSet } = await import(
+      "@/domains/roomDesigner/symbolRegistry"
+    );
+    const { detectRunJunctions } = await import("@/domains/roomDesigner/pipeAttachments");
+    __resetElevationCache();
+    __resetSymbolRegistry();
+    const registerRack = (elevationIn) =>
+      registerSymbolSet({
+        domain: "test-rack",
+        title: "Test racks",
+        symbols: [
+          {
+            id: "rack-a",
+            label: "Rack A",
+            widthIn: 480,
+            depthIn: 240,
+            rack: { kind: "pipe", tiers: 2, elevationIn, tierSpacingIn: 72, bentSpacingIn: 240 },
+          },
+        ],
+      });
+    registerRack(180);
+    // Header rides the rack at 181; two short branches junction onto it
+    // over the rack, so both junction flanges sit at z=181. Plan
+    // geometry (x/y/angle) is registry-independent.
+    let design = placeSymbol(createEmptyDesign(), "test-rack", "rack-a", 500, 500, { id: "tr1" });
+    design = addPipeRun(design, [{ x: 100, y: 500 }, { x: 900, y: 500 }], { id: "header", diameterIn: 2 });
+    design = addPipeRun(design, [{ x: 500, y: 500 }, { x: 500, y: 600 }], { id: "b1", diameterIn: 2 });
+    design = addPipeRun(design, [{ x: 600, y: 500 }, { x: 600, y: 600 }], { id: "b2", diameterIn: 2 });
+    design = detectRunJunctions(design, "b1");
+    design = detectRunJunctions(design, "b2");
+    const flatBefore = connectionFlanges(design);
+    expect(flatBefore).toHaveLength(2);
+    expect(flatBefore.map((f) => [f.runId, f.end, f.elevationIn])).toEqual([
+      ["b1", "start", 181],
+      ["b2", "start", 181],
+    ]);
+    renderCanvas(design);
+    expect(elevationCacheStats().flangeComputations).toBe(1);
+    const glyphsBefore = flangeGlyphs();
+    expect(glyphsBefore.map((g) => g.getAttribute("data-testid"))).toEqual([
+      "pipe-flange-b1-start",
+      "pipe-flange-b2-start",
+    ]);
+    const transformsBefore = glyphsBefore.map((g) => g.getAttribute("transform"));
+
+    // Same design object, new registry generation (rack top 180 -> 120):
+    // the mounted canvas must re-derive, not serve the stale grouping.
+    __resetSymbolRegistry();
+    registerRack(120);
+    rerenderCanvas(design);
+    expect(elevationCacheStats().flangeComputations).toBe(2);
+    expect(connectionFlanges(design).map((f) => [f.runId, f.end, f.elevationIn])).toEqual([
+      ["b1", "start", 121],
+      ["b2", "start", 121],
+    ]);
+    const glyphsAfter = flangeGlyphs();
+    expect(glyphsAfter.map((g) => g.getAttribute("data-testid"))).toEqual([
+      "pipe-flange-b1-start",
+      "pipe-flange-b2-start",
+    ]);
+    // Plan geometry (x/y/angle) and ordering are unchanged — only z moved.
+    expect(glyphsAfter.map((g) => g.getAttribute("transform"))).toEqual(transformsBefore);
+  });
+});

@@ -1433,6 +1433,22 @@ export default function DesignerViewport3D({
       const delta = Math.min((now - lastFrameTimeRef.current) / 1000, 0.1);
       lastFrameTimeRef.current = now;
 
+      // D2 fix round, Gate 5 (D1 reopen, trace-warranted): both panes stay
+      // mounted in every view mode (DesignerCanvasArea toggles CSS
+      // visibility), so this loop ran even while the 3D pane was hidden —
+      // a hidden (display:none) pane reports a 0x0 mount. A post-D2
+      // CDP profile of the rapid-10 pinch freeze put 90.3% of main-thread
+      // samples under this loop (three.js software-WebGL render every
+      // frame, SwiftShader), while the 2D work it was competing with was
+      // in the noise — input coalescing alone cannot clear a freeze whose
+      // cost is a loop that runs regardless of input. Skip the render
+      // while hidden; the rAF chain stays alive, so the first frame after
+      // the pane reappears renders immediately, with camera/controls
+      // state untouched (damping simply resumes — delta is clamped).
+      // This is the D1 teardown/visibility slice the D0 verdict left
+      // reopenable "if actual post-D2 trace warrants it" — this trace does.
+      if (mount.clientWidth === 0 || mount.clientHeight === 0) return;
+
       const mode = cameraModeRef.current;
       if (mode === "walk" || mode === "fly") {
         if (pointerLockedRef.current) {

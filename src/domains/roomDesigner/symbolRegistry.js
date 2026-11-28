@@ -36,6 +36,53 @@ export function getSymbolRegistryGeneration() {
   return registryGeneration;
 }
 
+/**
+ * Deep-clone a symbol extra value: plain objects and arrays are copied
+ * recursively; functions pass through by reference (draw2D identity is
+ * part of the registry contract — see symbolRegistry.test.js), as do
+ * primitives and class instances. Symbol extras are JSON-ish data plus
+ * draw2D, so a plain-object clone is a faithful snapshot.
+ */
+function deepCloneValue(value) {
+  if (Array.isArray(value)) return value.map(deepCloneValue);
+  if (isPlainObject(value)) {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) out[k] = deepCloneValue(v);
+    return out;
+  }
+  return value;
+}
+
+function isPlainObject(v) {
+  if (v === null || typeof v !== "object") return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * Recursively freeze a cloned symbol value: plain objects and arrays are
+ * frozen at every depth; functions are untouched (freezing a draw2D
+ * function would be harmless but buys nothing, and callers may attach
+ * nothing to them). The registry therefore owns an immutable snapshot:
+ * a caller mutating its own rack/defaults object after registration
+ * cannot change what findSymbol returns, and the elevation cache's
+ * registry-generation guard cannot be bypassed by a silent nested
+ * mutation (FCCU D2 fix-round Gate 1 — the shallow freeze let a rack's
+ * mutable `rack` object change under a frozen symbol, so derived
+ * elevations went stale without the generation moving).
+ */
+function deepFreezeValue(value) {
+  if (Array.isArray(value)) {
+    for (const item of value) deepFreezeValue(item);
+    return Object.freeze(value);
+  }
+  if (isPlainObject(value)) {
+    for (const v of Object.values(value)) deepFreezeValue(v);
+    return Object.freeze(value);
+  }
+  return value;
+}
+
 function assertSymbol(domain, symbol, index) {
   const where = `symbol set "${domain}" symbol #${index}`;
   if (!symbol || typeof symbol !== "object") throw new Error(`${where}: must be an object.`);
@@ -83,7 +130,12 @@ export function registerSymbolSet(set) {
   const frozen = Object.freeze({
     domain,
     title,
-    symbols: Object.freeze(symbols.map((s) => Object.freeze({ ...s }))),
+    // Deep-clone + deep-freeze: the registry keeps an immutable snapshot
+    // of every symbol, including nested extras such as a rack's defaults.
+    // The caller's objects are untouched (their later mutation cannot
+    // reach the registry) and the registered copy cannot be mutated in
+    // place at any depth — see deepFreezeValue above.
+    symbols: Object.freeze(symbols.map((s) => deepFreezeValue(deepCloneValue(s)))),
   });
   sets.set(domain, frozen);
   const byId = new Map();

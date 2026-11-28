@@ -147,9 +147,15 @@ function elevationEntry(design, run) {
  * reuse it. WeakMaps let entries die with their design/run (bounded by
  * undo depth, never global-unbounded). The registry generation guards
  * re-registration (tests / hot reload): a registry change invalidates
- * every cached elevation, since the rack lookup itself changed. Cached
- * arrays are never mutated by any caller (all call sites read/index
- * only); treat them as read-only.
+ * every cached elevation, since the rack lookup itself changed.
+ * Cached arrays are FROZEN before they are stored (D2 fix-round Gate 2):
+ * the old "treat them as read-only" comment was not enforcement, and
+ * the cache tests explicitly required shared arrays. A consumer that
+ * mutates a cached result now fails loudly instead of corrupting every
+ * later reader of the same (design, run). The freeze is safe because
+ * every consumer reads/indexes only — proven by the full suite plus
+ * the live D2 driver trials, which exercise the real render/validation
+ * paths against frozen results.
  */
 export function derivedSegmentElevations(design, run) {
   const entry = elevationEntry(design, run);
@@ -160,8 +166,8 @@ export function derivedSegmentElevations(design, run) {
   }
   const derived = computeDerivedSegmentElevations(design, run);
   elevationStats.derivedComputations += 1;
-  entry.derived = derived;
-  return derived;
+  entry.derived = Object.freeze(derived);
+  return entry.derived;
 }
 
 function computeDerivedSegmentElevations(design, run) {
@@ -216,8 +222,8 @@ export function segmentElevationsForDesign(design, run) {
  * vertices the higher adjacent one — the same rule the 3D joints use).
  *
  * Memoized per (design, run) alongside derivedSegmentElevations (D2-b);
- * same identity + registry-generation invalidation, same read-only
- * result contract.
+ * same identity + registry-generation invalidation, same frozen
+ * read-only result contract (D2 fix-round Gate 2).
  */
 export function vertexElevationsForDesign(design, run) {
   const entry = elevationEntry(design, run);
@@ -228,8 +234,8 @@ export function vertexElevationsForDesign(design, run) {
   }
   const vertex = computeVertexElevationsForDesign(design, run);
   elevationStats.vertexComputations += 1;
-  entry.vertex = vertex;
-  return vertex;
+  entry.vertex = Object.freeze(vertex);
+  return entry.vertex;
 }
 
 function computeVertexElevationsForDesign(design, run) {
@@ -964,6 +970,12 @@ export function connectionFlanges(design) {
  * same geometry — grouping only. Invalidation is design identity +
  * registry generation, exactly like the elevation cache above; a null /
  * non-object design yields an empty Map, matching connectionFlanges.
+ * The grouped arrays and the flange objects in them are FROZEN (D2
+ * fix-round Gate 2): they are shared cached results, and a consumer
+ * that mutates one would corrupt every later render of the same design.
+ * The freeze is safe — the flange objects are freshly built by
+ * connectionFlanges inside this computation, and every consumer
+ * (renderPipe, 3D model, sections, print) reads them only.
  */
 export function connectionFlangesByRun(design) {
   if (design === null || typeof design !== "object") return new Map();
@@ -976,9 +988,10 @@ export function connectionFlangesByRun(design) {
   const byRun = new Map();
   for (const flange of connectionFlanges(design)) {
     const list = byRun.get(flange.runId);
-    if (list) list.push(flange);
-    else byRun.set(flange.runId, [flange]);
+    if (list) list.push(Object.freeze(flange));
+    else byRun.set(flange.runId, [Object.freeze(flange)]);
   }
+  for (const list of byRun.values()) Object.freeze(list);
   elevationStats.flangeComputations += 1;
   flangeCache.set(design, { generation, byRun });
   return byRun;
