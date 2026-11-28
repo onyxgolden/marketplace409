@@ -16,6 +16,20 @@
 // (5) a wheel before the first pan move rebases on the down point (no
 //     invented delta); (6) a pinch takes over a tag-armed pan and the
 //     surviving finger cannot silently re-arm from the stale origin.
+// FR1 (ChatGPT NEEDS CHANGES at 4d5b182, drop 8074857eb) adds:
+// (7) explicit pan from a tag must NOT change selection (Space/middle/
+//     Pan drag is navigation, not selection) and must not mutate the
+//     design — pinned with a pre-existing different selection;
+// (8) touch drag from a tag KEEPS the tag's symbol selected — the
+//     preexisting canvas policy (a touch pan from a hit selects it),
+//     retained deliberately and documented in PlanCanvas, not an
+//     oversight; (9) pointercancel and lostpointercapture mid tag-drag
+//     tear the drag down and the next gesture starts fresh — including
+//     the same-batch case the C2 live check caught: the browser delivers
+//     lostpointercapture lazily WITH the next move, so the move handler
+//     still closes over the pre-loss drag state and pans one step on
+//     the stale drag (+8,+6 measured live) unless the synchronous
+//     lostCaptureRef stops it.
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -153,17 +167,28 @@ describe("PlanCanvas phone-overview tag drag", () => {
     return design;
   }
 
+  // Two equipment symbols, far enough apart (~90px on screen at fit)
+  // that collision filtering keeps both overview tags.
+  function twoSymbolDesign() {
+    let design = largeDesign();
+    design = placeSymbol(design, "processEquipment", "horizontal-drum", 5000, 4000, {
+      layer: "equipment",
+      tag: "D-101",
+    });
+    return design;
+  }
+
   // Renders the large design on a 390x700 phone pane and lets the
   // open-time fit land: fitted scale = 342/7680 = 0.0445, far below the
   // 0.09 tag gate, so the phone-overview tag renders.
-  const renderFittedCanvas = (tool = "select", design = largeDesign()) => {
+  const renderFittedCanvas = (tool = "select", design = largeDesign(), selection = null) => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     dispatch = vi.fn();
     act(() => {
       root.render(
-        <PlanCanvas design={design} tool={tool} selection={null} dispatch={dispatch} autoFitKey="p1:level1" />,
+        <PlanCanvas design={design} tool={tool} selection={selection} dispatch={dispatch} autoFitKey="p1:level1" />,
       );
     });
     svg = container.querySelector("svg");
@@ -201,6 +226,20 @@ describe("PlanCanvas phone-overview tag drag", () => {
   const tagPoint = () => {
     const tag = container.querySelector('[data-label-kind="equipment-tag"]');
     expect(tag).not.toBeNull();
+    return {
+      el: tag,
+      x: Number(tag.getAttribute("x")),
+      y: Number(tag.getAttribute("y")),
+    };
+  };
+
+  // The tag for a specific symbol, by its displayed text (tags sort
+  // selected-first, so the first tag in the DOM is not always T-101).
+  const tagPointByText = (text) => {
+    const tag = [...container.querySelectorAll('[data-label-kind="equipment-tag"]')].find(
+      (t) => t.textContent === text,
+    );
+    expect(tag).not.toBeUndefined();
     return {
       el: tag,
       x: Number(tag.getAttribute("x")),
@@ -262,6 +301,54 @@ describe("PlanCanvas phone-overview tag drag", () => {
     expect(after.x - before.x).toBeCloseTo(60, 3);
     expect(after.y - before.y).toBeCloseTo(40, 3);
     expect(after.scale).toBeCloseTo(before.scale, 5);
+    // FR1 P1: explicit pan is navigation, not selection — nothing
+    // dispatched at all (no SELECT, no design mutation).
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("Space+drag from a tag does not change an existing different selection (FR1 P1)", () => {
+    const design = twoSymbolDesign();
+    const other = design.symbols.find((s) => s.tag === "D-101");
+    renderFittedCanvas("select", design, { kind: "symbol", id: other.id });
+    const { el: tag, x: tagX, y: tagY } = tagPointByText("T-101");
+    const before = view();
+    keyDown(" ");
+    mouse(tag, "pointerdown", tagX, tagY, { button: 0 });
+    mouse(svg, "pointermove", tagX + 30, tagY + 20);
+    mouse(svg, "pointermove", tagX + 60, tagY + 40);
+    mouse(svg, "pointerup", tagX + 60, tagY + 40, { button: 0 });
+    keyUp(" ");
+    const after = view();
+    expect(after.x - before.x).toBeCloseTo(60, 3);
+    expect(after.y - before.y).toBeCloseTo(40, 3);
+    expect(after.scale).toBeCloseTo(before.scale, 5);
+    // The D-101 selection survives untouched: no SELECT, no mutation.
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("touch drag from a tag keeps the tag's symbol selected (documented FR1 policy)", () => {
+    const design = twoSymbolDesign();
+    const other = design.symbols.find((s) => s.tag === "D-101");
+    const target = design.symbols.find((s) => s.tag === "T-101");
+    renderFittedCanvas("select", design, { kind: "symbol", id: other.id });
+    const { el: tag, x: tagX, y: tagY } = tagPointByText("T-101");
+    const before = view();
+    touch(tag, "pointerdown", 1, tagX, tagY);
+    touch(tag, "pointermove", 1, tagX + 20, tagY + 10); // arms the pan (>6px)
+    touch(svg, "pointermove", 1, tagX + 60, tagY + 40);
+    touch(svg, "pointerup", 1, tagX + 60, tagY + 40);
+    const after = view();
+    expect(after.x - before.x).toBeCloseTo(60, 3);
+    expect(after.y - before.y).toBeCloseTo(40, 3);
+    // Touch-down SELECT is the preexisting canvas policy (a touch pan
+    // from a hit selects it — see handlePointerDownAction): the drag
+    // replaces the prior D-101 selection with T-101, and nothing else
+    // is dispatched.
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SELECT",
+      selection: { kind: "symbol", id: target.id },
+    });
   });
 
   it("middle-button drag from a tag pans the full delta (mouse)", () => {
@@ -275,6 +362,8 @@ describe("PlanCanvas phone-overview tag drag", () => {
     expect(after.x - before.x).toBeCloseTo(60, 3);
     expect(after.y - before.y).toBeCloseTo(40, 3);
     expect(after.scale).toBeCloseTo(before.scale, 5);
+    // FR1 P1: explicit pan is navigation, not selection.
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("Pan-tool left drag from a tag pans the full delta (mouse)", () => {
@@ -288,6 +377,111 @@ describe("PlanCanvas phone-overview tag drag", () => {
     expect(after.x - before.x).toBeCloseTo(60, 3);
     expect(after.y - before.y).toBeCloseTo(40, 3);
     expect(after.scale).toBeCloseTo(before.scale, 5);
+    // FR1 P1: explicit pan is navigation, not selection.
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("pointercancel mid tag-drag tears the drag down and the next gesture starts fresh (FR1 P1)", () => {
+    renderFittedCanvas();
+    const { el: tag, x: tagX, y: tagY } = tagPoint();
+    const before = view();
+    keyDown(" ");
+    mouse(tag, "pointerdown", tagX, tagY, { button: 0 });
+    mouse(svg, "pointermove", tagX + 30, tagY + 20); // arms the pan
+    fireFrames();
+    const mid = view();
+    expect(mid.x - before.x).toBeCloseTo(30, 3);
+    expect(mid.y - before.y).toBeCloseTo(20, 3);
+    pointer(svg, "pointercancel", 1, "mouse", tagX + 30, tagY + 20);
+    // Moves after the cancel must not pan: the drag is gone.
+    mouse(svg, "pointermove", tagX + 90, tagY + 60);
+    fireFrames();
+    const afterCancel = view();
+    expect(afterCancel.x).toBeCloseTo(mid.x, 3);
+    expect(afterCancel.y).toBeCloseTo(mid.y, 3);
+    // The next gesture starts fresh from its own down point.
+    mouse(tag, "pointerdown", tagX, tagY, { button: 0 });
+    mouse(svg, "pointermove", tagX + 60, tagY + 40);
+    mouse(svg, "pointerup", tagX + 60, tagY + 40, { button: 0 });
+    keyUp(" ");
+    const after = view();
+    expect(after.x - mid.x).toBeCloseTo(60, 3);
+    expect(after.y - mid.y).toBeCloseTo(40, 3);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("lostpointercapture mid tag-drag tears the drag down and the next gesture starts fresh (FR1 P1)", () => {
+    renderFittedCanvas();
+    const { el: tag, x: tagX, y: tagY } = tagPoint();
+    const before = view();
+    keyDown(" ");
+    mouse(tag, "pointerdown", tagX, tagY, { button: 0 });
+    mouse(svg, "pointermove", tagX + 30, tagY + 20); // arms the pan
+    fireFrames();
+    const mid = view();
+    expect(mid.x - before.x).toBeCloseTo(30, 3);
+    expect(mid.y - before.y).toBeCloseTo(20, 3);
+    pointer(svg, "lostpointercapture", 1, "mouse", tagX + 30, tagY + 20);
+    // Moves after the loss must not pan: the drag is gone.
+    mouse(svg, "pointermove", tagX + 90, tagY + 60);
+    fireFrames();
+    const afterLoss = view();
+    expect(afterLoss.x).toBeCloseTo(mid.x, 3);
+    expect(afterLoss.y).toBeCloseTo(mid.y, 3);
+    // The next gesture starts fresh from its own down point.
+    mouse(tag, "pointerdown", tagX, tagY, { button: 0 });
+    mouse(svg, "pointermove", tagX + 60, tagY + 40);
+    mouse(svg, "pointerup", tagX + 60, tagY + 40, { button: 0 });
+    keyUp(" ");
+    const after = view();
+    expect(after.x - mid.x).toBeCloseTo(60, 3);
+    expect(after.y - mid.y).toBeCloseTo(40, 3);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("a move in the same batch as lostpointercapture must not pan on the stale drag (FR1 P1, C2 live finding)", () => {
+    renderFittedCanvas();
+    const { el: tag, x: tagX, y: tagY } = tagPoint();
+    const before = view();
+    keyDown(" ");
+    mouse(tag, "pointerdown", tagX, tagY, { button: 0 });
+    mouse(svg, "pointermove", tagX + 30, tagY + 20); // arms the pan
+    fireFrames();
+    const mid = view();
+    expect(mid.x - before.x).toBeCloseTo(30, 3);
+    expect(mid.y - before.y).toBeCloseTo(20, 3);
+    // The browser delivers lostpointercapture lazily, WITH the next
+    // move — both land in one React batch, so the move handler still
+    // closes over the pre-loss drag state. Without the synchronous
+    // lostCaptureRef this move pans the full +60,+40 on the stale
+    // drag; with it, the move bails and the view does not move at all.
+    act(() => {
+      svg.dispatchEvent(
+        new window.PointerEvent("lostpointercapture", {
+          bubbles: true, button: 0, pointerId: 1, pointerType: "mouse",
+          clientX: tagX + 30, clientY: tagY + 20,
+        }),
+      );
+      svg.dispatchEvent(
+        new window.PointerEvent("pointermove", {
+          bubbles: true, button: 0, pointerId: 1, pointerType: "mouse",
+          clientX: tagX + 90, clientY: tagY + 60,
+        }),
+      );
+    });
+    fireFrames();
+    const afterLoss = view();
+    expect(afterLoss.x).toBeCloseTo(mid.x, 3);
+    expect(afterLoss.y).toBeCloseTo(mid.y, 3);
+    // The next gesture starts fresh from its own down point.
+    mouse(tag, "pointerdown", tagX, tagY, { button: 0 });
+    mouse(svg, "pointermove", tagX + 60, tagY + 40);
+    mouse(svg, "pointerup", tagX + 60, tagY + 40, { button: 0 });
+    keyUp(" ");
+    const after = view();
+    expect(after.x - mid.x).toBeCloseTo(60, 3);
+    expect(after.y - mid.y).toBeCloseTo(40, 3);
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("a tag tap still selects and moves nothing (touch and mouse)", () => {
