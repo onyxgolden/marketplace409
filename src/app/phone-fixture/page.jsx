@@ -61,6 +61,11 @@
  *                 (min-w-0 flex-1 + min-w-0 content div) — never a bare
  *                 full-width div, which would hide a real containment
  *                 overflow.
+ *   work-grid   — the real WorkPackageListGrid for the 6 synthetic
+ *                 dashboard packages + the default 10 blank
+ *                 inline-create rows (Jason's S26+ shot 08 shape),
+ *                 for the phone-width contrast / blank-row ruling.
+ *                 No network calls on render.
  *   work-dashboard — the real PlannerDashboardShell (D1 dashboard
  *                 rebuild: number strip + scope-by-status pivot chart),
  *                 fed 6 wholly synthetic rows created for this test
@@ -103,6 +108,7 @@ import ForgeApplicationRail from "@/components/forge/ForgeApplicationRail";
 import ProjectsScreen from "@/components/forge/scheduling/ProjectsScreen";
 import PlannerDashboardShell from "@/components/work-management/PlannerDashboardShell.jsx";
 import WorkPackageBudgetAllocation from "@/components/work-management/WorkPackageBudgetAllocation.jsx";
+import WorkPackageListGrid from "@/components/work-management/WorkPackageListGrid.jsx";
 import { summarizeCostSplit } from "@/domains/work-management/budgetAllocations";
 import RentalOverviewPanel from "@/components/forge/rental/RentalOverviewPanel";
 import RentalPropertyPerformancePanel from "@/components/forge/rental/RentalPropertyPerformancePanel";
@@ -552,6 +558,28 @@ function WorkBudgetEditorCase() {
   );
 }
 
+// Planner phone-width fix (2026-11-28, Jason's S26+ check): the REAL
+// WorkPackageListGrid for the 6 synthetic dashboard packages, with the
+// default 10 blank inline-create rows — the exact shape Jason's shot 08
+// shows (6 real rows + greyed "New package title…" blanks). Renders
+// inside the production page's <main> container. No network calls on
+// render (edits commit through the existing routes; the check never
+// edits). Dark mode comes from the `.dark` class the check adds, the
+// same class the app uses in production.
+function WorkGridCase() {
+  return (
+    <main className="mx-auto w-full max-w-7xl px-4 py-8" data-testid="work-grid-fixture">
+      <WorkPackageListGrid
+        initialPackages={WORK_DASHBOARD_FIXTURE_PACKAGES}
+        properties={[]}
+        workspaceQuery=""
+        activeMode="industrial"
+        ownerId="synth-owner-1"
+      />
+    </main>
+  );
+}
+
 const CASES = {
   designer: DesignerCase,
   fccu: FccuCase,
@@ -564,6 +592,7 @@ const CASES = {
   "projects-list": SchedulingProjectsCase,
   "work-dashboard": WorkDashboardCase,
   "work-budget-editor": WorkBudgetEditorCase,
+  "work-grid": WorkGridCase,
   health: HealthCase,
   "health-dashboard": HealthDashboardCase,
 };

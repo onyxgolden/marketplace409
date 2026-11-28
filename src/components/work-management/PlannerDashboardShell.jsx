@@ -252,13 +252,22 @@ function CostRow({ category, total, packageCount, percent, href, isActive, showB
           isActive ? "bg-slate-100 ring-1 ring-slate-400 dark:bg-slate-800 dark:ring-slate-500" : ""
         }`}
       >
-        <span className="flex items-center gap-2">
+        <span className="flex flex-wrap items-center gap-2">
           <span
             aria-hidden="true"
             className="h-3 w-3 shrink-0 rounded-sm"
             style={{ backgroundColor: budgetCategoryColor(category.value) }}
           />
-          <span className="min-w-0 flex-1 break-words font-medium text-slate-900 dark:text-slate-100">
+          {/* Phone-width fix (Jason's S26+ shot 01, 2026-11-28): the
+             label was the row's only flexible item with min-w-0, so
+             when the fixed siblings (count + w-24 amount + w-12
+             percent + gaps) filled the row it absorbed the whole
+             deficit and break-words broke it one letter per line
+             ("Labor" as L-a-b-o-r at 360px: an 18px label). The label
+             keeps at least its content width (min-w-fit) and the row
+             wraps, so the amount/percent drop to a second line
+             instead of crushing the label. */}
+          <span className="min-w-fit flex-1 break-words font-medium text-slate-900 dark:text-slate-100">
             {budgetCategoryLabel(category.value)}
           </span>
           <span className="shrink-0 text-slate-500 tabular-nums dark:text-slate-400">
@@ -365,7 +374,12 @@ function CostSplitWidget({ costSummary, baseHref, activeCostCategory, activeAllo
         <>
           {/* Same (f) fix as the scope legend: the category label wraps
              instead of truncating, and the donut sits above the legend
-             until xl so the legend gets the full card width. */}
+             until xl so the legend gets the full card width. That alone
+             did not save the label: the row itself packs five items and
+             the label was its only flexible one, so at phone width the
+             fixed siblings starved it to ~18px (Jason's S26+ shot 01).
+             The row (CostRow) now wraps and its label keeps at least
+             its content width — see the comment there. */}
           <div className="mt-3 flex flex-col items-center gap-4 xl:flex-row xl:items-start">
             {view === "donut" && (
               <CostDonutChart categoryTotals={categoryTotals} totalControlEstimateCents={total} />
