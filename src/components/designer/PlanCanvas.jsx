@@ -49,7 +49,7 @@ import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
 import { renderSymbol2D, drawOrgChart } from "./symbolDrawRoutines";
 import { effectiveColor, systemLegend } from "@/domains/roomDesigner/designSystems";
 import { nearestVisibleConnectionAnchor } from "@/domains/roomDesigner/temaInstances";
-import { connectionFlanges, segmentElevationsForDesign } from "@/domains/roomDesigner/pipeCrossings";
+import { connectionFlangesByRun, segmentElevationsForDesign } from "@/domains/roomDesigner/pipeCrossings";
 import { flangeDims } from "@/domains/roomDesigner/flangeGeometry";
 import { finalPipeColor } from "@/domains/roomDesigner/pipeColorPolicy";
 import { FlangePairGlyph } from "./flangeDraw";
@@ -2177,6 +2177,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
 
   // ---- Phase 2: piping mode ----
   // Pipe run: polyline with width from the nominal diameter, plus a
+  // D2 (c): flanges grouped by run ONCE per render. connectionFlanges
+  // scans the whole design (every pipe, every junction) and renderPipe
+  // used to run it per pipe — 91 full scans per render of the FCCU plan.
+  // The grouped map is memoized on the design object (WeakMap in the
+  // domain layer) and on the render (useMemo): view-only re-renders reuse
+  // it, any design edit rebuilds it. Same flange objects, same order.
+  const flangesByRun = useMemo(() => connectionFlangesByRun(design), [design]);
   // dimension label (length + diameter) on its longest segment. Selected
   // runs show draggable vertex handles.
   const renderPipe = (run) => {
@@ -2206,7 +2213,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // Flanged connections (equipment nozzles + pipe-to-pipe junctions)
     // and the plan break indication where the run steps in elevation to
     // cross another pipe — both from the shared domain models.
-    const flanges = connectionFlanges(design).filter((f) => f.runId === run.id);
+    const flanges = flangesByRun.get(run.id) ?? [];
     const segElevs = segmentElevationsForDesign(design, run);
     const jogTicks = [];
     for (let i = 1; i + 1 < (run.points || []).length; i += 1) {
