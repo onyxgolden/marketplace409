@@ -184,11 +184,20 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // anchor must not silently invent a pan delta. Updated at pan-drag
   // start and on every pan move; null when no pan drag is active.
   const lastPanPointRef = useRef(null);
-  // Touch pointerdown point on a phone-overview tag, so a drag starting on
-  // a tag can still pan: the tag's pointerdown is swallowed for tap-select
-  // and no drag ever starts from it (see renderPhoneOverviewTags).
+  // Pointerdown point on a phone-overview tag, so a drag starting on a
+  // tag can still pan: the tag's pointerdown is swallowed for tap-select
+  // (see renderPhoneOverviewTags). A pan-intent press arms the drag at
+  // the down point immediately; any other press arms on move, once it
+  // passes the 6px threshold — both anchored at this down point.
   // {pointerId, x, y} (client px) or null.
   const tagDragStart = useRef(null);
+  // Whether the tag-recorded pointer has already armed its pan (single
+  // arming per pointer): set synchronously on arm, so a second move in
+  // the same burst — before the drag state lands after a re-render —
+  // cannot re-arm and reset the origin. Cleared on pointerup/cancel and
+  // when a pinch takes over (the surviving finger then starts fresh,
+  // exactly like a non-tag drag after a pinch). pointerId or null.
+  const tagPanArmedRef = useRef(null);
   // A touch tap whose commit is deferred to pointerup, so a second finger can
   // still turn the gesture into a pinch (which discards the tap instead of
   // committing it). {pointerId, run} or null.
@@ -1639,6 +1648,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // output — it only saves the wasted commit.
     if (drag !== null) setDrag(null);
     lastPanPointRef.current = null;
+    tagDragStart.current = null;
+    tagPanArmedRef.current = null;
     if (drawPreview !== null) setDrawPreview(null);
   };
 
@@ -1654,6 +1665,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     pendingTap.current = null;
     setDrag(null);
     lastPanPointRef.current = null;
+    tagDragStart.current = null;
+    tagPanArmedRef.current = null;
     setDrawPreview(null);
   };
 
@@ -1720,9 +1733,15 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       // Pinch takes over: cancel any in-progress single-finger drag so a
       // half-drawn wall/room never commits when the second finger lands,
       // and discard any deferred tap — the gesture is a pinch, not a tap.
+      // A tag-armed pan is cancelled the same way, and its recorded down
+      // point is dropped so the surviving finger cannot silently re-arm
+      // from a stale origin: after a pinch a pan starts fresh, exactly
+      // like a non-tag drag (whose state was just cleared above).
       setDrag(null);
       setDrawPreview(null);
       pendingTap.current = null;
+      tagDragStart.current = null;
+      tagPanArmedRef.current = null;
       pinch.current = pinchPoints();
       return true;
     }
@@ -2061,25 +2080,77 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             onPointerDown={(e) => {
               e.stopPropagation();
               tagDragStart.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
+              tagPanArmedRef.current = null;
               dispatch({ type: "SELECT", selection: { kind: "symbol", id: t.symbolId } });
+              // Explicit pan intent starts the drag at the DOWN point,
+              // exactly like the canvas-level pan branch in
+              // handlePointerDownAction: middle button, the Pan tool, or a
+              // held Space bar. A plain left-button / touch press stays
+              // tap-select — its pan arms on move, below.
+              if (e.button === 1 || tool === "pan" || spaceDown) {
+                const gv = gestureView();
+                const start = eventPoint(e);
+                tagPanArmedRef.current = e.pointerId;
+                setDrag({ kind: "pan", start, ox: gv.ox, oy: gv.oy });
+                lastPanPointRef.current = start;
+                gestureTrace("pan-start", { drag: { kind: "pan", start: { ...start }, ox: gv.ox, oy: gv.oy }, gestureView: { ...gv }, tag: true });
+              }
+              // Capture the pointer on the tag so moves keep flowing when
+              // it leaves the label mid-drag (the canvas-level down
+              // captures on the svg; the tag swallows that down, so it
+              // captures here instead).
+              try {
+                e.currentTarget.setPointerCapture(e.pointerId);
+              } catch {
+                // Not implemented (jsdom) — gestures still work.
+              }
             }}
             onPointerMove={(e) => {
-              // A touch drag starting on a tag pans the canvas: the tag is
-              // a label, not a draggable body, and its pointerdown is
-              // swallowed for tap-select above, so without this no drag
-              // ever starts from a tag — the commonest drag origin on a
-              // phone, where tags cover the fitted plot. The first move
-              // only arms the pan (the svg's move handler takes over from
-              // the next move, once the drag state lands); a pinch never
-              // reaches here — its moves are consumed in the capture phase.
-              if (e.pointerType !== "touch" || drag) return;
+              // A drag already armed (or owned by the canvas handler)
+              // takes over from here: the canvas move handler pans from
+              // the drag state from the next move. The armed flag is the
+              // synchronous guard — the drag state only lands after a
+              // re-render, so a second move in the same burst would
+              // otherwise re-arm and reset the origin.
+              if (drag || tagPanArmedRef.current === e.pointerId) return;
               const start = tagDragStart.current;
               if (!start || start.pointerId !== e.pointerId) return;
-              if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 6) return;
+              if (e.pointerType === "touch") {
+                if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 6) return;
+              } else {
+                // Mouse: only explicit pan intent arms from a tag (middle
+                // button held, Pan tool, or Space held) — a plain
+                // left-button press stays tap-select, exactly like the
+                // canvas-level pan branch.
+                const middleHeld = (e.buttons & 4) !== 0;
+                if (!middleHeld && tool !== "pan" && !spaceDown) return;
+                if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 6) return;
+              }
               // Effective-view origin (D2 fix round 2) — see the mouse pan
-              // branch in handlePointerDownAction.
+              // branch in handlePointerDownAction. The drag starts at the
+              // DOWN point, not the arming move: the pan delta is absolute
+              // from the down point, so the down→threshold distance is
+              // applied in full. The old code armed at the arming move and
+              // silently lost it — a 60x40 touch drag came out 52.5x35.
               const gv = gestureView();
-              setDrag({ kind: "pan", start: eventPoint(e), ox: gv.ox, oy: gv.oy });
+              const downPoint = eventPoint({ clientX: start.x, clientY: start.y });
+              tagPanArmedRef.current = e.pointerId;
+              setDrag({ kind: "pan", start: downPoint, ox: gv.ox, oy: gv.oy });
+              // The wheel-rebase anchor (D2 fix round 3): with no pan move
+              // yet, the last pan point IS the drag start, so a wheel
+              // arriving before the first move rebases onto the zoomed
+              // view with no invented delta.
+              lastPanPointRef.current = downPoint;
+              gestureTrace("pan-start", { drag: { kind: "pan", start: { ...downPoint }, ox: gv.ox, oy: gv.oy }, gestureView: { ...gv }, tag: true });
+              // The arming move itself already displaced the pointer:
+              // schedule its view now (absolute from the down point, so
+              // the next canvas-handled move recomputes the identical
+              // view — no double application), or a drag with a single
+              // move would arm and move nothing.
+              const screen = eventPoint(e);
+              userNavRef.current = true; // a pan moves the view: cancels the pending fit
+              lastPanPointRef.current = screen;
+              scheduleGestureView({ ...gv, ox: gv.ox + (screen.x - downPoint.x), oy: gv.oy + (screen.y - downPoint.y) });
             }}
           >
             <rect
@@ -3013,7 +3084,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           // leave mid-gesture; this guards browsers that fire it anyway so
           // a drag is never torn down while its pointer is still captured.
           if (e.currentTarget.hasPointerCapture?.(e.pointerId)) return;
-          flushGestureView(); setDrag(null); setDrawPreview(null); setGhost(null); setCursorScreen(null); touchPointers.current.clear(); pinch.current = null; pendingTap.current = null;
+          flushGestureView(); setDrag(null); setDrawPreview(null); setGhost(null); setCursorScreen(null); touchPointers.current.clear(); pinch.current = null; pendingTap.current = null; tagDragStart.current = null; tagPanArmedRef.current = null;
         }}
         onWheel={onWheel}
         onDoubleClick={onDoubleClick}
