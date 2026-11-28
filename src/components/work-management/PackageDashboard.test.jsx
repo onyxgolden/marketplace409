@@ -74,14 +74,14 @@ const CHANGE_SUMMARY = {
   originalControlEstimateCents: 250000,
   currentEstimateCents: 250000,
   contingencyCents: 50000,
-  runningContractPriceCents: 270000,
+  runningContractPriceCents: 265000,
   contingencyRemainingCents: -5000,
   laborCostCents: 90000,
   totalJobCostCents: 360000,
   countsByStatus: { estimated: 1, approved: 1, material_ordered: 1, denied: 2 },
   countedChangeOrderCount: 2,
   countedNonDeviationCents: 15000,
-  countedDeviationCents: 5000,
+  countedDeviationCents: 55000,
   laborByCraft: [],
   stepsWithoutCraftHours: 0,
   totalsError: null,
@@ -310,10 +310,10 @@ describe("change orders and contingency", () => {
     const widget = rendered.container.querySelector('[data-testid="dashboard-change-orders"]');
     expect(widget.textContent).toContain("3 open");
     expect(widget.textContent).toContain("2 denied");
-    expect(widget.textContent).toContain("$200.00");
-    expect(widget.textContent).toContain("$50.00");
+    expect(widget.textContent).toContain("$700.00");
+    expect(widget.textContent).toContain("$550.00");
     expect(widget.textContent).toContain("-$50.00");
-    expect(widget.textContent).toContain("$2,700.00");
+    expect(widget.textContent).toContain("$2,650.00");
     expect(widget.textContent).toContain("Contingency is overdrawn by $50.00");
     unmount(rendered);
   });
@@ -795,7 +795,7 @@ describe("D5 export CSV", () => {
     expect(rows[1][11]).toBe("stale");
   });
 
-  it("change orders export preserves negative contingency and includes warnings and status counts", async () => {
+  it("change orders export preserves negative contingency and includes warnings, with no status rows in strip pivot", async () => {
     const { container } = await renderDashboard({ projectLabel: "Fictional FCCU Sample Project" });
     const { csvText } = await clickExport(container, "Export Change orders and contingency as CSV");
     const rows = parseCsv(csvText);
@@ -803,10 +803,37 @@ describe("D5 export CSV", () => {
     const body = rows.slice(1);
     const remaining = body.find((r) => r[header.indexOf("metric_id")] === "contingency_remaining");
     expect(remaining[header.indexOf("value_cents")]).toBe("-5000");
-    const denied = body.find((r) => r[header.indexOf("status_key")] === "denied");
-    expect(denied[header.indexOf("value_count")]).toBe("2");
+    // The strip pivot shows no status paragraph on the screen, so it
+    // exports no status subgroup rows either.
+    expect(body.filter((r) => r[header.indexOf("status_key")] !== "")).toHaveLength(0);
     const warning = body.find((r) => r[0] === "state");
     expect(warning[header.indexOf("warning_code")]).toBe("contingency_overdrawn");
+  });
+
+  it("change orders export includes status subgroups in lifecycle order in table pivot", async () => {
+    window.localStorage.setItem(
+      preferenceKey({ ownerId: "owner_1", forgeProjectId: "forge_project_1", packageId: "pkg_1" }),
+      serializePreferences({
+        version: 1,
+        widgets: {
+          strip: { hidden: false, title: null, pivot: "cards" },
+          planning: { hidden: false, title: null, pivot: "bars" },
+          cost: { hidden: false, title: null, pivot: "donut" },
+          changeOrders: { hidden: false, title: null, pivot: "table" },
+        },
+      }),
+    );
+    const { container } = await renderDashboard({ projectLabel: "Fictional FCCU Sample Project" });
+    const { csvText } = await clickExport(container, "Export Change orders and contingency as CSV");
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const body = rows.slice(1);
+    const statusRows = body.filter((r) => r[header.indexOf("status_key")] !== "");
+    expect(statusRows.map((r) => r[header.indexOf("status_key")])).toEqual(
+      ["estimated", "approved", "material_ordered", "denied"],
+    );
+    const denied = statusRows.find((r) => r[header.indexOf("status_key")] === "denied");
+    expect(denied[header.indexOf("value_count")]).toBe("2");
   });
 
   it("hidden widgets export from the hidden-widgets manager", async () => {

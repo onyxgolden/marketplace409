@@ -197,6 +197,11 @@ export default async function WorkPackagesPage({ searchParams }) {
   const workspaceQuery = requestedWorkspace && ownerId === requestedWorkspace
     ? `?workspace=${encodeURIComponent(requestedWorkspace)}`
     : "";
+  // The validated selected workspace — the ?workspace= value, only
+  // when it equals the effective owner (the detail page's rule) — so
+  // the dashboard's export provenance names the workspace actually
+  // selected, never the raw owner id.
+  const workspaceParam = requestedWorkspace && ownerId === requestedWorkspace ? requestedWorkspace : null;
 
   // PR B: the list is project-scoped. ?forgeProject= is parsed and
   // validated server-side on every load (unknown / archived /
@@ -245,8 +250,10 @@ export default async function WorkPackagesPage({ searchParams }) {
   // instead of breaking the page — the same discipline as
   // getPlanningSummary on the detail page.
   let planningByPackage = null;
+  let planningNotApplied = false;
   if (ok && scope.kind !== SCOPE_KINDS.NONE && packages.length > 0) {
     const planningResult = await listPlanningProgressForPackages(db, { ownerId, packages }).catch(() => null);
+    planningNotApplied = planningResult?.notApplied === true;
     if (planningResult && !planningResult.notApplied) planningByPackage = planningResult.byPackage;
   }
 
@@ -258,8 +265,10 @@ export default async function WorkPackagesPage({ searchParams }) {
   // not-available note instead of breaking the page.
   let costByPackage = null;
   let costSummary = null;
+  let costNotApplied = false;
   if (ok && scope.kind !== SCOPE_KINDS.NONE && packages.length > 0) {
     const costResult = await listCostSplitForPackages(db, { ownerId, packages }).catch(() => null);
+    costNotApplied = costResult?.notApplied === true;
     if (costResult && !costResult.notApplied) {
       costByPackage = costResult.byPackage;
       costSummary = costResult.summary;
@@ -411,6 +420,9 @@ export default async function WorkPackagesPage({ searchParams }) {
             scopeByParam={filters.scopeBy}
             scopeViewParam={filters.scopeView}
             ownerId={ownerId}
+            workspaceParam={workspaceParam}
+            planningNotApplied={planningNotApplied}
+            costNotApplied={costNotApplied}
             forgeProjectKey={forgeProjectParam || "none"}
             scopeFilters={filters}
           />

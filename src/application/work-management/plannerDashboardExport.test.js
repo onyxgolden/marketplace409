@@ -180,7 +180,7 @@ describe("landing number strip", () => {
     expect(data[2][15]).toBe("3");
     expect(data[2][17]).toBe("3");
     expect(data.every((r) => r[3] === "landing")).toBe(true);
-    expect(data.every((r) => JSON.parse(r[7]).forgeProject === "forge_project_1")).toBe(true);
+    expect(data.every((r) => JSON.parse(r[7]).grid_filters.forgeProject === "forge_project_1")).toBe(true);
   });
 
   it("marks the estimate block unavailable when the cost read is missing, never $0", () => {
@@ -408,12 +408,12 @@ const CHANGE_SUMMARY = {
   hasEstimate: true,
   currentEstimateCents: 250000,
   contingencyCents: 50000,
-  runningContractPriceCents: 270000,
+  runningContractPriceCents: 265000,
   contingencyRemainingCents: -5000,
   countsByStatus: { estimated: 1, approved: 1, material_ordered: 1, denied: 2 },
   countedChangeOrderCount: 2,
   countedNonDeviationCents: 15000,
-  countedDeviationCents: 5000,
+  countedDeviationCents: 55000,
   warnings: [{ code: "contingency_overdrawn", message: "Contingency is overdrawn by $50.00 — counted Deviations exceed the pool." }],
 };
 
@@ -532,7 +532,7 @@ describe("package cost split", () => {
 });
 
 describe("package change orders", () => {
-  it("exports strip metrics, status subgroups, and warnings with negative contingency intact", () => {
+  it("exports strip metrics and warnings with negative contingency intact, and no status rows in strip pivot", () => {
     const changeStrip = summarizeChangeOrderStrip(CHANGE_SUMMARY);
     const { csvText } = buildWidgetExport("package-change-orders", {
       scope: DETAIL_SCOPE, now: NOW, changeStrip,
@@ -547,11 +547,31 @@ describe("package change orders", () => {
     // "-$50.00" correctly carries the formula-injection prefix.
     expect(remaining[header.indexOf("display_value")]).toBe("'-$50.00");
     const approved = body.find((r) => r[header.indexOf("metric_id")] === "approved_value");
-    expect(approved[header.indexOf("value_cents")]).toBe("20000");
-    const denied = body.find((r) => r[header.indexOf("status_key")] === "denied");
-    expect(denied[header.indexOf("value_count")]).toBe("2");
+    expect(approved[header.indexOf("value_cents")]).toBe("70000");
+    // The strip pivot shows no status paragraph on the screen, so it
+    // exports no status subgroup rows either.
+    expect(body.filter((r) => r[header.indexOf("status_key")] !== "")).toHaveLength(0);
     const warning = body.find((r) => r[0] === "state");
     expect(warning[header.indexOf("warning_code")]).toBe("contingency_overdrawn");
+  });
+
+  it("exports status subgroups in lifecycle order in table pivot only", () => {
+    const changeStrip = summarizeChangeOrderStrip(CHANGE_SUMMARY);
+    const { csvText } = buildWidgetExport("package-change-orders", {
+      scope: DETAIL_SCOPE, now: NOW, changeStrip,
+      countsByStatus: CHANGE_SUMMARY.countsByStatus, pivot: "table", title: "Change orders and contingency",
+    });
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const body = rows.slice(1);
+    const statusRows = body.filter((r) => r[header.indexOf("status_key")] !== "");
+    expect(statusRows.map((r) => r[header.indexOf("status_key")])).toEqual(
+      ["estimated", "approved", "material_ordered", "denied"],
+    );
+    const denied = statusRows.find((r) => r[header.indexOf("status_key")] === "denied");
+    expect(denied[header.indexOf("value_count")]).toBe("2");
+    // Status rows are plain text on the screen — no fabricated drill.
+    expect(statusRows.every((r) => r[header.indexOf("drill_target")] === "")).toBe(true);
   });
 
   it("fails when approved value cannot reconcile to non-Deviation plus Deviation", () => {
@@ -611,5 +631,347 @@ describe("determinism, metadata, and scope isolation", () => {
       baseHref: "/forge/work",
       prefs: { visible: true, title: "Scope block map", grouping: "unit", minLabelPercent: 0, pivot: "table" },
     })).toThrow(/exceeding the 5000 row limit/i);
+  });
+});
+
+describe("fix round 1 — ChatGPT verdict P1s (red-before fixtures)", () => {
+  it("P1.1: a not-applied change-order strip exports a state-only row, never complete zero money/counts", () => {
+    const changeStrip = summarizeChangeOrderStrip({ ...CHANGE_SUMMARY, notApplied: true });
+    expect(changeStrip.state).toBe("not-applied");
+    const { csvText } = buildWidgetExport("package-change-orders", {
+      scope: DETAIL_SCOPE, now: NOW, changeStrip,
+      countsByStatus: CHANGE_SUMMARY.countsByStatus, pivot: "strip", title: "Change orders and contingency",
+    });
+    const rows = parseCsv(csvText);
+    expect(rows).toHaveLength(2);
+    expect(rows[1][0]).toBe("state");
+    expect(rows[1][11]).toBe("not_applied");
+    expect(rows[1][12]).toContain("hasn't been applied");
+    expect(rows[1][17]).toBe(""); // value_cents: no money claimed
+    expect(rows[1][18]).toBe(""); // value_count: no counts claimed
+    expect(rows[1][21]).toBe(""); // drill_target: plain text, no link
+  });
+
+  it("P1.2: empty scope-by-status and block map emit state rows, never a 0 (100%) total or a header-only file", () => {
+    const status = buildWidgetExport("landing-scope-by-status", {
+      scope: SCOPE, now: NOW,
+      summary: { totalPackages: 0, statusBreakdown: [] }, baseHref: "/forge/work", pivot: "donut",
+    });
+    const statusRows = parseCsv(status.csvText);
+    expect(statusRows).toHaveLength(2);
+    expect(statusRows[1][0]).toBe("state");
+    expect(statusRows[1][11]).toBe("empty");
+
+    const map = buildWidgetExport("landing-scope-block-map", {
+      scope: SCOPE, now: NOW, summary: { groups: [] }, totalPackages: 0,
+      dimension: { key: "system", label: "Equipment type", param: "system" },
+      baseHref: "/forge/work",
+      prefs: { visible: true, title: "Scope block map", grouping: "system", minLabelPercent: 4, pivot: "treemap" },
+    });
+    const mapRows = parseCsv(map.csvText);
+    expect(mapRows).toHaveLength(2);
+    expect(mapRows[1][0]).toBe("state");
+    expect(mapRows[1][11]).toBe("empty");
+  });
+
+  it("P1.2: empty progress and empty work plan emit state rows, never 0-of-0 totals", () => {
+    const emptyProgress = {
+      total: { key: null, label: "All packages", packageCount: 0, completeCount: 0, percentComplete: null, packagesWithPlanning: 0, packagesWithoutPlanning: 0, statusCounts: {} },
+      bySystem: [], byPlanner: [], byUnit: [],
+    };
+    const { csvText } = buildWidgetExport("landing-planning-progress", {
+      scope: SCOPE, now: NOW, progress: emptyProgress, planningAvailable: true,
+      activeDimension: "system", activeGroup: null, baseHref: "/forge/work", pivot: "table",
+    });
+    const rows = parseCsv(csvText);
+    expect(rows).toHaveLength(2);
+    expect(rows[1][0]).toBe("state");
+    expect(rows[1][11]).toBe("empty");
+
+    const emptyPlan = summarizeWorkPlanByCraft([]);
+    const plan = buildWidgetExport("package-planning-work-plan", {
+      scope: DETAIL_SCOPE, now: NOW, planningSummary: PLANNING_SUMMARY, workPlan: emptyPlan,
+      pivot: "bars", title: "Planning and work plan",
+    });
+    const planRows = parseCsv(plan.csvText);
+    const header = planRows[0];
+    const empty = planRows.slice(1).find((r) => r[header.indexOf("display_value")] === "No work steps yet — the work plan is empty.");
+    expect(empty).toBeDefined();
+    expect(empty[0]).toBe("state");
+    expect(empty[11]).toBe("empty");
+    expect(empty[header.indexOf("drill_target")]).toBe("tab:steps");
+  });
+
+  it("P1.3: provenance records the dataset and grid filters separately, and as_of_date is an explicit unknown", () => {
+    const { csvText } = buildWidgetExport("landing-scope-by-status", {
+      scope: SCOPE, now: NOW, summary: summarizePlannerDashboard(PACKAGES),
+      baseHref: "/forge/work?forgeProject=forge_project_1", pivot: "donut",
+    });
+    const rows = parseCsv(csvText);
+    const filters = JSON.parse(rows[1][7]);
+    expect(filters.dataset).toBe("project-scope");
+    expect(filters.grid_filters.forgeProject).toBe("forge_project_1");
+    expect(filters.grid_filters.status).toBe("all");
+    expect(rows[1][9]).toBe(""); // as_of_date: no snapshot date exists, so it is blank, never the UTC date
+    const dated = buildWidgetExport("landing-scope-by-status", {
+      scope: { ...SCOPE, asOfDate: "2026-11-27" }, now: NOW, summary: summarizePlannerDashboard(PACKAGES),
+      baseHref: "/forge/work", pivot: "donut",
+    });
+    expect(parseCsv(dated.csvText)[1][9]).toBe("2026-11-27");
+  });
+
+  it("P1.3: widget_title follows the customized title, and workspace_id records the selected workspace", () => {
+    const { csvText } = buildWidgetExport("landing-scope-block-map", {
+      scope: SCOPE, now: NOW, summary: summarizeScopeBlockMap(PACKAGES, "system"), totalPackages: 3,
+      dimension: { key: "system", label: "Equipment type", param: "system" },
+      baseHref: "/forge/work",
+      prefs: { visible: true, title: "My map", grouping: "system", minLabelPercent: 4, pivot: "treemap" },
+    });
+    const rows = parseCsv(csvText);
+    expect(rows[1][2]).toBe("My map");
+    expect(rows[1][4]).toBe("owner_1");
+    const otherWorkspace = buildWidgetExport("landing-scope-block-map", {
+      scope: { ...SCOPE, workspaceId: "workspace_selected" }, now: NOW,
+      summary: summarizeScopeBlockMap(PACKAGES, "system"), totalPackages: 3,
+      dimension: { key: "system", label: "Equipment type", param: "system" },
+      baseHref: "/forge/work",
+      prefs: { visible: true, title: "Scope block map", grouping: "system", minLabelPercent: 4, pivot: "treemap" },
+    });
+    expect(parseCsv(otherWorkspace.csvText)[1][4]).toBe("workspace_selected");
+  });
+
+  it("P1.4: progress rows with partial coverage are partial, and with no planning data are unavailable — never complete", () => {
+    const progress = summarizePlannerProgress(PACKAGES, PLANNING);
+    const { csvText } = buildWidgetExport("landing-planning-progress", {
+      scope: SCOPE, now: NOW, progress, planningAvailable: true,
+      activeDimension: "system", activeGroup: null, baseHref: "/forge/work", pivot: "table",
+    });
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const total = rows.slice(1).find((r) => r[0] === "total");
+    expect(total[11]).toBe("partial"); // 1 of 3 packages has no checklist
+    expect(total[header.indexOf("display_value")]).toContain("75.0%"); // toFixed(1), as the screen renders it
+    const piping = rows.slice(1).find((r) => r[header.indexOf("group_label")] === "Piping");
+    expect(piping[11]).toBe("partial");
+    const noSystem = rows.slice(1).find((r) => r[header.indexOf("group_label")] === "No system");
+    expect(noSystem[11]).toBe("complete");
+
+    const unknown = {
+      total: { key: null, label: "All packages", packageCount: 2, completeCount: 0, percentComplete: null, packagesWithPlanning: 0, packagesWithoutPlanning: 2, statusCounts: { draft: 2 } },
+      bySystem: [{ key: "Piping", label: "Piping", packageCount: 2, completeCount: 0, percentComplete: null, packagesWithPlanning: 0, packagesWithoutPlanning: 2, statusCounts: { draft: 2 } }],
+      byPlanner: [], byUnit: [],
+    };
+    const unknownText = buildWidgetExport("landing-planning-progress", {
+      scope: SCOPE, now: NOW, progress: unknown, planningAvailable: true,
+      activeDimension: "system", activeGroup: null, baseHref: "/forge/work", pivot: "table",
+    }).csvText;
+    const unknownRows = parseCsv(unknownText);
+    expect(unknownRows.slice(1).every((r) => r[11] === "unavailable")).toBe(true);
+    expect(unknownRows.slice(1).every((r) => r[header.indexOf("value_percent")] === "")).toBe(true);
+  });
+
+  it("P1.4: work-plan craft rows with missing hours are partial and preserve the known sum", () => {
+    const workPlan = summarizeWorkPlanByCraft(STEPS);
+    const { csvText } = buildWidgetExport("package-planning-work-plan", {
+      scope: DETAIL_SCOPE, now: NOW, planningSummary: PLANNING_SUMMARY, workPlan,
+      pivot: "bars", title: "Planning and work plan",
+    });
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const welder = rows.slice(1).find((r) => r[header.indexOf("craft_key")] === "welder");
+    expect(welder[11]).toBe("partial");
+    expect(welder[header.indexOf("planned_hours")]).toBe("0");
+    expect(welder[header.indexOf("hours_missing_count")]).toBe("1");
+    const pipefitter = rows.slice(1).find((r) => r[header.indexOf("craft_key")] === "pipefitter");
+    expect(pipefitter[11]).toBe("complete");
+    const summary = rows.slice(1).find((r) => r[0] === "total");
+    expect(summary[11]).toBe("partial");
+  });
+
+  it("P1.4: a landing cost summary claiming complete while unallocated remains is refused, not certified", () => {
+    // Counts and cents re-add (categories 150000 + unallocated 25000 =
+    // the 175000 total; reconciled 1 + unallocated 1 = estimated 2) —
+    // only the complete claim contradicts the unallocated remainder.
+    const contradictory = {
+      ...COST_SUMMARY,
+      categoryTotals: { ...COST_SUMMARY.categoryTotals, labor: 45000 },
+      reconciledPackageCount: 1,
+      unallocatedPackageCount: 1,
+      unallocatedEstimateCents: 25000,
+      complete: true,
+    };
+    expect(() => buildWidgetExport("landing-cost-split", {
+      scope: SCOPE, now: NOW, costSummary: contradictory,
+      baseHref: "/forge/work", pivot: "donut",
+    })).toThrow(/reconcile/i);
+  });
+
+  it("P1.4: a stale package cost split carries structured reconciliation cents and the allocation drill", () => {
+    const cost = summarizePackageCostSplit({
+      ...ALLOCATION_DATA,
+      estimate: { ...ALLOCATION_DATA.estimate, version: 3 },
+    });
+    expect(cost.state).toBe("stale");
+    const { csvText } = buildWidgetExport("package-cost-split", {
+      scope: DETAIL_SCOPE, now: NOW, cost, pivot: "donut", title: "Cost split",
+    });
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    expect(rows).toHaveLength(2);
+    expect(rows[1][0]).toBe("state");
+    expect(rows[1][11]).toBe("stale");
+    expect(rows[1][header.indexOf("state")]).toBe("stale");
+    expect(rows[1][header.indexOf("line_sum_cents")]).toBe("250000");
+    expect(rows[1][header.indexOf("allocated_total_cents")]).toBe("250000");
+    expect(rows[1][header.indexOf("estimate_cents")]).toBe("250000");
+    expect(rows[1][header.indexOf("gap_cents")]).toBe("0");
+    expect(rows[1][header.indexOf("drill_target")]).toBe("tab:budget?detailFocus=budget-allocation:all");
+  });
+
+  it("P1.4: change-order figures that contradict their own estimate/pool identities are refused", () => {
+    const changeStrip = summarizeChangeOrderStrip(CHANGE_SUMMARY);
+    expect(() => buildWidgetExport("package-change-orders", {
+      scope: DETAIL_SCOPE, now: NOW,
+      changeStrip: { ...changeStrip, runningContractPriceCents: 270000 },
+      countsByStatus: CHANGE_SUMMARY.countsByStatus, pivot: "strip", title: "Change orders and contingency",
+    })).toThrow(/reconcile/i);
+    expect(() => buildWidgetExport("package-change-orders", {
+      scope: DETAIL_SCOPE, now: NOW,
+      changeStrip: { ...changeStrip, contingencyRemainingCents: 0 },
+      countsByStatus: CHANGE_SUMMARY.countsByStatus, pivot: "strip", title: "Change orders and contingency",
+    })).toThrow(/reconcile/i);
+  });
+
+  it("P1.5: drill targets use ? on a bare base href and toggle an active row back to the base href", () => {
+    const { csvText } = buildWidgetExport("landing-scope-by-status", {
+      scope: SCOPE, now: NOW, summary: summarizePlannerDashboard(PACKAGES),
+      baseHref: "/forge/work", pivot: "donut", activeStatus: "draft",
+    });
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const draft = rows.slice(1).find((r) => r[header.indexOf("status_key")] === "draft");
+    expect(draft[header.indexOf("drill_target")]).toBe("/forge/work");
+    const inProgress = rows.slice(1).find((r) => r[header.indexOf("status_key")] === "in_progress");
+    expect(inProgress[header.indexOf("drill_target")]).toBe("/forge/work?status=in_progress");
+  });
+
+  it("P1.5: progress drills keep the progress tab and clear an active group filter", () => {
+    const progress = summarizePlannerProgress(PACKAGES, PLANNING);
+    const { csvText } = buildWidgetExport("landing-planning-progress", {
+      scope: SCOPE, now: NOW, progress, planningAvailable: true,
+      activeDimension: "system", activeGroup: { dimension: "system", key: "Piping" },
+      baseHref: "/forge/work", pivot: "table",
+    });
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const piping = rows.slice(1).find((r) => r[header.indexOf("group_label")] === "Piping");
+    expect(piping[header.indexOf("drill_target")]).toBe("/forge/work?progressBy=system");
+    const noSystem = rows.slice(1).find((r) => r[header.indexOf("group_label")] === "No system");
+    expect(noSystem[header.indexOf("drill_target")]).toBe("/forge/work?progressBy=system&system=__none__");
+  });
+
+  it("P1.5: detail drills carry the render focus — craft key, budget category, change-order filter", () => {
+    const workPlan = summarizeWorkPlanByCraft(STEPS);
+    const plan = buildWidgetExport("package-planning-work-plan", {
+      scope: DETAIL_SCOPE, now: NOW, planningSummary: PLANNING_SUMMARY, workPlan,
+      pivot: "bars", title: "Planning and work plan",
+    });
+    const planRows = parseCsv(plan.csvText);
+    const planHeader = planRows[0];
+    const pipefitter = planRows.slice(1).find((r) => r[planHeader.indexOf("craft_key")] === "pipefitter");
+    expect(pipefitter[planHeader.indexOf("drill_target")]).toBe("tab:steps?detailFocus=craft:pipefitter");
+
+    const cost = summarizePackageCostSplit(ALLOCATION_DATA);
+    const laborVariance = computeLaborVariance({ laborBudgetCents: cost.categoryTotals.labor, plannedLaborForecastCents: cost.plannedLaborForecastCents });
+    const costText = buildWidgetExport("package-cost-split", {
+      scope: DETAIL_SCOPE, now: NOW, cost, laborVariance, pivot: "donut", title: "Cost split",
+    }).csvText;
+    const costRows = parseCsv(costText);
+    const costHeader = costRows[0];
+    const labor = costRows.slice(1).find((r) => r[costHeader.indexOf("category_key")] === "labor");
+    expect(labor[costHeader.indexOf("drill_target")]).toBe("tab:budget?detailFocus=budget-allocation:labor");
+    const total = costRows.slice(1).find((r) => r[0] === "total");
+    expect(total[costHeader.indexOf("drill_target")]).toBe("tab:budget?detailFocus=budget-allocation:all");
+
+    const changeStrip = summarizeChangeOrderStrip(CHANGE_SUMMARY);
+    const changeText = buildWidgetExport("package-change-orders", {
+      scope: DETAIL_SCOPE, now: NOW, changeStrip,
+      countsByStatus: CHANGE_SUMMARY.countsByStatus, pivot: "strip", title: "Change orders and contingency",
+    }).csvText;
+    const changeRows = parseCsv(changeText);
+    const changeHeader = changeRows[0];
+    const byMetric = (id) => changeRows.slice(1).find((r) => r[changeHeader.indexOf("metric_id")] === id);
+    expect(byMetric("open_count")[changeHeader.indexOf("drill_target")]).toBe("tab:budget?detailFocus=change-orders:open");
+    expect(byMetric("approved_value")[changeHeader.indexOf("drill_target")]).toBe("tab:budget?detailFocus=change-orders:counted");
+    expect(byMetric("counted_non_deviation")[changeHeader.indexOf("drill_target")]).toBe("");
+    expect(byMetric("counted_deviation")[changeHeader.indexOf("drill_target")]).toBe("");
+    expect(byMetric("contingency_used")[changeHeader.indexOf("drill_target")]).toBe("tab:budget?detailFocus=change-orders:deviation");
+    expect(byMetric("contingency_remaining")[changeHeader.indexOf("drill_target")]).toBe("tab:budget?detailFocus=estimate");
+    expect(byMetric("running_contract_price")[changeHeader.indexOf("drill_target")]).toBe("tab:budget?detailFocus=estimate");
+  });
+
+  it("P1.5: the strip uses the render labels and the shared drill targets", () => {
+    const { csvText } = buildWidgetExport("package-number-strip", {
+      scope: DETAIL_SCOPE, now: NOW, pkg: PKG, planningSummary: PLANNING_SUMMARY,
+      projectLabel: "Fictional FCCU Sample Project", pivot: "cards", title: "Package",
+    });
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    expect(rows.slice(1).map((r) => r[header.indexOf("field_label")])).toEqual([
+      "Package number", "Status", "Planned budget", "Planning steps", "Planning percent", "Milestones due next",
+    ]);
+    const budget = rows.slice(1).find((r) => r[header.indexOf("field_id")] === "budget");
+    expect(budget[header.indexOf("drill_target")]).toBe("tab:budget");
+  });
+
+  it("P1.6: leading tab/CR/LF cells are neutralized as triggers, trusted numerics stay bare", () => {
+    const text = serializeCsv(["label", "cents"], [
+      ["\t2+2", -100],
+      ["\nHello", 0],
+      ["\r=cmd", 0],
+      ["\t@x", 0],
+      ["normal -5 label", -5],
+    ]);
+    const rows = parseCsv(text);
+    expect(rows[1][0]).toBe("'\t2+2");
+    expect(rows[2][0]).toBe("'\nHello");
+    expect(rows[3][0]).toBe("'\r=cmd");
+    expect(rows[4][0]).toBe("'\t@x");
+    expect(rows[5][0]).toBe("normal -5 label");
+    expect(rows[1][1]).toBe("-100");
+    expect(rows[5][1]).toBe("-5");
+  });
+
+  it("contract: block-map groups reconcile against the independent strip total, and progress status counts re-add", () => {
+    const summary = summarizeScopeBlockMap(PACKAGES, "system");
+    expect(() => buildWidgetExport("landing-scope-block-map", {
+      scope: SCOPE, now: NOW, summary, totalPackages: 99,
+      dimension: { key: "system", label: "Equipment type", param: "system" },
+      baseHref: "/forge/work",
+      prefs: { visible: true, title: "Scope block map", grouping: "system", minLabelPercent: 4, pivot: "treemap" },
+    })).toThrow(/reconcile/i);
+
+    const progress = summarizePlannerProgress(PACKAGES, PLANNING);
+    expect(() => buildWidgetExport("landing-planning-progress", {
+      scope: SCOPE, now: NOW,
+      progress: { ...progress, total: { ...progress.total, statusCounts: { draft: 99, in_progress: 1 } } },
+      planningAvailable: true, activeDimension: "system", activeGroup: null, baseHref: "/forge/work", pivot: "table",
+    })).toThrow(/reconcile/i);
+  });
+
+  it("contract: a missing required numeric is refused, never fabricated as zero", () => {
+    expect(() => buildWidgetExport("landing-cost-split", {
+      scope: SCOPE, now: NOW,
+      costSummary: { ...COST_SUMMARY, categoryTotals: { ...COST_SUMMARY.categoryTotals, labor: undefined } },
+      baseHref: "/forge/work", pivot: "donut",
+    })).toThrow(/reconcile|not a safe integer/i);
+    expect(() => buildWidgetExport("package-planning-work-plan", {
+      scope: DETAIL_SCOPE, now: NOW, planningSummary: PLANNING_SUMMARY, workPlan: null,
+      pivot: "bars", title: "Planning and work plan",
+    })).toThrow(/missing/i);
+    expect(() => buildWidgetExport("package-change-orders", {
+      scope: DETAIL_SCOPE, now: NOW, changeStrip: null,
+      countsByStatus: {}, pivot: "strip", title: "Change orders and contingency",
+    })).toThrow(/missing/i);
   });
 });

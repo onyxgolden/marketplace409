@@ -119,6 +119,21 @@ describe("PlannerWidgetExportButton", () => {
     mocks.restore();
   });
 
+  it("ignores a second click in the same tick, before the button re-renders", async () => {
+    const mocks = setupDownloadMocks();
+    const { container } = renderButton({ widgetTitle: "Scope by status", buildExport: BUILD });
+    const button = container.querySelector("button");
+    // Two clicks with no await between them: React state has not
+    // re-rendered yet, so only the synchronous guard can stop the
+    // second download.
+    button.click();
+    button.click();
+    await act(async () => {});
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(mocks.captured.anchors).toHaveLength(1);
+    mocks.restore();
+  });
+
   it("revokes the Object URL even when the anchor click throws", async () => {
     const mocks = setupDownloadMocks();
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {
@@ -131,6 +146,9 @@ describe("PlannerWidgetExportButton", () => {
     });
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:fake-url");
     expect(container.textContent).toContain("Export failed — retry");
+    // The anchor is removed in the finally block even though its
+    // click threw — no dangling element is left in the document.
+    expect(document.querySelector("a")).toBeNull();
     mocks.restore();
   });
 

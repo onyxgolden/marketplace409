@@ -808,5 +808,24 @@ describe("PlannerScopeBlockMap", () => {
       const tiles = rows.slice(1).filter((r) => r[0] === "data");
       expect(tiles.some((r) => r[header.indexOf("group_label")] === "Valves")).toBe(true);
     });
+
+    it("the export records the EFFECTIVE grouping/pivot under a URL override, not the saved prefs", async () => {
+      // Saved prefs say system/treemap; the URL pins planner/table —
+      // the widget renders the override, so the export must record it.
+      window.localStorage.setItem(
+        "forge.dashboard.scopeBlockMap.v1.owner_1.proj_1",
+        JSON.stringify({ visible: true, title: "Scope block map", grouping: "system", minLabelPercent: 4, pivot: "treemap" }),
+      );
+      const { container } = render({
+        packages: [PKG({ system: "Pumps" })], ownerId: "owner_1", forgeProjectKey: "proj_1",
+        scopeByParam: "planner", scopeViewParam: "table",
+      });
+      await flush();
+      const { csvText } = await clickExport(container, "Export Scope block map as CSV");
+      const rows = parseCsv(csvText);
+      const config = JSON.parse(rows[1][8]);
+      expect(config.grouping).toBe("planner");
+      expect(config.pivot).toBe("table");
+    });
   });
 });

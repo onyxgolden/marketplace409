@@ -213,9 +213,13 @@ export default function PackageDashboard({ packageId, pkg, planningSummary = nul
   const pageContext = usePackagePageContext();
   const forgeProjectId = pageContext?.forgeProject ?? "default";
   // D5 export scope: the project scope plus this package, recorded
-  // verbatim on every exported row (scope_filters_json).
+  // verbatim on every exported row (scope_filters_json). workspaceId is
+  // the VALIDATED selected workspace from the detail page provider
+  // (workspaceParam — the ?workspace= value, only when it equals the
+  // effective owner), never the raw owner id when a different workspace
+  // was selected.
   const scopeMeta = {
-    workspaceId: ownerId,
+    workspaceId: pageContext?.workspace ?? ownerId,
     forgeProjectId,
     packageId,
     scopeFilters: { forgeProject: forgeProjectId, package: packageId },
@@ -363,9 +367,12 @@ export default function PackageDashboard({ packageId, pkg, planningSummary = nul
     const widgetId = WIDGET_EXPORT_IDS[id];
     const title = widgetTitle(id);
     const pivot = prefs.widgets[id]?.pivot;
+    // visible records whether the widget is actually showing: a hidden
+    // widget exports from the manager below, and its rows must say so.
     const common = {
       scope: scopeMeta, projectSlug: projectLabel,
       packageCode: pkg?.code ? formatPackageCode(pkg.code) : null, pivot, title,
+      visible: !prefs.widgets[id]?.hidden,
     };
     if (id === "strip") {
       return { title, buildExport: () => buildWidgetExport(widgetId, { ...common, pkg, planningSummary }) };

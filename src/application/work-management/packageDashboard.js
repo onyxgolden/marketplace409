@@ -269,6 +269,13 @@ export function summarizeChangeOrderStrip(summary = {}) {
     countedNonDeviationCents,
     countedDeviationCents,
     approvedValueCents: countedNonDeviationCents + countedDeviationCents,
+    // D5: the current control estimate, so the export can reconcile the
+    // running contract price (estimate + counted non-Deviation) and the
+    // contingency remainder (pool − counted Deviation) against the
+    // source identities instead of trusting the strip's figures alone.
+    // Null when there is no estimate — the identities are then
+    // unverifiable and the exporter skips them rather than inventing.
+    currentEstimateCents: summary?.currentEstimateCents ?? null,
     contingencyCents: summary?.contingencyCents ?? null,
     contingencyUsedCents: countedDeviationCents,
     contingencyRemainingCents: summary?.contingencyRemainingCents ?? null,
@@ -329,6 +336,20 @@ export function serializeDetailFocus(focus) {
     return isBudgetCategory(focus.category) ? `budget-allocation:${focus.category}` : null;
   }
   return null;
+}
+
+// -- Detail drill targets (D5) --------------------------------------------
+// The exact (tab, focus) the D4 widgets pass to onDrill, serialized the
+// way the detail page writes it to the URL: `tab:<tab>` with no focus,
+// or `tab:<tab>?detailFocus=<serialized focus>`. The D5 exporters use
+// this — never a hand-built "tab:budget" — so the CSV target carries
+// the same focus the screen's drill lands on (craft key, budget
+// category, change-order filter, or the control estimate). A widget
+// element that is not a drill renders no target at all: callers pass
+// null and get "".
+export function detailDrillTarget(tab, focus) {
+  const serialized = serializeDetailFocus(focus);
+  return serialized ? `tab:${tab}?detailFocus=${serialized}` : `tab:${tab}`;
 }
 
 // -- Planning display helpers --------------------------------------------

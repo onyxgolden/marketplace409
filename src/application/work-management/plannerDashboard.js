@@ -329,6 +329,79 @@ export function summarizeScopeBlockMap(packages, dimensionKey) {
   return { dimension: dim.key, groups: sortScopeGroups(groups, dim.noneKey) };
 }
 
+// -- Shared drill-down link builders (D5) ---------------------------------
+// The landing dashboard's drill links are project-wide (the strip's
+// scope, never the filtered grid): baseHref carries only the scope
+// (workspace + project) and each helper appends exactly the filter the
+// row counts. The separator is "?" when baseHref has no query yet and
+// "&" otherwise — a bare "/forge/work" plus "&status=" is an invalid
+// URL. The D5 exporters build drill_target with these same helpers so
+// the CSV target is byte-identical to the link the screen renders,
+// including the toggle-off form (an active row links back to baseHref,
+// clearing its filter, never to itself).
+
+export function appendQueryParam(baseHref, key, value) {
+  const separator = baseHref.includes("?") ? "&" : "?";
+  return `${baseHref}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
+export function statusHref(baseHref, status) {
+  return appendQueryParam(baseHref, "status", status);
+}
+
+export function costCategoryHref(baseHref, category) {
+  return appendQueryParam(baseHref, "costCategory", category);
+}
+
+export function unallocatedCostHref(baseHref) {
+  return appendQueryParam(baseHref, "allocation", "unallocated");
+}
+
+export function progressGroupHref(baseHref, dimensionKey, groupKey) {
+  // Drill-down links are project-wide (D1 fix-round-1 lesson): baseHref
+  // carries only the scope; the link adds the progress tab + the group
+  // filter, never the status / property / mode narrowing filters — so
+  // the grid it lands on holds exactly the rows the count advertises.
+  // The param name is the dimension key (planner / unit / system).
+  const separator = baseHref.includes("?") ? "&" : "?";
+  const params = new URLSearchParams();
+  params.set("progressBy", dimensionKey);
+  params.set(dimensionKey, groupKey);
+  return `${baseHref}${separator}${params.toString()}`;
+}
+
+export function progressActiveGroupHref(baseHref, dimensionKey) {
+  // An active group row clears its group filter but keeps the progress
+  // tab, so the landing shows the same grouping with all rows.
+  const separator = baseHref.includes("?") ? "&" : "?";
+  const params = new URLSearchParams();
+  params.set("progressBy", dimensionKey);
+  return `${baseHref}${separator}${params.toString()}`;
+}
+
+export function progressTabHref(baseHref, dimensionKey, activeGroup) {
+  // Switching the grouping keeps the active group filter (the grid
+  // stays filtered) and records the tab, so the landing shows the
+  // grouping the user picked with the same rows.
+  const separator = baseHref.includes("?") ? "&" : "?";
+  const params = new URLSearchParams();
+  params.set("progressBy", dimensionKey);
+  if (activeGroup) params.set(activeGroup.dimension, activeGroup.key);
+  return `${baseHref}${separator}${params.toString()}`;
+}
+
+export function blockGroupHref(baseHref, dimensionParam, groupKey) {
+  return appendQueryParam(baseHref, dimensionParam, groupKey);
+}
+
+export function blockGroupStatusHref(baseHref, dimensionParam, groupKey, statusKey) {
+  const separator = baseHref.includes("?") ? "&" : "?";
+  const params = new URLSearchParams();
+  params.set(dimensionParam, groupKey);
+  params.set("status", statusKey);
+  return `${baseHref}${separator}${params.toString()}`;
+}
+
 export function summarizePlannerDashboard(packages) {
   const rows = Array.isArray(packages) ? packages : [];
   let totalPlannedCostCents = 0;

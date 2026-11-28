@@ -10,7 +10,7 @@
 // finally block on both paths. Repeated clicks while busy are ignored.
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 export default function PlannerWidgetExportButton({
   widgetTitle,
@@ -20,11 +20,17 @@ export default function PlannerWidgetExportButton({
   onExported = null,
 }) {
   const [phase, setPhase] = useState("idle"); // idle | busy | done | error
+  // Synchronous guard: React state has not re-rendered between two
+  // clicks in the same tick, so phase === "busy" alone cannot stop the
+  // second one — the ref closes that window.
+  const busyRef = useRef(false);
 
   async function handleClick() {
-    if (phase === "busy" || disabled) return;
+    if (phase === "busy" || disabled || busyRef.current) return;
+    busyRef.current = true;
     setPhase("busy");
     let url = null;
+    let anchor = null;
     try {
       const { filename, csvText } = buildExport();
       // Let the busy state paint (and the button disable) before the
@@ -32,18 +38,22 @@ export default function PlannerWidgetExportButton({
       await Promise.resolve();
       const blob = new Blob([csvText], { type: "text/csv;charset=utf-8" });
       url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
+      anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = filename;
       document.body.appendChild(anchor);
       anchor.click();
-      anchor.remove();
       setPhase("done");
       if (typeof onExported === "function") onExported({ filename });
     } catch {
       setPhase("error");
     } finally {
+      // The anchor and the Object URL are always released — even when
+      // the click itself throws, so a failed download never leaves a
+      // dangling element or URL behind.
+      if (anchor) anchor.remove();
       if (url) URL.revokeObjectURL(url);
+      busyRef.current = false;
     }
   }
 
