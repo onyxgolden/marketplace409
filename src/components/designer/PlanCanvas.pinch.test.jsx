@@ -514,9 +514,9 @@ describe("PlanCanvas two-finger touch gestures", () => {
       );
     });
     touch(tag, "pointermove", 1, tagX + 20, tagY); // arms the pan (>6px)
-    touch(svg, "pointermove", 1, tagX + 70, tagY); // pans +50px from the arm point
+    touch(svg, "pointermove", 1, tagX + 70, tagY); // pans the FULL +70 from the down point (tag slice: the drag anchors at the down point, not the arming move)
     touch(svg, "pointerup", 1, tagX + 70, tagY);
-    expect(Number(wall().getAttribute("x1"))).toBeCloseTo(x1Before + 50, 3);
+    expect(Number(wall().getAttribute("x1"))).toBeCloseTo(x1Before + 70, 3);
     expect(scaleFromGrid(svg)).toBeCloseTo(342 / 7680, 4); // pan never zooms
     expect(dispatch).toHaveBeenCalledWith({
       type: "SELECT",
