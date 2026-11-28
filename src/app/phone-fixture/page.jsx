@@ -516,6 +516,24 @@ function WorkDashboardCase({ cost = null, costCategory = null, scopeBy = null, s
         activeCostCategory={costCategory}
         scopeByParam={scopeBy}
         scopeViewParam={scopeView}
+        ownerId="synth-owner-1"
+        forgeProjectKey="forge_project_synth_d1_dashboard"
+        scopeFilters={{
+          status: "all",
+          forgeProject: "forge_project_synth_d1_dashboard",
+          propertyId: "all",
+          mode: "all",
+          planner: "all",
+          area: "all",
+          unit: "all",
+          system: "all",
+          workscopeCode: "all",
+          costCategory,
+          allocation: null,
+          progressBy: null,
+          scopeBy,
+          scopeView,
+        }}
       />
     </main>
   );

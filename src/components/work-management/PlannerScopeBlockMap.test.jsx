@@ -677,4 +677,136 @@ describe("PlannerScopeBlockMap", () => {
     expect(labelSpan.className).not.toContain("truncate");
     expect(headerLink.getAttribute("aria-label")).toContain(`${longToken}, 1 package`);
   });
+
+  // D5 export CSV — the block map exports from its header and from the
+  // hidden placeholder, with every tile present regardless of the
+  // label threshold.
+  describe("D5 export CSV", () => {
+    function parseCsv(text) {
+      const rows = [];
+      let row = [];
+      let field = "";
+      let inQuotes = false;
+      for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if (inQuotes) {
+          if (ch === '"') {
+            if (text[i + 1] === '"') { field += '"'; i += 1; }
+            else inQuotes = false;
+          } else field += ch;
+        } else if (ch === '"') inQuotes = true;
+        else if (ch === ",") { row.push(field); field = ""; }
+        else if (ch === "\r" && text[i + 1] === "\n") { row.push(field); rows.push(row); row = []; field = ""; i += 1; }
+        else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+        else field += ch;
+      }
+      if (field !== "" || row.length > 0) { row.push(field); rows.push(row); }
+      return rows;
+    }
+
+    let download = null;
+    afterEach(() => {
+      download?.restore();
+      download = null;
+    });
+
+    function setupDownload() {
+      const captured = { blob: null, anchors: [] };
+      const originalCreate = URL.createObjectURL;
+      const originalRevoke = URL.revokeObjectURL;
+      URL.createObjectURL = vi.fn((blob) => { captured.blob = blob; return "blob:fake"; });
+      URL.revokeObjectURL = vi.fn();
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function () {
+        captured.anchors.push({ href: this.href, download: this.download });
+      });
+      download = {
+        captured,
+        restore() {
+          URL.createObjectURL = originalCreate;
+          URL.revokeObjectURL = originalRevoke;
+          clickSpy.mockRestore();
+        },
+      };
+      return download;
+    }
+
+    async function clickExport(container, label) {
+      const dl = setupDownload();
+      const button = [...container.querySelectorAll("button")].find(
+        (candidate) => candidate.getAttribute("aria-label") === label,
+      );
+      expect(button).toBeDefined();
+      await act(async () => {
+        button.click();
+      });
+      expect(dl.captured.anchors).toHaveLength(1);
+      return { download: dl.captured.anchors[0].download, csvText: await dl.captured.blob.text() };
+    }
+
+    it("the header has a labelled Export CSV control", async () => {
+      const { container } = render({ packages: [PKG({ system: "Pumps" })], ownerId: "owner_1", forgeProjectKey: "proj_1" });
+      await flush();
+      const button = [...container.querySelectorAll("button")].find(
+        (candidate) => candidate.getAttribute("aria-label") === "Export Scope block map as CSV",
+      );
+      expect(button).toBeDefined();
+      expect(button.disabled).toBe(false);
+    });
+
+    it("export downloads group tiles and totals matching the treemap", async () => {
+      const { container } = render({
+        packages: [
+          PKG({ id: "wp_1", system: "Pumps", status: "draft" }),
+          PKG({ id: "wp_2", system: "Pumps", status: "in_progress" }),
+          PKG({ id: "wp_3", system: null, status: "draft" }),
+        ],
+        ownerId: "owner_1",
+        forgeProjectKey: "proj_1",
+      });
+      await flush();
+      const { csvText } = await clickExport(container, "Export Scope block map as CSV");
+      const rows = parseCsv(csvText);
+      const header = rows[0];
+      const tiles = rows.slice(1).filter((r) => r[0] === "data");
+      expect(tiles).toHaveLength(3);
+      const totals = rows.slice(1).filter((r) => r[0] === "total");
+      expect(totals).toHaveLength(2);
+      expect(totals.find((r) => r[header.indexOf("group_label")] === "Pumps")[header.indexOf("value_count")]).toBe("2");
+      expect(totals.find((r) => r[header.indexOf("group_label")] === "No system")[header.indexOf("value_count")]).toBe("1");
+    });
+
+    it("the hidden placeholder exports the hidden widget and records visible=false", async () => {
+      window.localStorage.setItem(
+        "forge.dashboard.scopeBlockMap.v1.owner_1.proj_1",
+        JSON.stringify({ visible: false, title: "Scope block map", grouping: "system", minLabelPercent: 4, pivot: "treemap" }),
+      );
+      const { container } = render({
+        packages: [PKG({ id: "wp_1", system: "Pumps", status: "draft" })],
+        ownerId: "owner_1",
+        forgeProjectKey: "proj_1",
+      });
+      await flush();
+      expect(container.querySelector('[data-testid="scope-block-hidden-placeholder"]')).not.toBeNull();
+      const { csvText } = await clickExport(container, "Export Scope block map as CSV");
+      const rows = parseCsv(csvText);
+      expect(JSON.parse(rows[1][8]).visible).toBe(false);
+      expect(rows.slice(1).filter((r) => r[0] === "data")).toHaveLength(1);
+    });
+
+    it("the label threshold never drops rows from the export", async () => {
+      window.localStorage.setItem(
+        "forge.dashboard.scopeBlockMap.v1.owner_1.proj_1",
+        JSON.stringify({ visible: true, title: "Scope block map", grouping: "system", minLabelPercent: 25, pivot: "treemap" }),
+      );
+      const packages = Array.from({ length: 9 }, (_, i) => PKG({ id: `wp_big_${i}`, system: "Pumps", status: "draft" }));
+      packages.push(PKG({ id: "wp_small", system: "Valves", status: "draft" }));
+      const { container } = render({ packages, ownerId: "owner_1", forgeProjectKey: "proj_1" });
+      await flush();
+      const { csvText } = await clickExport(container, "Export Scope block map as CSV");
+      const rows = parseCsv(csvText);
+      const header = rows[0];
+      const tiles = rows.slice(1).filter((r) => r[0] === "data");
+      expect(tiles.some((r) => r[header.indexOf("group_label")] === "Valves")).toBe(true);
+    });
+  });
 });

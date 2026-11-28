@@ -412,6 +412,7 @@ export default async function WorkPackagesPage({ searchParams }) {
             scopeViewParam={filters.scopeView}
             ownerId={ownerId}
             forgeProjectKey={forgeProjectParam || "none"}
+            scopeFilters={filters}
           />
         </div>
       )}

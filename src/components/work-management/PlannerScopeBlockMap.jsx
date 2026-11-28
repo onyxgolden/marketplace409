@@ -12,6 +12,10 @@
 // no further arithmetic of its own, only layout and links.
 "use client";
 
+import {
+  buildWidgetExport,
+} from "@/application/work-management/plannerDashboardExport.js";
+import PlannerWidgetExportButton from "./PlannerWidgetExportButton.jsx";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -325,7 +329,7 @@ function SettingsPanel({ prefs, effectiveGrouping, onChange, onGroupingChange, o
   );
 }
 
-export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, activeStatus, scopeByParam, scopeViewParam, ownerId, forgeProjectKey }) {
+export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, activeStatus, scopeByParam, scopeViewParam, ownerId, forgeProjectKey, scope = null, projectSlug = null }) {
   // Hydration order (brief, binding): server-safe defaults render first
   // (no layout shift, no empty flash — `prefs` starts as DEFAULT_PREFS,
   // a fully valid, renderable state on its own), then valid saved
@@ -449,15 +453,23 @@ export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, 
 
   if (!prefs.visible) {
     return (
-      <div className="flex min-h-11 items-center justify-between rounded-lg border border-dashed border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900" data-testid="scope-block-hidden-placeholder">
+      <div className="flex min-h-11 flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900" data-testid="scope-block-hidden-placeholder">
         <p className="text-sm text-slate-500 dark:text-slate-400">{prefs.title} is hidden.</p>
-        <button
-          type="button"
-          onClick={() => updatePrefs({ visible: true })}
-          className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-        >
-          Show {prefs.title}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <PlannerWidgetExportButton
+            widgetTitle={prefs.title}
+            buildExport={() => buildWidgetExport("landing-scope-block-map", {
+              scope, projectSlug, summary, totalPackages, dimension, baseHref, prefs,
+            })}
+          />
+          <button
+            type="button"
+            onClick={() => updatePrefs({ visible: true })}
+            className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            Show {prefs.title}
+          </button>
+        </div>
       </div>
     );
   }
@@ -498,6 +510,12 @@ export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, 
           >
             Settings
           </button>
+          <PlannerWidgetExportButton
+            widgetTitle={prefs.title}
+            buildExport={() => buildWidgetExport("landing-scope-block-map", {
+              scope, projectSlug, summary, totalPackages, dimension, baseHref, prefs,
+            })}
+          />
         </div>
       </div>
       <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">

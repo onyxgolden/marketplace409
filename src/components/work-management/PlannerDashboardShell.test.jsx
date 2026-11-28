@@ -390,4 +390,182 @@ describe("PlannerDashboardShell", () => {
     expect(legendRow.className).toContain("xl:flex-row");
     expect(legendRow.className).not.toContain("sm:flex-row");
   });
+
+  // D5 export CSV — one labelled control per widget, one file per
+  // click, payload equal to the rendered values.
+  describe("D5 export CSV", () => {
+    function parseCsv(text) {
+      const rows = [];
+      let row = [];
+      let field = "";
+      let inQuotes = false;
+      for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if (inQuotes) {
+          if (ch === '"') {
+            if (text[i + 1] === '"') { field += '"'; i += 1; }
+            else inQuotes = false;
+          } else field += ch;
+        } else if (ch === '"') inQuotes = true;
+        else if (ch === ",") { row.push(field); field = ""; }
+        else if (ch === "\r" && text[i + 1] === "\n") { row.push(field); rows.push(row); row = []; field = ""; i += 1; }
+        else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+        else field += ch;
+      }
+      if (field !== "" || row.length > 0) { row.push(field); rows.push(row); }
+      return rows;
+    }
+
+    let download = null;
+    afterEach(() => {
+      download?.restore();
+      download = null;
+    });
+
+    function setupDownload() {
+      const captured = { blob: null, anchors: [] };
+      const originalCreate = URL.createObjectURL;
+      const originalRevoke = URL.revokeObjectURL;
+      URL.createObjectURL = vi.fn((blob) => { captured.blob = blob; return "blob:fake"; });
+      URL.revokeObjectURL = vi.fn();
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function () {
+        captured.anchors.push({ href: this.href, download: this.download });
+      });
+      download = {
+        captured,
+        restore() {
+          URL.createObjectURL = originalCreate;
+          URL.revokeObjectURL = originalRevoke;
+          clickSpy.mockRestore();
+        },
+      };
+      return download;
+    }
+
+    function exportButton(label) {
+      const button = [...container.querySelectorAll("button")].find(
+        (candidate) => candidate.getAttribute("aria-label") === label,
+      );
+      expect(button).toBeDefined();
+      return button;
+    }
+
+    async function clickExport(label) {
+      const dl = setupDownload();
+      await act(async () => {
+        exportButton(label).click();
+      });
+      expect(dl.captured.anchors).toHaveLength(1);
+      expect(dl.captured.blob).not.toBeNull();
+      return { download: dl.captured.anchors[0].download, csvText: await dl.captured.blob.text() };
+    }
+
+    it("every landing widget has a labelled Export CSV control", () => {
+      renderShell({
+        costSummary: COST_SUMMARY,
+        planningByPackage: PLANNING,
+        ownerId: "owner_1",
+        forgeProjectKey: "forge_project_1",
+        scopeFilters: { status: "all", forgeProject: "forge_project_1" },
+      });
+      for (const label of [
+        "Export Number strip as CSV",
+        "Export Scope by status as CSV",
+        "Export Scope block map as CSV",
+        "Export Planning progress as CSV",
+        "Export Cost split as CSV",
+      ]) {
+        const button = exportButton(label);
+        expect(button.disabled).toBe(false);
+        expect(button.textContent).toContain("Export CSV");
+      }
+    });
+
+    it("scope export downloads one file whose rows equal the rendered legend", async () => {
+      renderShell({ costSummary: COST_SUMMARY, planningByPackage: PLANNING });
+      const { download, csvText } = await clickExport("Export Scope by status as CSV");
+      expect(download).toMatch(/^forge-planner-unassigned-packages-landing-scope-by-status-\d{8}-\d{6}Z\.csv$/);
+      const rows = parseCsv(csvText);
+      const header = rows[0];
+      const data = rows.slice(1).filter((r) => r[0] === "data");
+      expect(data).toHaveLength(2);
+      expect(data[0][header.indexOf("status_key")]).toBe("draft");
+      expect(data[0][header.indexOf("value_count")]).toBe("2");
+      expect(data[1][header.indexOf("status_key")]).toBe("in_progress");
+      const total = rows.slice(1).find((r) => r[0] === "total");
+      expect(total[header.indexOf("value_count")]).toBe("3");
+    });
+
+    it("strip export downloads the three visible blocks with the strip total", async () => {
+      renderShell({ costSummary: COST_SUMMARY });
+      const { csvText } = await clickExport("Export Number strip as CSV");
+      const rows = parseCsv(csvText);
+      const header = rows[0];
+      const data = rows.slice(1);
+      expect(data).toHaveLength(3);
+      expect(data[1][header.indexOf("value_cents")]).toBe("175000");
+      expect(data[1][header.indexOf("display_value")]).toBe("$1,750.00");
+      expect(data[2][header.indexOf("value_count")]).toBe("3");
+    });
+
+    it("cost export reconciles to the strip total when complete", async () => {
+      renderShell({ costSummary: COST_SUMMARY });
+      const { csvText } = await clickExport("Export Cost split as CSV");
+      const rows = parseCsv(csvText);
+      const header = rows[0];
+      const data = rows.slice(1).filter((r) => r[0] === "data");
+      expect(data).toHaveLength(5);
+      expect(data[0][header.indexOf("value_cents")]).toBe("70000");
+      const total = rows.slice(1).find((r) => r[0] === "total");
+      expect(total[header.indexOf("value_cents")]).toBe("175000");
+      expect(total[header.indexOf("complete_flag")]).toBe("true");
+      expect(rows.slice(1).some((r) => r[0] === "state")).toBe(false);
+    });
+
+    it("cost export tags partial rows and adds a state row when allocation is incomplete", async () => {
+      renderShell({ costSummary: COST_SUMMARY_SHORTED });
+      const { csvText } = await clickExport("Export Cost split as CSV");
+      const rows = parseCsv(csvText);
+      const header = rows[0];
+      const data = rows.slice(1).filter((r) => r[0] === "data");
+      expect(data.every((r) => r[11] === "partial")).toBe(true);
+      const state = rows.slice(1).find((r) => r[0] === "state");
+      expect(state[header.indexOf("unallocated_cents")]).toBe("25000");
+    });
+
+    it("progress export downloads the total plus grouped rows with the canonical percent", async () => {
+      renderShell({ planningByPackage: PLANNING });
+      const { csvText } = await clickExport("Export Planning progress as CSV");
+      const rows = parseCsv(csvText);
+      const header = rows[0];
+      const total = rows.slice(1).find((r) => r[0] === "total");
+      expect(total[header.indexOf("value_count")]).toBe("3");
+      expect(total[header.indexOf("complete_count")]).toBe("1");
+      expect(total[header.indexOf("value_percent")]).toBe("46.7");
+      const groups = rows.slice(1).filter((r) => r[0] === "data");
+      expect(groups).toHaveLength(2);
+      expect(groups[0][header.indexOf("group_label")]).toBe("Plumbing");
+    });
+
+    it("block map export downloads group tiles and totals, matching the treemap", async () => {
+      renderShell({ costSummary: COST_SUMMARY });
+      const { csvText } = await clickExport("Export Scope block map as CSV");
+      const rows = parseCsv(csvText);
+      const header = rows[0];
+      const tiles = rows.slice(1).filter((r) => r[0] === "data");
+      expect(tiles).toHaveLength(3);
+      const totals = rows.slice(1).filter((r) => r[0] === "total");
+      expect(totals).toHaveLength(2);
+      expect(totals.find((r) => r[header.indexOf("group_label")] === "Plumbing")[header.indexOf("value_count")]).toBe("1");
+      expect(totals.find((r) => r[header.indexOf("group_label")] === "No system")[header.indexOf("value_count")]).toBe("2");
+    });
+
+    it("the chart-type toggle still works with the export button present", () => {
+      renderShell({ costSummary: COST_SUMMARY });
+      const bars = [...container.querySelectorAll("button")].find((b) => b.textContent === "Bars");
+      act(() => { bars.click(); });
+      expect(bars.getAttribute("aria-pressed")).toBe("true");
+      expect(exportButton("Export Scope by status as CSV").disabled).toBe(false);
+    });
+  });
 });

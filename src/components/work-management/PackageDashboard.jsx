@@ -24,6 +24,10 @@
 // package key); a hidden-widget manager keeps every block restorable.
 "use client";
 
+import {
+  buildWidgetExport,
+} from "@/application/work-management/plannerDashboardExport.js";
+import PlannerWidgetExportButton from "./PlannerWidgetExportButton.jsx";
 import { useEffect, useRef, useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { usePageQuery, usePackagePageContext } from "./packagePageContext.jsx";
@@ -36,6 +40,7 @@ import {
   computeLaborVariance,
 } from "@/domains/work-management/budgetAllocations";
 import { formatCents } from "@/domains/work-management/packageCosts.js";
+import { formatPackageCode } from "@/domains/work-management/workPackage.js";
 import {
   planningPercentDisplay,
   planningStepsDisplay,
@@ -203,10 +208,18 @@ function WidgetSettings({ widgetId, title, onSave, onCancel, onReset }) {
   );
 }
 
-export default function PackageDashboard({ packageId, pkg, planningSummary = null, refreshKey = 0, ownerId = null, onDrill = null }) {
+export default function PackageDashboard({ packageId, pkg, planningSummary = null, refreshKey = 0, ownerId = null, onDrill = null, projectLabel = null }) {
   const pageQuery = usePageQuery();
   const pageContext = usePackagePageContext();
   const forgeProjectId = pageContext?.forgeProject ?? "default";
+  // D5 export scope: the project scope plus this package, recorded
+  // verbatim on every exported row (scope_filters_json).
+  const scopeMeta = {
+    workspaceId: ownerId,
+    forgeProjectId,
+    packageId,
+    scopeFilters: { forgeProject: forgeProjectId, package: packageId },
+  };
 
   // Device-local preferences, loaded hydration-safe (FORGE #418):
   // the server markup and the first hydration render are both the
@@ -334,8 +347,67 @@ export default function PackageDashboard({ packageId, pkg, planningSummary = nul
 
   const hiddenWidgets = Object.keys(prefs.widgets).filter((id) => prefs.widgets[id]?.hidden);
 
+  // D5: one Export CSV per widget, built from the same view models the
+  // widget renders. A widget whose SWR read is still loading or has
+  // failed has no trustworthy data — its export stays visible but
+  // disabled with the reason. Hidden widgets export from the manager
+  // below; their view models are computed regardless of hidden state.
+  const WIDGET_EXPORT_IDS = {
+    strip: "package-number-strip",
+    planning: "package-planning-work-plan",
+    cost: "package-cost-split",
+    changeOrders: "package-change-orders",
+  };
+
+  function widgetExport(id) {
+    const widgetId = WIDGET_EXPORT_IDS[id];
+    const title = widgetTitle(id);
+    const pivot = prefs.widgets[id]?.pivot;
+    const common = {
+      scope: scopeMeta, projectSlug: projectLabel,
+      packageCode: pkg?.code ? formatPackageCode(pkg.code) : null, pivot, title,
+    };
+    if (id === "strip") {
+      return { title, buildExport: () => buildWidgetExport(widgetId, { ...common, pkg, planningSummary }) };
+    }
+    if (id === "planning") {
+      const unavailable = stepsRead.isLoading || stepsRead.error;
+      return {
+        title,
+        disabled: Boolean(unavailable),
+        disabledReason: stepsRead.isLoading
+          ? "Export unavailable until the work steps load."
+          : "Export unavailable — the work steps could not be loaded.",
+        buildExport: () => buildWidgetExport(widgetId, { ...common, planningSummary, workPlan }),
+      };
+    }
+    if (id === "cost") {
+      const unavailable = budgetRead.isLoading || budgetRead.error;
+      return {
+        title,
+        disabled: Boolean(unavailable),
+        disabledReason: budgetRead.isLoading
+          ? "Export unavailable until the budget loads."
+          : "Export unavailable — the budget could not be loaded.",
+        buildExport: () => buildWidgetExport(widgetId, { ...common, cost, laborVariance }),
+      };
+    }
+    const unavailable = changeOrdersRead.isLoading || changeOrdersRead.error;
+    return {
+      title,
+      disabled: Boolean(unavailable),
+      disabledReason: changeOrdersRead.isLoading
+        ? "Export unavailable until the change orders load."
+        : "Export unavailable — the change orders could not be loaded.",
+      buildExport: () => buildWidgetExport(widgetId, {
+        ...common, changeStrip, countsByStatus: changeOrdersSummary?.countsByStatus ?? {},
+      }),
+    };
+  }
+
   function renderWidgetHeader(id, pivotOptions) {
     const pivot = prefs.widgets[id]?.pivot;
+    const exportConfig = widgetExport(id);
     return (
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{widgetTitle(id)}</h3>
@@ -369,6 +441,12 @@ export default function PackageDashboard({ packageId, pkg, planningSummary = nul
           >
             Hide
           </button>
+          <PlannerWidgetExportButton
+            widgetTitle={exportConfig.title}
+            buildExport={exportConfig.buildExport}
+            disabled={exportConfig.disabled}
+            disabledReason={exportConfig.disabledReason}
+          />
         </div>
       </div>
     );
@@ -428,16 +506,26 @@ export default function PackageDashboard({ packageId, pkg, planningSummary = nul
       {hiddenWidgets.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" data-testid="dashboard-hidden-manager">
           <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Hidden widgets:</span>
-          {hiddenWidgets.map((id) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => updateWidget(id, { hidden: false })}
-              className={`${btnGhost} min-h-11`}
-            >
-              Show {widgetTitle(id)}
-            </button>
-          ))}
+          {hiddenWidgets.map((id) => {
+            const exportConfig = widgetExport(id);
+            return (
+              <span key={id} className="inline-flex flex-wrap items-center gap-2">
+                <PlannerWidgetExportButton
+                  widgetTitle={exportConfig.title}
+                  buildExport={exportConfig.buildExport}
+                  disabled={exportConfig.disabled}
+                  disabledReason={exportConfig.disabledReason}
+                />
+                <button
+                  type="button"
+                  onClick={() => updateWidget(id, { hidden: false })}
+                  className={`${btnGhost} min-h-11`}
+                >
+                  Show {widgetTitle(id)}
+                </button>
+              </span>
+            );
+          })}
         </div>
       )}
 

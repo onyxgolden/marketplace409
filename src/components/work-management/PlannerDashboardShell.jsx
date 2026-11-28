@@ -40,6 +40,10 @@ import {
   summarizePlannerDashboard,
   summarizePlannerProgress,
 } from "@/application/work-management/plannerDashboard.js";
+import {
+  buildWidgetExport,
+} from "@/application/work-management/plannerDashboardExport.js";
+import PlannerWidgetExportButton from "./PlannerWidgetExportButton.jsx";
 import PlannerScopeBlockMap from "./PlannerScopeBlockMap.jsx";
 
 // Donut geometry: a stroked circle, one dash per status. r=80 on a 200
@@ -302,7 +306,7 @@ function CostRow({ category, total, packageCount, percent, href, isActive, showB
 // the widget must not advertise a row the grid does not hold. Drill-
 // down links are project-wide (baseHref + the cost filter only), so a
 // landing always shows exactly the rows the count advertises.
-function CostSplitWidget({ costSummary, baseHref, activeCostCategory, activeAllocationFilter, costWidgetCanClaimActive }) {
+function CostSplitWidget({ costSummary, baseHref, activeCostCategory, activeAllocationFilter, costWidgetCanClaimActive, scope, projectSlug }) {
   const [view, setView] = useState("donut");
   const total = costSummary?.totalControlEstimateCents ?? 0;
   const categoryTotals = costSummary?.categoryTotals || {};
@@ -318,6 +322,7 @@ function CostSplitWidget({ costSummary, baseHref, activeCostCategory, activeAllo
     <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900" data-testid="planner-cost-split">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Cost split</h2>
+        <div className="flex flex-wrap items-center gap-2">
         <div role="group" aria-label="Cost view" className="flex rounded-lg border border-slate-300 dark:border-slate-600">
           <button
             type="button"
@@ -343,6 +348,13 @@ function CostSplitWidget({ costSummary, baseHref, activeCostCategory, activeAllo
           >
             Bars
           </button>
+        </div>
+        <PlannerWidgetExportButton
+          widgetTitle="Cost split"
+          buildExport={() => buildWidgetExport("landing-cost-split", {
+            scope, projectSlug, costSummary, baseHref, pivot: view,
+          })}
+        />
         </div>
       </div>
       <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
@@ -503,7 +515,7 @@ function ProgressRow({ entry, href, isActive, showBar, dimensionLabel, isTotal =
 // pie/line do not fit a percentage table (percents do not sum to 100
 // across groups), so the widget pivots between the two presentations
 // that do.
-function ProgressWidget({ progress, planningAvailable, baseHref, activeDimension, activeGroup }) {
+function ProgressWidget({ progress, planningAvailable, baseHref, activeDimension, activeGroup, scope, projectSlug }) {
   const [view, setView] = useState("table");
   const dimension = PROGRESS_DIMENSIONS.find((d) => d.key === activeDimension) || PROGRESS_DIMENSIONS[0];
   const groupsByDimension = {
@@ -521,6 +533,7 @@ function ProgressWidget({ progress, planningAvailable, baseHref, activeDimension
     <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900" data-testid="planner-progress">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Planning progress</h2>
+        <div className="flex flex-wrap items-center gap-2">
         <div role="group" aria-label="Progress view" className="flex rounded-lg border border-slate-300 dark:border-slate-600">
           <button
             type="button"
@@ -546,6 +559,14 @@ function ProgressWidget({ progress, planningAvailable, baseHref, activeDimension
           >
             Bars
           </button>
+        </div>
+        <PlannerWidgetExportButton
+          widgetTitle="Planning progress"
+          buildExport={() => buildWidgetExport("landing-planning-progress", {
+            scope, projectSlug, progress,
+            planningAvailable, activeDimension, activeGroup, baseHref, pivot: view,
+          })}
+        />
         </div>
       </div>
       <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
@@ -649,10 +670,19 @@ export default function PlannerDashboardShell({
   scopeViewParam = null,
   ownerId = null,
   forgeProjectKey = null,
+  scopeFilters = null,
 }) {
   const [chartType, setChartType] = useState("donut");
   const summary = summarizePlannerDashboard(packages);
   const { totalPackages, statusBreakdown } = summary;
+  // D5 export scope: the canonical project scope + active URL filter
+  // state, recorded verbatim on every exported row (scope_filters_json).
+  const scopeMeta = {
+    workspaceId: ownerId,
+    forgeProjectId: forgeProjectKey,
+    packageId: null,
+    scopeFilters,
+  };
   // D2: the progress widget reads the same in-scope array plus the bulk
   // planning-% map (null when the planning data is unavailable — the
   // widget says so instead of showing zeros).
@@ -666,6 +696,18 @@ export default function PlannerDashboardShell({
 
   return (
     <section aria-label="Project dashboard" data-testid="planner-dashboard">
+      {/* D5: one Export CSV per widget — the strip's export sits above the
+         three blocks so the grid geometry is untouched. */}
+      <div className="mb-2 flex items-center justify-end">
+        <PlannerWidgetExportButton
+          widgetTitle="Number strip"
+          buildExport={() => buildWidgetExport("landing-number-strip", {
+            scope: scopeMeta, projectSlug: projectLabel,
+            projectLabel, projectSublabel, totalControlEstimateCents, hasControlEstimate,
+            costSummaryAvailable: costSummary != null, totalPackages, baseHref,
+          })}
+        />
+      </div>
       {/* Number strip — the slide-6 headline: project, total control
          estimate, total scope items. Cost and items are links: they clear
          the status filter to the rows the totals describe. */}
@@ -725,6 +767,7 @@ export default function PlannerDashboardShell({
         <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 lg:w-1/3 dark:border-slate-700 dark:bg-slate-900" data-testid="planner-scope">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Scope by status</h2>
+            <div className="flex flex-wrap items-center gap-2">
             <div role="group" aria-label="Chart type" className="flex rounded-lg border border-slate-300 dark:border-slate-600">
               <button
                 type="button"
@@ -750,6 +793,13 @@ export default function PlannerDashboardShell({
               >
                 Bars
               </button>
+            </div>
+            <PlannerWidgetExportButton
+              widgetTitle="Scope by status"
+              buildExport={() => buildWidgetExport("landing-scope-by-status", {
+                scope: scopeMeta, projectSlug: projectLabel, summary, baseHref, pivot: chartType,
+              })}
+            />
             </div>
           </div>
 
@@ -795,6 +845,8 @@ export default function PlannerDashboardShell({
               scopeViewParam={scopeViewParam}
               ownerId={ownerId}
               forgeProjectKey={forgeProjectKey}
+              scope={scopeMeta}
+              projectSlug={projectLabel}
             />
           )}
         </div>
@@ -811,6 +863,8 @@ export default function PlannerDashboardShell({
           baseHref={baseHref}
           activeDimension={activeDimension}
           activeGroup={activeGroup}
+          scope={scopeMeta}
+          projectSlug={projectLabel}
         />
       )}
 
@@ -824,6 +878,8 @@ export default function PlannerDashboardShell({
           activeCostCategory={activeCostCategory}
           activeAllocationFilter={activeAllocationFilter}
           costWidgetCanClaimActive={costWidgetCanClaimActive}
+          scope={scopeMeta}
+          projectSlug={projectLabel}
         />
       )}
     </section>

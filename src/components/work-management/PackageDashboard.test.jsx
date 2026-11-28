@@ -113,7 +113,7 @@ function stubFetch({ steps = STEPS, allocation = ALLOCATION_DATA, summary = CHAN
   return { calls };
 }
 
-async function renderDashboard({ pkg = PKG, planningSummary = PLANNING, fetchOptions, onDrill = vi.fn() } = {}) {
+async function renderDashboard({ pkg = PKG, planningSummary = PLANNING, fetchOptions, onDrill = vi.fn(), projectLabel = null } = {}) {
   stubFetch(fetchOptions);
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -121,7 +121,7 @@ async function renderDashboard({ pkg = PKG, planningSummary = PLANNING, fetchOpt
   await act(async () => {
     root.render(
       <PackagePageProvider workspace="owner_1" forgeProject="forge_project_1">
-        <PackageDashboard packageId="pkg_1" pkg={pkg} planningSummary={planningSummary} ownerId="owner_1" onDrill={onDrill} />
+        <PackageDashboard packageId="pkg_1" pkg={pkg} planningSummary={planningSummary} ownerId="owner_1" onDrill={onDrill} projectLabel={projectLabel} />
       </PackagePageProvider>,
     );
   });
@@ -646,5 +646,214 @@ describe("hydration-safe preferences", () => {
     expect(container.querySelector('[data-testid="dashboard-strip"] h3').textContent).toBe("Package");
     act(() => { root.unmount(); });
     container.remove();
+  });
+});
+
+describe("D5 export CSV", () => {
+  function parseCsv(text) {
+    const rows = [];
+    let row = [];
+    let field = "";
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { field += '"'; i += 1; }
+          else inQuotes = false;
+        } else field += ch;
+      } else if (ch === '"') inQuotes = true;
+      else if (ch === ",") { row.push(field); field = ""; }
+      else if (ch === "\r" && text[i + 1] === "\n") { row.push(field); rows.push(row); row = []; field = ""; i += 1; }
+      else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+      else field += ch;
+    }
+    if (field !== "" || row.length > 0) { row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  let download = null;
+  afterEach(() => {
+    download?.restore();
+    download = null;
+  });
+
+  function setupDownload() {
+    const captured = { blob: null, anchors: [] };
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn((blob) => { captured.blob = blob; return "blob:fake"; });
+    URL.revokeObjectURL = vi.fn();
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function () {
+      captured.anchors.push({ href: this.href, download: this.download });
+    });
+    download = {
+      captured,
+      restore() {
+        URL.createObjectURL = originalCreate;
+        URL.revokeObjectURL = originalRevoke;
+        clickSpy.mockRestore();
+      },
+    };
+    return download;
+  }
+
+  function exportButton(container, label) {
+    const button = [...container.querySelectorAll("button")].find(
+      (candidate) => candidate.getAttribute("aria-label") === label,
+    );
+    expect(button).toBeDefined();
+    return button;
+  }
+
+  async function clickExport(container, label) {
+    const dl = setupDownload();
+    await act(async () => {
+      exportButton(container, label).click();
+    });
+    expect(dl.captured.anchors).toHaveLength(1);
+    return { download: dl.captured.anchors[0].download, csvText: await dl.captured.blob.text() };
+  }
+
+  it("every detail widget has a labelled Export CSV control", async () => {
+    const { container } = await renderDashboard({ projectLabel: "Fictional FCCU Sample Project" });
+    for (const label of [
+      "Export Package as CSV",
+      "Export Planning and work plan as CSV",
+      "Export Cost split as CSV",
+      "Export Change orders and contingency as CSV",
+    ]) {
+      const button = exportButton(container, label);
+      expect(button.disabled).toBe(false);
+      expect(button.textContent).toContain("Export CSV");
+    }
+  });
+
+  it("strip export downloads the six visible fields with the rendered values", async () => {
+    const { container } = await renderDashboard({ projectLabel: "Fictional FCCU Sample Project" });
+    const { download, csvText } = await clickExport(container, "Export Package as CSV");
+    expect(download).toMatch(/^forge-planner-fictional-fccu-sample-project-0001-package-number-strip-\d{8}-\d{6}Z\.csv$/);
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const data = rows.slice(1);
+    expect(data).toHaveLength(6);
+    expect(data[0][header.indexOf("display_value")]).toBe("WP-0001");
+    const budget = data.find((r) => r[header.indexOf("field_id")] === "budget");
+    expect(budget[header.indexOf("value_cents")]).toBe("125000");
+    expect(budget[header.indexOf("display_value")]).toBe("$1,250.00");
+    const milestones = data.find((r) => r[header.indexOf("field_id")] === "milestones");
+    expect(milestones[11]).toBe("unavailable");
+  });
+
+  it("planning export downloads the summary, craft rows, and the unavailable-completion state", async () => {
+    const { container } = await renderDashboard({ projectLabel: "Fictional FCCU Sample Project" });
+    const { csvText } = await clickExport(container, "Export Planning and work plan as CSV");
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const body = rows.slice(1);
+    expect(body[0][0]).toBe("total");
+    expect(body[0][header.indexOf("value_percent")]).toBe("45");
+    expect(body[0][header.indexOf("display_value")]).toContain("45% (18 of 40 planning hours earned)");
+    const crafts = body.filter((r) => r[0] === "data");
+    expect(crafts).toHaveLength(3);
+    const pipefitter = crafts.find((r) => r[header.indexOf("craft_key")] === "pipefitter");
+    expect(pipefitter[header.indexOf("step_count")]).toBe("2");
+    expect(pipefitter[header.indexOf("planned_hours")]).toBe("14.5");
+    const state = body.find((r) => r[0] === "state");
+    expect(state[header.indexOf("craft_completion_state")]).toBe("unavailable_no_crosswalk");
+  });
+
+  it("cost export downloads five categories, the total, and the separately-labelled labor forecast", async () => {
+    const { container } = await renderDashboard({ projectLabel: "Fictional FCCU Sample Project" });
+    const { csvText } = await clickExport(container, "Export Cost split as CSV");
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const data = rows.slice(1).filter((r) => r[0] === "data");
+    expect(data).toHaveLength(6);
+    const labor = data.find((r) => r[header.indexOf("category_key")] === "labor");
+    expect(labor[header.indexOf("value_cents")]).toBe("150000");
+    const forecast = data.find((r) => r[header.indexOf("category_key")] === "labor_forecast_comparison");
+    expect(forecast[header.indexOf("value_cents")]).toBe("90000");
+    expect(forecast[header.indexOf("display_value")]).toContain("Comparison only");
+    const total = rows.slice(1).find((r) => r[0] === "total");
+    expect(total[header.indexOf("value_cents")]).toBe("250000");
+  });
+
+  it("cost export emits only a state row for a stale allocation, never five fabricated lines", async () => {
+    const stale = {
+      ...ALLOCATION_DATA,
+      estimate: { ...ALLOCATION_DATA.estimate, version: 3 },
+    };
+    const { container } = await renderDashboard({
+      projectLabel: "Fictional FCCU Sample Project",
+      fetchOptions: { allocation: stale },
+    });
+    const { csvText } = await clickExport(container, "Export Cost split as CSV");
+    const rows = parseCsv(csvText);
+    expect(rows).toHaveLength(2);
+    expect(rows[1][0]).toBe("state");
+    expect(rows[1][11]).toBe("stale");
+  });
+
+  it("change orders export preserves negative contingency and includes warnings and status counts", async () => {
+    const { container } = await renderDashboard({ projectLabel: "Fictional FCCU Sample Project" });
+    const { csvText } = await clickExport(container, "Export Change orders and contingency as CSV");
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const body = rows.slice(1);
+    const remaining = body.find((r) => r[header.indexOf("metric_id")] === "contingency_remaining");
+    expect(remaining[header.indexOf("value_cents")]).toBe("-5000");
+    const denied = body.find((r) => r[header.indexOf("status_key")] === "denied");
+    expect(denied[header.indexOf("value_count")]).toBe("2");
+    const warning = body.find((r) => r[0] === "state");
+    expect(warning[header.indexOf("warning_code")]).toBe("contingency_overdrawn");
+  });
+
+  it("hidden widgets export from the hidden-widgets manager", async () => {
+    const { container } = await renderDashboard({ projectLabel: "Fictional FCCU Sample Project" });
+    click([...container.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Hide Cost split"));
+    await act(async () => {});
+    expect(container.querySelector('[data-testid="dashboard-hidden-manager"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="dashboard-cost"]')).toBeNull();
+    const { csvText } = await clickExport(container, "Export Cost split as CSV");
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const total = rows.slice(1).find((r) => r[0] === "total");
+    expect(total[header.indexOf("value_cents")]).toBe("250000");
+  });
+
+  it("planning export stays disabled with a reason while the work steps load", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (rawUrl) => {
+      const url = typeof rawUrl === "string" ? rawUrl : "";
+      if (url.startsWith("/api/work-packages/pkg_1/work-steps")) return new Promise(() => {});
+      if (url.startsWith("/api/work-packages/pkg_1/budget-allocation")) return { ok: true, json: async () => ALLOCATION_DATA };
+      if (url.startsWith("/api/work-packages/pkg_1/change-orders")) return { ok: true, json: async () => ({ summary: CHANGE_SUMMARY, changeOrders: [] }) };
+      return { ok: false, json: async () => ({ error: "Unexpected" }) };
+    }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <PackagePageProvider workspace="owner_1" forgeProject="forge_project_1">
+          <PackageDashboard packageId="pkg_1" pkg={PKG} planningSummary={PLANNING} ownerId="owner_1" projectLabel="Fictional FCCU Sample Project" />
+        </PackagePageProvider>,
+      );
+    });
+    const button = exportButton(container, "Export Planning and work plan as CSV");
+    expect(button.disabled).toBe(true);
+    expect(container.textContent).toContain("Export unavailable until the work steps load.");
+    act(() => { root.unmount(); });
+    container.remove();
+  });
+
+  it("change orders export stays disabled with a reason when the read fails", async () => {
+    const { container } = await renderDashboard({
+      projectLabel: "Fictional FCCU Sample Project",
+      fetchOptions: { failChangeOrders: true },
+    });
+    const button = exportButton(container, "Export Change orders and contingency as CSV");
+    expect(button.disabled).toBe(true);
+    expect(container.textContent).toContain("Export unavailable — the change orders could not be loaded.");
   });
 });
