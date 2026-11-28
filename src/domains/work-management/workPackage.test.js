@@ -5,6 +5,7 @@ import {
   validateTransition, staticTransitionEdges,
   derivePercentComplete, validatePackageInput, hashScopeMembership,
   deriveCurrentBaseline, inferEffectiveMode, formatPackageCode,
+  matchesPackageStatus, cancellationActorLabel, latestCancellationTransition,
 } from "./workPackage.js";
 
 const BASE_PKG = {
@@ -404,5 +405,59 @@ describe("defaultGatesFor (DB parity)", () => {
       engineering: ["crew", "design", "evidence", "safety", "scope"],
       other: ["crew", "safety", "scope"],
     });
+  });
+});
+
+describe("matchesPackageStatus (Slice A: cancellation visibility)", () => {
+  const draft = { status: WP_STATUS.DRAFT };
+  const cancelled = { status: WP_STATUS.CANCELLED };
+  it("active excludes cancelled, canceled includes only cancelled, all includes both", () => {
+    expect(matchesPackageStatus(draft, "active")).toBe(true);
+    expect(matchesPackageStatus(cancelled, "active")).toBe(false);
+    expect(matchesPackageStatus(draft, "canceled")).toBe(false);
+    expect(matchesPackageStatus(cancelled, "canceled")).toBe(true);
+    expect(matchesPackageStatus(draft, "all")).toBe(true);
+    expect(matchesPackageStatus(cancelled, "all")).toBe(true);
+  });
+  it("fails closed toward active for unknown or missing values — never widens", () => {
+    expect(matchesPackageStatus(cancelled, "bogus")).toBe(false);
+    expect(matchesPackageStatus(draft, "bogus")).toBe(true);
+    expect(matchesPackageStatus(cancelled, undefined)).toBe(false);
+    expect(matchesPackageStatus(cancelled, null)).toBe(false);
+  });
+});
+
+describe("cancellationActorLabel (Slice A: no display-name source exists)", () => {
+  it("labels the workspace owner as Owner", () => {
+    expect(cancellationActorLabel("owner_1", "owner_1")).toBe("Owner");
+  });
+  it("labels any other actor as User plus the first 8 id characters — never a fabricated name", () => {
+    expect(cancellationActorLabel("e1b22131-9100-4a79-bbe2-b82d43af922e", "owner_1")).toBe("User e1b22131");
+    expect(cancellationActorLabel("abc", "owner_1")).toBe("User abc");
+  });
+  it("labels a missing actor as unavailable (legacy)", () => {
+    expect(cancellationActorLabel(null, "owner_1")).toBe("Actor unavailable (legacy)");
+    expect(cancellationActorLabel("", "owner_1")).toBe("Actor unavailable (legacy)");
+    expect(cancellationActorLabel("   ", "owner_1")).toBe("Actor unavailable (legacy)");
+    expect(cancellationActorLabel(undefined, "owner_1")).toBe("Actor unavailable (legacy)");
+  });
+});
+
+describe("latestCancellationTransition (Slice A)", () => {
+  const cancelOld = { id: "t1", from_status: "draft", to_status: "cancelled", at: "2026-11-01T10:00:00Z", reason: "First cancel" };
+  const cancelNew = { id: "t2", from_status: "in_progress", to_status: "cancelled", at: "2026-11-05T10:00:00Z", reason: "Second cancel" };
+  const reopen = { id: "t3", from_status: "cancelled", to_status: "draft", at: "2026-11-06T10:00:00Z", reason: "Reopened" };
+  it("returns the newest cancel row, ignoring non-cancel rows", () => {
+    expect(latestCancellationTransition([cancelOld, reopen, cancelNew])).toBe(cancelNew);
+  });
+  it("returns null when there is no cancel row", () => {
+    expect(latestCancellationTransition([reopen])).toBe(null);
+    expect(latestCancellationTransition([])).toBe(null);
+    expect(latestCancellationTransition(null)).toBe(null);
+    expect(latestCancellationTransition(undefined)).toBe(null);
+  });
+  it("never lets an unparseable timestamp win as the newest", () => {
+    const undated = { id: "t4", from_status: "draft", to_status: "cancelled", at: "not-a-date", reason: "Undated" };
+    expect(latestCancellationTransition([cancelOld, undated])).toBe(cancelOld);
   });
 });

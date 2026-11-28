@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const routerMocks = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }));
@@ -1897,5 +1898,126 @@ describe("E4 stale labor forecast (D4.1 fix round)", () => {
     expect(budgetCalls.length - budgetCallsBeforeEdit).toBeGreaterThan(0);
     expect(budgetCalls.some((c) => c.patched)).toBe(true);
     expect(deltaMs).toBeLessThan(5000);
+  });
+});
+
+describe("Cancellation block (Slice A)", () => {
+  const CANCEL_TRANSITION = {
+    id: "t_cancel", from_status: "in_progress", to_status: "cancelled",
+    reason: "Duplicate scope — superseded by WP-0001", at: "2026-11-05T10:00:00Z", actor: "owner_1",
+  };
+  it("shows the Cancellation block with date, actor, from-status, and the full reason", () => {
+    const { container } = renderDetail(
+      { ...BASE_PKG, owner_id: "owner_1", status: "cancelled" },
+      { transitions: [CANCEL_TRANSITION] },
+    );
+    const text = container.textContent;
+    expect(text).toContain("Cancellation");
+    expect(text).toContain("Canceled on ");
+    expect(text).toMatch(/Canceled on 11\/5\/2026/);
+    expect(text).toContain("by Owner");
+    expect(text).toContain("From in progress → Cancelled");
+    expect(text).toContain("Reason: Duplicate scope — superseded by WP-0001");
+  });
+  it("labels a non-owner actor as User plus the first 8 id characters — never a fabricated name", () => {
+    const { container } = renderDetail(
+      { ...BASE_PKG, owner_id: "owner_1", status: "cancelled" },
+      { transitions: [{ ...CANCEL_TRANSITION, actor: "e1b22131-9100-4a79-bbe2-b82d43af922e" }] },
+    );
+    expect(container.textContent).toContain("by User e1b22131");
+  });
+  it("uses the newest cancel row when several exist", () => {
+    const older = { ...CANCEL_TRANSITION, id: "t_old", from_status: "draft", at: "2026-11-01T10:00:00Z", reason: "First cancel" };
+    const { container } = renderDetail(
+      { ...BASE_PKG, owner_id: "owner_1", status: "cancelled" },
+      { transitions: [older, CANCEL_TRANSITION] },
+    );
+    const text = container.textContent;
+    expect(text).toContain("Reason: Duplicate scope — superseded by WP-0001");
+    expect(text).not.toContain("First cancel");
+  });
+  it("shows the legacy fallbacks when the cancel row is absent", () => {
+    const { container } = renderDetail(
+      { ...BASE_PKG, owner_id: "owner_1", status: "cancelled" },
+      { transitions: [] },
+    );
+    const text = container.textContent;
+    expect(text).toContain("Cancellation");
+    expect(text).toContain("by Actor unavailable (legacy)");
+    expect(text).toContain("Reason: No reason recorded");
+    expect(text).not.toContain("From in progress");
+  });
+  it("shows no Cancellation block for a non-cancelled package, or a reopened one", () => {
+    const draft = renderDetail(BASE_PKG, { transitions: [CANCEL_TRANSITION] });
+    expect(draft.container.textContent).not.toContain("Cancellation");
+    const reopened = renderDetail(
+      { ...BASE_PKG, owner_id: "owner_1", status: "draft" },
+      { transitions: [CANCEL_TRANSITION] },
+    );
+    expect(reopened.container.textContent).not.toContain("Cancellation");
+  });
+});
+
+describe("Cancellation block hydration (Slice A fix round, React #418)", () => {
+  // The cancellation instant sits across the UTC/Chicago midnight line:
+  // 2026-11-05T02:30:00Z is 11/5/2026 2:30 AM in UTC but 11/4/2026
+  // 8:30 PM in America/Chicago. A locale-dependent render therefore
+  // produces different server and client markup — React #418. With the
+  // default Overview tab and empty attestations/baselines, the
+  // Cancellation block is the only locale-dependent timestamp in the
+  // server tree, so this test isolates the Slice A occurrence.
+  const CROSS_MIDNIGHT_CANCEL = {
+    id: "t_cancel_x", from_status: "in_progress", to_status: "cancelled",
+    reason: "Duplicate scope — superseded by WP-0001", at: "2026-11-05T02:30:00Z", actor: "owner_1",
+  };
+  it("renders server markup under UTC and hydrates under America/Chicago without mismatch", async () => {
+    stubFetch();
+    const pkg = { ...BASE_PKG, owner_id: "owner_1", status: "cancelled" };
+    const element = (
+      <WorkPackageDetailClient
+        initial={{
+          package: pkg,
+          transitions: [CROSS_MIDNIGHT_CANCEL],
+          attestations: [],
+          baselines: [],
+          currentBaseline: null,
+          scopeChanges: [],
+          observations: [],
+        }}
+        initialLinks={[]}
+      />
+    );
+    const prevTz = process.env.TZ;
+    const onRecoverableError = vi.fn();
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    let root = null;
+    try {
+      process.env.TZ = "UTC";
+      const serverHtml = renderToString(element);
+      // The pinned server representation is America/Chicago, so the
+      // server markup already reads the Chicago date — not the UTC one.
+      expect(serverHtml).toContain("11/4/2026, 8:30:00 PM");
+
+      process.env.TZ = "America/Chicago";
+      container.innerHTML = serverHtml;
+      await act(async () => {
+        root = hydrateRoot(container, element, { onRecoverableError });
+        await Promise.resolve();
+      });
+      expect(onRecoverableError).not.toHaveBeenCalled();
+      const hydrationErrors = consoleSpy.mock.calls.filter((args) =>
+        String(args[0]).includes("hydrat"),
+      );
+      expect(hydrationErrors).toEqual([]);
+      expect(container.textContent).toContain("Canceled on 11/4/2026, 8:30:00 PM");
+    } finally {
+      if (root) await act(async () => { root.unmount(); });
+      container.remove();
+      consoleSpy.mockRestore();
+      if (prevTz === undefined) delete process.env.TZ;
+      else process.env.TZ = prevTz;
+    }
   });
 });
