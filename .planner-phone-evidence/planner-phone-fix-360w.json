@@ -1,0 +1,194 @@
+{
+  "width": 360,
+  "head": "98909d97df33c4db027033441361b2d15e28a46e",
+  "failures": [],
+  "dashboard": {
+    "width": 360,
+    "innerWidth": 360,
+    "darkModeOn": true,
+    "bodyBackground": "rgb(10, 10, 10)",
+    "pageOverflow": false,
+    "scrollWidth": 360,
+    "costLegend": [
+      {
+        "text": "Labor",
+        "lines": 1,
+        "clientWidth": 74,
+        "clientHeight": 20,
+        "scrollWidth": 74,
+        "labelRect": {
+          "x": 61,
+          "width": 74
+        }
+      },
+      {
+        "text": "Material",
+        "lines": 1,
+        "clientWidth": 74,
+        "clientHeight": 20,
+        "scrollWidth": 74,
+        "labelRect": {
+          "x": 61,
+          "width": 74
+        }
+      },
+      {
+        "text": "Equipment",
+        "lines": 1,
+        "clientWidth": 74,
+        "clientHeight": 20,
+        "scrollWidth": 74,
+        "labelRect": {
+          "x": 61,
+          "width": 74
+        }
+      },
+      {
+        "text": "External services",
+        "lines": 1,
+        "clientWidth": 178,
+        "clientHeight": 20,
+        "scrollWidth": 178,
+        "labelRect": {
+          "x": 61,
+          "width": 178
+        }
+      },
+      {
+        "text": "Rental",
+        "lines": 1,
+        "clientWidth": 74,
+        "clientHeight": 20,
+        "scrollWidth": 74,
+        "labelRect": {
+          "x": 61,
+          "width": 74
+        }
+      }
+    ],
+    "scopeMapExport": {
+      "label": "Export Scope block map as CSV",
+      "left": 33,
+      "right": 154,
+      "width": 121,
+      "height": 44,
+      "outside": false
+    },
+    "scopeMapHeaderScrollWidth": 294,
+    "scopeMapHeaderClientWidth": 294,
+    "scopeMapHeaderControls": [
+      {
+        "label": "Treemap",
+        "left": 34,
+        "right": 114,
+        "outside": false
+      },
+      {
+        "label": "Table",
+        "left": 114,
+        "right": 171,
+        "outside": false
+      },
+      {
+        "label": "Settings",
+        "left": 180,
+        "right": 257,
+        "outside": false
+      },
+      {
+        "label": "Export Scope block map as CSV",
+        "left": 33,
+        "right": 154,
+        "outside": false
+      },
+      {
+        "label": "Area / zone",
+        "left": 33,
+        "right": 131,
+        "outside": false
+      },
+      {
+        "label": "Unit",
+        "left": 135,
+        "right": 186,
+        "outside": false
+      },
+      {
+        "label": "Equipment type",
+        "left": 190,
+        "right": 311,
+        "outside": false
+      },
+      {
+        "label": "Scope item",
+        "left": 33,
+        "right": 129,
+        "outside": false
+      },
+      {
+        "label": "Planner",
+        "left": 133,
+        "right": 207,
+        "outside": false
+      }
+    ]
+  },
+  "grid": {
+    "width": 360,
+    "innerWidth": 360,
+    "darkModeOn": true,
+    "bodyBackground": "rgb(10, 10, 10)",
+    "dataRowCount": 6,
+    "blankRowCount": 10,
+    "blankRowTitles": [
+      "—New package title…draft——— / ——other—",
+      "—New package title…draft——— / ——other—"
+    ],
+    "titleContrast": [
+      {
+        "title": "Synthetic exchanger inspection [SYNTHETI",
+        "color": "oklch(0.968 0.007 247.896)",
+        "background": "rgb(10, 10, 10)",
+        "ratio": 18.34,
+        "fontSize": "14px"
+      },
+      {
+        "title": "Synthetic pump overhaul [SYNTHETIC]",
+        "color": "oklch(0.968 0.007 247.896)",
+        "background": "rgb(10, 10, 10)",
+        "ratio": 18.34,
+        "fontSize": "14px"
+      },
+      {
+        "title": "Synthetic valve replacement [SYNTHETIC]",
+        "color": "oklch(0.968 0.007 247.896)",
+        "background": "rgb(10, 10, 10)",
+        "ratio": 18.34,
+        "fontSize": "14px"
+      },
+      {
+        "title": "Synthetic spool fabrication [SYNTHETIC]",
+        "color": "oklch(0.968 0.007 247.896)",
+        "background": "rgb(10, 10, 10)",
+        "ratio": 18.34,
+        "fontSize": "14px"
+      },
+      {
+        "title": "Synthetic MCC maintenance [SYNTHETIC]",
+        "color": "oklch(0.968 0.007 247.896)",
+        "background": "rgb(10, 10, 10)",
+        "ratio": 18.34,
+        "fontSize": "14px"
+      },
+      {
+        "title": "Synthetic loop checkout [SYNTHETIC]",
+        "color": "oklch(0.968 0.007 247.896)",
+        "background": "rgb(10, 10, 10)",
+        "ratio": 18.34,
+        "fontSize": "14px"
+      }
+    ],
+    "headerBackground": "oklch(0.208 0.042 265.755)"
+  },
+  "tree": "d851ead93439eaaa44d979de5c06abd458186cf8"
+}
