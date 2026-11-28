@@ -312,11 +312,39 @@ describe("PlanCanvas mixed gestures — wheel/pan interleaving (D2 fix round 2)"
     expect(rafQueue.size).toBe(1);
     expectView(svg, DEFAULT_VIEW);
     fireFrames();
-    // Wheel result (76.8, 65.6) shifted by the move relative to the
-    // wheel point: (150-200, 140-200) = (-50,-60) → (26.8, 5.6).
-    // On the pre-fix code the second move recomputed from the stale
-    // origin (60,60): ox 110 / oy 100 — anchor correction destroyed.
-    expectView(svg, { scale: 1.792, ox: 26.8, oy: 5.6 });
+    // D2 fix round 3 (FR2 verdict — reverse-test concern): the wheel
+    // fires at (200,200) but the actual drag pointer is at (130,120)
+    // (its last pan point). The rebase must anchor on the POINTER, not
+    // the wheel point — rebasing around the wheel would silently invent
+    // a pan delta of (wheel − pointer) = (70,80). The correct result is
+    // the zoomed view (76.8, 65.6) shifted by the move relative to the
+    // actual pointer (150-130, 140-120) = (20,20) → (96.8, 85.6).
+    // The old FR2 expectation (26.8, 5.6) was exactly that invented
+    // delta: the zoomed view shifted by (150-200, 140-200) = (-50,-60).
+    expectView(svg, { scale: 1.792, ox: 96.8, oy: 85.6 });
+    expect(rafScheduled).toBe(1);
+  });
+
+  it("pan then wheel AT the pointer then pan: the supported-hardware invariant holds (wheel point == drag pointer)", () => {
+    renderCanvas("pan");
+    mouse(svg, "pointerdown", 100, 100);
+    mouse(svg, "pointermove", 130, 120);
+    // In supported hardware (a single mouse pointer) a wheel event fires
+    // at the cursor, which IS the drag pointer during a left-drag — so
+    // the wheel point and the last pan point coincide, and the rebase
+    // anchor is the same either way. Wheel around the pointer (130,120):
+    // scale 1.792, ox = 130 - (130-90)*1.12 = 85.2, oy = 75.2.
+    wheel(svg, -100, 130, 120);
+    mouse(svg, "pointermove", 150, 140);
+    expect(rafScheduled).toBe(1);
+    expect(rafQueue.size).toBe(1);
+    expectView(svg, DEFAULT_VIEW);
+    fireFrames();
+    // Rebase around the pointer (130,120): drag origin (55.2, 55.2);
+    // move to (150,140) adds (50,40) → (105.2, 95.2). This passes
+    // under the FR2 code too — it pins the invariant, while the test
+    // above (wheel away from the pointer) distinguishes the FR3 fix.
+    expectView(svg, { scale: 1.792, ox: 105.2, oy: 95.2 });
     expect(rafScheduled).toBe(1);
   });
 
