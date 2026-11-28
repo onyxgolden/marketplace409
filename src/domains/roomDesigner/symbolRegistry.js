@@ -17,6 +17,25 @@
 
 const sets = new Map();
 
+// O(1) lookup index, built once at registration: domain -> (id -> symbol).
+// Registration rejects duplicate ids within a set, so the index returns the
+// exact same frozen symbol object a linear scan would find first —
+// first-match semantics are preserved by construction, not by luck.
+// `findSymbol` is the profiled hot path of the FCCU freeze (D2): a linear
+// scan per lookup over every symbol instance, thousands of times per render.
+const index = new Map();
+
+// Generation counter: bumped on every registration and reset. The elevation
+// memoization in pipeCrossings.js keys its cache on (design, run) identity
+// AND this generation, so a re-registration (tests, hot reload) can never
+// serve elevations derived under a stale registry.
+let registryGeneration = 0;
+
+/** Monotonic generation of the registry contents; changes on register/reset. */
+export function getSymbolRegistryGeneration() {
+  return registryGeneration;
+}
+
 function assertSymbol(domain, symbol, index) {
   const where = `symbol set "${domain}" symbol #${index}`;
   if (!symbol || typeof symbol !== "object") throw new Error(`${where}: must be an object.`);
@@ -67,6 +86,10 @@ export function registerSymbolSet(set) {
     symbols: Object.freeze(symbols.map((s) => Object.freeze({ ...s }))),
   });
   sets.set(domain, frozen);
+  const byId = new Map();
+  for (const symbol of frozen.symbols) byId.set(symbol.id, symbol);
+  index.set(domain, byId);
+  registryGeneration += 1;
   return frozen;
 }
 
@@ -82,7 +105,7 @@ export function listSymbolSets() {
 
 /** Find a symbol by domain + id; undefined when unknown. */
 export function findSymbol(domain, id) {
-  return getSymbolSet(domain)?.symbols.find((s) => s.id === id);
+  return index.get(domain)?.get(id);
 }
 
 /**
@@ -91,4 +114,6 @@ export function findSymbol(domain, id) {
  */
 export function __resetSymbolRegistry() {
   sets.clear();
+  index.clear();
+  registryGeneration += 1;
 }

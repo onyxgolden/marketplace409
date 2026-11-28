@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import {
   __resetSymbolRegistry,
   findSymbol,
+  getSymbolRegistryGeneration,
   getSymbolSet,
   listSymbolSets,
   registerSymbolSet,
@@ -94,5 +95,43 @@ describe("symbolRegistry", () => {
     expect(symbol.color).toBe("#fff");
     expect(symbol.shape).toBe("circle");
     expect(symbol.draw2D).toBe(draw2D);
+  });
+
+  it("findSymbol returns the exact registered (frozen) symbol object — D2 index", () => {
+    const set = registerSymbolSet(goodSet("piping"));
+    // Same object identity as the linear scan used to return: callers that
+    // compare by reference (rackParams input, draw routines) see no change.
+    expect(findSymbol("piping", "a")).toBe(set.symbols[0]);
+    expect(findSymbol("piping", "b")).toBe(set.symbols[1]);
+    // Unknown domain/id still resolve to undefined, never throw.
+    expect(findSymbol("piping", "zzz")).toBeUndefined();
+    expect(findSymbol("nope", "a")).toBeUndefined();
+    expect(findSymbol(undefined, "a")).toBeUndefined();
+    expect(findSymbol("piping", undefined)).toBeUndefined();
+  });
+
+  it("index is rebuilt on reset + re-register — D2 index", () => {
+    registerSymbolSet(goodSet("piping"));
+    expect(findSymbol("piping", "a").label).toBe("A");
+    __resetSymbolRegistry();
+    expect(findSymbol("piping", "a")).toBeUndefined();
+    registerSymbolSet({
+      domain: "piping",
+      title: "Piping v2",
+      symbols: [{ id: "a", label: "A2", widthIn: 10, depthIn: 8 }],
+    });
+    expect(findSymbol("piping", "a").label).toBe("A2");
+  });
+
+  it("registry generation bumps on register and reset — D2 cache guard", () => {
+    const g0 = getSymbolRegistryGeneration();
+    registerSymbolSet(goodSet("one"));
+    expect(getSymbolRegistryGeneration()).toBeGreaterThan(g0);
+    const g1 = getSymbolRegistryGeneration();
+    registerSymbolSet(goodSet("two"));
+    expect(getSymbolRegistryGeneration()).toBeGreaterThan(g1);
+    const g2 = getSymbolRegistryGeneration();
+    __resetSymbolRegistry();
+    expect(getSymbolRegistryGeneration()).toBeGreaterThan(g2);
   });
 });
