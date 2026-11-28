@@ -368,6 +368,32 @@ describe("PlannerDashboardShell", () => {
       renderShell({ packages: [] });
       expect(container.querySelector('[data-testid="planner-cost-split"]')).toBeNull();
     });
+
+    // Planner phone-width fix (Jason's S26+ shot 01, 2026-11-28): the
+    // cost legend labels wrapped one letter per line at phone width —
+    // "Labor" as L-a-b-o-r. Cause: the row packs five items (swatch +
+    // label + count + fixed-width amount + fixed-width percent) and the
+    // label was the only flexible item with min-w-0, so it absorbed the
+    // whole deficit and break-words broke it per character. The label
+    // must keep at least its content width (min-w-fit) and the row must
+    // wrap (flex-wrap) so the trailing items drop to a second line
+    // instead of crushing the label.
+    it("cost legend labels keep their full width at phone width — never crushed to a character column", () => {
+      renderShell({ costSummary: COST_SUMMARY });
+      const rows = [...container.querySelectorAll('[data-testid="planner-cost-legend"] a > span')];
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(row.className).toContain("flex-wrap");
+      }
+      const labels = [...container.querySelectorAll('[data-testid="planner-cost-legend"] a > span > span:nth-child(2)')];
+      expect(labels.length).toBeGreaterThan(0);
+      for (const label of labels) {
+        expect(label.className).toContain("min-w-fit");
+        expect(label.className).not.toContain("min-w-0");
+      }
+      expect(container.querySelector('[data-testid="planner-cost-legend"]').textContent).toContain("Labor");
+      expect(container.querySelector('[data-testid="planner-cost-legend"]').textContent).toContain("External services");
+    });
   });
 
   // D3 fix round 1 — live-evidence finding (f): the scope-by-status

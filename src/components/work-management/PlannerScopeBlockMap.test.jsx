@@ -99,6 +99,21 @@ describe("PlannerScopeBlockMap", () => {
     expect(valvesLink.getAttribute("href")).toBe("/forge/work?system=Valves");
   });
 
+  // Planner phone-width fix (Jason's S26+ shot 05, 2026-11-28): the
+  // header controls (Treemap / Table group + Settings + Export CSV)
+  // formed one non-wrapping row ~420px wide, so Export CSV was clipped
+  // at the right edge at phone width. The controls row must wrap so the
+  // export drops to a second line instead of running past the card.
+  it("scope block map header controls wrap at phone width — Export CSV never clipped past the card", async () => {
+    const { container } = render({ packages: [PKG({ id: "wp_1", system: "Pumps" })] });
+    await flush();
+    const viewGroup = container.querySelector('[aria-label="Scope block map view"]');
+    expect(viewGroup).not.toBeNull();
+    const controlsRow = viewGroup.parentElement;
+    expect(controlsRow.className).toContain("flex-wrap");
+    expect(controlsRow.textContent).toContain("Export CSV");
+  });
+
   it("a status tile link carries both the group and the status; its label names group, status, and count (non-colour cue)", async () => {
     const packages = [PKG({ id: "wp_1", system: "Pumps", status: "in_progress" })];
     const { container } = render({ packages });

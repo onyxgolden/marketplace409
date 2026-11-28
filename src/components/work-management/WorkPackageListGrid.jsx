@@ -138,7 +138,7 @@ function WindowCell({ pkg, readOnly, onCommit, onError }) {
             startEdit();
           }
         }}
-        className={`min-w-0 truncate text-slate-700 ${readOnly ? "" : "cursor-pointer"}`}
+        className={`min-w-0 truncate text-slate-700 dark:text-slate-300 ${readOnly ? "" : "cursor-pointer"}`}
       >
         {shortDate(pkg.planned_start)} – {shortDate(pkg.planned_finish)}
       </div>
@@ -232,10 +232,10 @@ function SortHeader({ children, sortKey, sort, onSort }) {
     <button
       type="button"
       onClick={() => onSort(sortKey, nextDirection)}
-      className="flex items-center gap-1 text-left hover:text-slate-800"
+      className="flex items-center gap-1 text-left hover:text-slate-800 dark:hover:text-slate-200"
     >
       {children}
-      <span aria-hidden="true" className={active ? "text-slate-700" : "text-slate-300"}>
+      <span aria-hidden="true" className={active ? "text-slate-700 dark:text-slate-200" : "text-slate-300"}>
         {active ? (sort.direction === "asc" ? "▲" : "▼") : "▲"}
       </span>
     </button>
@@ -362,13 +362,13 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
   return (
     <div className="mt-6">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
           Budget shows the planned estimate only — actuals arrive with the Change Orders Log (slice 8).
         </p>
         <button
           type="button"
           onClick={() => setImportOpen(true)}
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
         >
           Import from file
         </button>
@@ -380,7 +380,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
         </p>
       )}
       <div role="table" aria-label="Work packages" className="border-t border-slate-300">
-        <div role="row" className={`sticky top-0 z-10 grid ${GRID_COLS} items-center gap-x-2 border-b-2 border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500`}>
+        <div role="row" className={`sticky top-0 z-10 grid ${GRID_COLS} items-center gap-x-2 border-b-2 border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400`}>
           <div role="columnheader" aria-sort={sortAttr("code", sort)}><SortHeader sortKey="code" sort={sort} onSort={onSort}>Package #</SortHeader></div>
           <div role="columnheader" aria-sort={sortAttr("title", sort)}><SortHeader sortKey="title" sort={sort} onSort={onSort}>Title</SortHeader></div>
           <div role="columnheader" aria-sort={sortAttr("status", sort)}><SortHeader sortKey="status" sort={sort} onSort={onSort}>Status</SortHeader></div>
@@ -397,7 +397,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
           return (
             <div key={pkg.id} role="row"
               onClick={() => setSelectedId(pkg.id)}
-              className={`grid ${GRID_COLS} items-center gap-x-2 border-b border-slate-200 px-3 py-2 text-sm ${selectedId === pkg.id ? "bg-blue-50" : "hover:bg-slate-50"} ${terminal ? "opacity-70" : ""}`}>
+              className={`grid ${GRID_COLS} items-center gap-x-2 border-b border-slate-200 px-3 py-2 text-sm dark:border-slate-800 ${selectedId === pkg.id ? "bg-blue-50 dark:bg-blue-950" : "hover:bg-slate-50 dark:hover:bg-slate-800"} ${terminal ? "opacity-70" : ""}`}>
               <div role="cell" className="min-w-0 truncate font-mono text-xs text-slate-400">
                 <Link href={`/forge/work/${pkg.id}${workspaceQuery}`} className="hover:underline">
                   {formatPackageCode(pkg.code)}
@@ -416,7 +416,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
                   <>
                     <span className="block">{pkg.title}</span>
                     <span
-                      className="block text-xs font-normal text-slate-500"
+                      className="block text-xs font-normal text-slate-500 dark:text-slate-400"
                       title={pkg.cancellation.reason
                         ? `Canceled ${shortDate(pkg.cancellation.at)} — ${cancellationActorLabel(pkg.cancellation.actor, ownerId)} — ${pkg.cancellation.reason}`
                         : `Canceled ${shortDate(pkg.cancellation.at)} — ${cancellationActorLabel(pkg.cancellation.actor, ownerId)}`}
@@ -433,7 +433,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
                 validate={(next) => (next.trim() === "" ? "Title is required." : null)}
                 onCommit={(next) => commitField(pkg, { title: next })}
                 onError={(text) => report(text)}
-                className="font-medium text-slate-900"
+                className="font-medium text-slate-900 dark:text-slate-100"
               />
               <EditableGridCell
                 value={pkg.status}
@@ -455,23 +455,23 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
                   readOnly={terminal}
                   onCommit={(next) => commitField(pkg, { property_id: next || null })}
                   onError={(text) => report(text)}
-                  className="text-slate-700"
+                  className="text-slate-700 dark:text-slate-300"
                 />
               ) : (
-                <div role="cell" className="min-w-0 truncate text-slate-700" title="Edit on the package detail page">
+                <div role="cell" className="min-w-0 truncate text-slate-700 dark:text-slate-300" title="Edit on the package detail page">
                   {[pkg.unit, pkg.area, pkg.system].filter(Boolean).join(" / ") || "—"}
                 </div>
               )}
-              <div role="cell" className="min-w-0 truncate text-slate-700">
+              <div role="cell" className="min-w-0 truncate text-slate-700 dark:text-slate-300">
                 {pkg.responsible_party?.display_name || "—"}
               </div>
-              <div role="cell" className="min-w-0 truncate text-slate-700">
+              <div role="cell" className="min-w-0 truncate text-slate-700 dark:text-slate-300">
                 {pkg.planned_cost_cents != null ? formatCents(pkg.planned_cost_cents) : "—"} / —
               </div>
               <WindowCell pkg={pkg} readOnly={terminal}
                 onCommit={(patch) => commitField(pkg, patch)}
                 onError={(text) => report(text)} />
-              <div role="cell" className="min-w-0 truncate text-slate-700">
+              <div role="cell" className="min-w-0 truncate text-slate-700 dark:text-slate-300">
                 {pkg.percent_complete != null ? `${pkg.percent_complete}%` : "—"}
               </div>
               <EditableGridCell
@@ -481,9 +481,9 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
                 readOnly={terminal}
                 onCommit={(next) => commitField(pkg, { package_type: next })}
                 onError={(text) => report(text)}
-                className="text-xs leading-snug text-slate-500"
+                className="text-xs leading-snug text-slate-500 dark:text-slate-400"
               />
-              <div role="cell" className="min-w-0 truncate text-xs text-slate-500">
+              <div role="cell" className="min-w-0 truncate text-xs text-slate-500 dark:text-slate-400">
                 {shortDate(pkg.updated_at)}
               </div>
             </div>
@@ -510,7 +510,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
                 editor="select" options={propertyOptions} ariaLabel={`Property for new package row ${index + 1}`}
                 onCommit={(next) => commitBlank(index, "propertyId", next)}
                 onError={(text) => report(text)}
-                className="text-slate-700"
+                className="text-slate-700 dark:text-slate-300"
               />
             ) : (
               <div role="cell" className="min-w-0 truncate text-slate-400" title="Set Unit / Area / System on the package detail page after creating it">—</div>
@@ -524,7 +524,7 @@ export default function WorkPackageListGrid({ initialPackages, properties, works
               editor="select" options={scopeOptionsForMode(activeMode)} ariaLabel={`Scope for new package row ${index + 1}`}
               onCommit={(next) => commitBlank(index, "packageType", next)}
               onError={(text) => report(text)}
-              className="text-xs leading-snug text-slate-500"
+              className="text-xs leading-snug text-slate-500 dark:text-slate-400"
             />
             <div role="cell" className="min-w-0 truncate text-xs text-slate-400">—</div>
           </div>

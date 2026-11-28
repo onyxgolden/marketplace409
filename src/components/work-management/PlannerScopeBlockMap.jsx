@@ -479,7 +479,14 @@ export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, 
            wrap inside the card (break-words + min-w-0), never run past
            the card's right edge. */}
         <h2 className="min-w-0 break-words text-sm font-semibold text-slate-900 dark:text-white">{prefs.title}</h2>
-        <div className="flex items-center gap-2">
+        {/* Phone-width fix (Jason's S26+ shot 05, 2026-11-28): this
+           controls row (Treemap/Table group + Settings + Export CSV)
+           was the one header row without flex-wrap, so at phone width
+           it ran ~26px past its card at 360px and Export CSV was
+           clipped at the right edge. It wraps now like every other
+           widget header's controls row, so the export drops to a
+           second line instead of running past the card. */}
+        <div className="flex flex-wrap items-center gap-2">
           <div role="group" aria-label="Scope block map view" className="flex rounded-lg border border-slate-300 dark:border-slate-600">
             <button
               type="button"

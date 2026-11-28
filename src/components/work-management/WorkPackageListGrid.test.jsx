@@ -84,6 +84,29 @@ describe("WorkPackageListGrid", () => {
     expect(BLANK_ROWS).toBe(10);
   });
 
+  // Planner phone-width fix (Jason's S26+ shot 08, 2026-11-28): the
+  // Title column looked low-contrast in dark mode — package numbers and
+  // Status pills bright, titles dark grey on dark. The real-row Title
+  // cell carried text-slate-900 with no dark: variant. It must carry a
+  // light dark-mode color (same class as the D4.1 Settings-button
+  // contrast fix); the live check measures the computed ratio. The same
+  // pass covers the rest of the grid's missing dark: variants — the
+  // header row (white block in dark mode), the other text cells, and
+  // the selected/hover row backgrounds (a light title on a light
+  // selected row would be unreadable without the dark row background).
+  it("real-row Title cell carries a light dark-mode color", async () => {
+    setupFetch(async () => ({ body: {} }));
+    const { container } = await renderGrid();
+    const titleCell = container.querySelector('[aria-label="Title for 0001"]');
+    expect(titleCell).not.toBeNull();
+    expect(titleCell.className).toMatch(/dark:text-(slate-100|white)/);
+    const headerRow = container.querySelector('[role="row"].sticky');
+    expect(headerRow.className).toContain("dark:bg-slate-900");
+    expect(headerRow.className).toContain("dark:text-slate-400");
+    const propertyCell = container.querySelector('[aria-label="Property for 0001"]');
+    expect(propertyCell.className).toContain("dark:text-slate-300");
+  });
+
   it("edits a title in place through the existing PATCH", async () => {
     const calls = setupFetch(async ({ url, method, body }) => {
       if (method === "PATCH") {
