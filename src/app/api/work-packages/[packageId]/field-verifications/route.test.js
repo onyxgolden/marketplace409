@@ -4,7 +4,10 @@ vi.mock("../../_lib/auth.js", () => ({
   workAuth: vi.fn(),
   requirePackageScope: vi.fn(async () => null),
   ok: (body, status = 200) => Response.json(body, { status }),
-  fail: (result) => Response.json({ error: result.error }, { status: result.httpStatus || 400 }),
+  // Mirrors the real fail() in ../../_lib/auth.js — including the
+  // notApplied forward (FV-1) — so the route test asserts the service
+  // result reaches the response body unchanged.
+  fail: (result) => Response.json({ error: result.error, ...(result.notApplied ? { notApplied: true } : {}) }, { status: result.httpStatus || 400 }),
   serverError: () => Response.json({ error: "Unable to complete the request." }, { status: 500 }),
   readJson: async (request) => { try { return await request.json(); } catch { return {}; } },
 }));
@@ -65,6 +68,15 @@ describe("GET /api/work-packages/[packageId]/field-verifications", () => {
     listFieldVerifications.mockResolvedValue({ ok: false, httpStatus: 503, error: "Field verification isn't available yet — the database change for this feature hasn't been applied." });
     const response = await GET(new Request("https://test/x"), { params: params() });
     expect(response.status).toBe(503);
+  });
+
+  it("carries the not-applied flag through on the 503 body", async () => {
+    listFieldVerifications.mockResolvedValue({ ok: false, httpStatus: 503, error: "Field verification isn't available yet — the database change for this feature hasn't been applied.", notApplied: true });
+    const response = await GET(new Request("https://test/x"), { params: params() });
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body.notApplied).toBe(true);
+    expect(body.error).toContain("isn't available yet");
   });
 
   it("returns the auth error untouched", async () => {

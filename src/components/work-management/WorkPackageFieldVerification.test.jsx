@@ -139,15 +139,20 @@ function stubFetch(pkgId, {
   steps = [{ id: "step_1", title: "Fabricate spool" }],
   lines = [{ lineId: "line_1", drawingId: "dwg_1", lineNo: 1, description: "Spool", baselineQuantity: 10, baselineUnit: "EA", installed: 12.5 }],
   notApplied = false,
+  listError = false,
 } = {}) {
   const calls = [];
   vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
     calls.push({ url, method: options.method || "GET", body: options.body ? JSON.parse(options.body) : undefined });
     if (notApplied && url.includes("/field-verifications")) {
-      // The real route returns a bare 503 with only { error } — no
-      // notApplied flag survives fail() — so the panel shows the
-      // error text, exactly like the busts panel does.
-      return { ok: false, status: 503, json: async () => ({ error: "Field verification isn't available yet — the database change for this feature hasn't been applied." }) };
+      // The real route returns a 503 carrying notApplied: true (FV-1:
+      // fail() forwards the flag) — the list fetcher turns that into
+      // { notApplied: true } data, so the panel renders its honest
+      // "isn't available yet" state, not the red error branch.
+      return { ok: false, status: 503, json: async () => ({ error: "Field verification isn't available yet — the database change for this feature hasn't been applied.", notApplied: true }) };
+    }
+    if (listError && url.startsWith(`/api/work-packages/${pkgId}/field-verifications?`)) {
+      return { ok: false, status: 500, json: async () => ({ error: "Unable to complete the request." }) };
     }
     if (url === `/api/work-packages/${pkgId}/field-verifications` && options.method === "POST") {
       const created = JSON.parse(options.body);
@@ -350,6 +355,22 @@ describe("WorkPackageFieldVerification", () => {
     await settle();
     await settle();
     expect(container.textContent).toContain("Field verification isn't available yet");
+    // The honest branch — neutral wording — not the red error branch:
+    // the flag reached the client and selected the unavailable state.
+    expect(container.querySelector(".text-red-600")).toBeNull();
+  });
+
+  it("still shows the red error branch on an unrelated list failure", async () => {
+    // A different package id than the other tests: the SWR cache is
+    // shared across tests in this file.
+    stubFetch("pkg_err", { listError: true });
+    const { container } = renderPanel("pkg_err");
+    await settle();
+    await settle();
+    const error = container.querySelector(".text-red-600");
+    expect(error).not.toBeNull();
+    expect(error.textContent).toContain("Unable to complete the request.");
+    expect(container.textContent).not.toContain("isn't available yet");
   });
 
   it("filters the list to one target when deep-linked from a step row", async () => {
@@ -396,5 +417,22 @@ describe("FieldVerificationBadge and FieldVerificationSummary", () => {
     expect(container.textContent).toContain("Submitted 1");
     expect(container.textContent).toContain("Accepted 0");
     expect(container.textContent).toContain("Changed since review 1");
+  });
+
+  it("summary renders nothing when the migration has not landed", async () => {
+    // The summary shares the panel's list SWR key, so it reads the
+    // same { notApplied: true } entry — and renders nothing rather
+    // than an error. A fresh package id: the SWR cache is shared
+    // across tests in this file.
+    stubFetch("pkg_na_sum", { notApplied: true });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    act(() => {
+      root.render(<FieldVerificationSummary packageId="pkg_na_sum" />);
+    });
+    await settle();
+    await settle();
+    expect(container.textContent).toBe("");
   });
 });

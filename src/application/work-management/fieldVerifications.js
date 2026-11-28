@@ -32,15 +32,12 @@ import {
   validateFieldVerificationRetire,
   validateFieldVerificationUpdate,
 } from "@/domains/work-management/fieldVerifications";
+import { isMissingTableError } from "@/lib/supabase/isMissingTableError";
 
 export const NOT_APPLIED_ERROR =
   "Field verification isn't available yet — the database change for this feature hasn't been applied.";
 
 const PAGE_SIZE = 200;
-
-function isMissingTableError(error) {
-  return error?.code === "42P01" || String(error?.message || "").includes("does not exist");
-}
 
 function isMissingRpcError(error) {
   if (!error) return false;

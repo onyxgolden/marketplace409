@@ -91,6 +91,7 @@ export async function requirePackageScope(auth, packageId) {
 export function fail(result) {
   return NextResponse.json({
     error: result.error || "Request failed.",
+    ...(result.notApplied ? { notApplied: true } : {}),
     ...(result.blockers ? { blockers: result.blockers } : {}),
     ...(result.affectedStepIds ? { affectedStepIds: result.affectedStepIds } : {}),
   }, { status: result.httpStatus || 400 });
