@@ -22,7 +22,7 @@
 // Pure and framework-free.
 
 import { flangeNominalSizeIn, pipeOdIn } from "./flangeGeometry";
-import { findSymbol } from "./symbolRegistry";
+import { findSymbol, getSymbolRegistryGeneration } from "./symbolRegistry";
 import { rackParams } from "./rackGeometry";
 import { boundReducerAt, junctionHostOwner } from "./pipeReducerModel";
 import { attachmentInterfaceErrors } from "./pipeAttachments";
@@ -78,14 +78,99 @@ export function storedSegmentElevations(run) {
   return out;
 }
 
+// --- Elevation memoization cache (FCCU freeze D2-b) ---
+// design -> WeakMap<run, { generation, derived?, vertex? }>. See the
+// derivedSegmentElevations doc comment for the invalidation argument.
+let elevationCache = new WeakMap();
+let flangeCache = new WeakMap();
+const elevationStats = {
+  derivedComputations: 0,
+  derivedCacheHits: 0,
+  vertexComputations: 0,
+  vertexCacheHits: 0,
+  flangeComputations: 0,
+  flangeCacheHits: 0,
+};
+
+/** Cache statistics for the elevation/flange memoization (tests + receipts). */
+export function elevationCacheStats() {
+  return { ...elevationStats };
+}
+
+/** Test-only: drop all cached elevations/flanges and reset the counters. */
+export function __resetElevationCache() {
+  elevationCache = new WeakMap();
+  flangeCache = new WeakMap();
+  elevationStats.derivedComputations = 0;
+  elevationStats.derivedCacheHits = 0;
+  elevationStats.vertexComputations = 0;
+  elevationStats.vertexCacheHits = 0;
+  elevationStats.flangeComputations = 0;
+  elevationStats.flangeCacheHits = 0;
+}
+
+// Cache entry for one (design, run) pair at one registry generation.
+// Returns null when either side is not an object (null/undefined designs
+// and runs still compute directly, exactly as before — no cache, no throw).
+function elevationEntry(design, run) {
+  if (design === null || typeof design !== "object") return null;
+  if (run === null || typeof run !== "object") return null;
+  const generation = getSymbolRegistryGeneration();
+  let byRun = elevationCache.get(design);
+  if (!byRun) {
+    byRun = new WeakMap();
+    elevationCache.set(design, byRun);
+  }
+  let entry = byRun.get(run);
+  if (!entry || entry.generation !== generation) {
+    entry = { generation };
+    byRun.set(run, entry);
+  }
+  return entry;
+}
+
 /**
  * Per-segment elevations DERIVED from supports, replicating the 3D
  * model's long-standing rule: a segment whose plan midpoint falls
  * inside a rack footprint rides at that rack's first-tier top of steel
  * plus the pipe radius (highest containing support wins); otherwise
  * the grade centerline applies.
+ *
+ * Memoized (FCCU freeze D2-b): the derivation is pure in (design, run)
+ * and is re-run identically thousands of times per render — every
+ * validation rule, every pipe, every render. The cache keys on object
+ * identity: the app treats the design document immutably (every reducer
+ * action returns a new design object via spread updates; applyCrossingJogs
+ * and setRackParams build new objects; no non-test code assigns to
+ * design.* in place), so an edit yields a new design/run object and
+ * misses the cache, while view-only re-renders (zoom, pan, view switch)
+ * reuse it. WeakMaps let entries die with their design/run (bounded by
+ * undo depth, never global-unbounded). The registry generation guards
+ * re-registration (tests / hot reload): a registry change invalidates
+ * every cached elevation, since the rack lookup itself changed.
+ * Cached arrays are FROZEN before they are stored (D2 fix-round Gate 2):
+ * the old "treat them as read-only" comment was not enforcement, and
+ * the cache tests explicitly required shared arrays. A consumer that
+ * mutates a cached result now fails loudly instead of corrupting every
+ * later reader of the same (design, run). The freeze is safe because
+ * every consumer reads/indexes only — proven by the full suite plus
+ * the live D2 driver trials, which exercise the real render/validation
+ * paths against frozen results.
  */
 export function derivedSegmentElevations(design, run) {
+  const entry = elevationEntry(design, run);
+  if (!entry) return computeDerivedSegmentElevations(design, run);
+  if (entry.derived !== undefined) {
+    elevationStats.derivedCacheHits += 1;
+    return entry.derived;
+  }
+  const derived = computeDerivedSegmentElevations(design, run);
+  elevationStats.derivedComputations += 1;
+  entry.derived = Object.freeze(derived);
+  return entry.derived;
+}
+
+function computeDerivedSegmentElevations(design, run) {
   const racks = [];
   for (const inst of design?.symbols || []) {
     const symbol = findSymbol(inst.domain, inst.symbolId);
@@ -135,8 +220,25 @@ export function segmentElevationsForDesign(design, run) {
  * gaps fall back to the run's base elevation, then to the standard
  * derived rule (endpoints take their segment's elevation, interior
  * vertices the higher adjacent one — the same rule the 3D joints use).
+ *
+ * Memoized per (design, run) alongside derivedSegmentElevations (D2-b);
+ * same identity + registry-generation invalidation, same frozen
+ * read-only result contract (D2 fix-round Gate 2).
  */
 export function vertexElevationsForDesign(design, run) {
+  const entry = elevationEntry(design, run);
+  if (!entry) return computeVertexElevationsForDesign(design, run);
+  if (entry.vertex !== undefined) {
+    elevationStats.vertexCacheHits += 1;
+    return entry.vertex;
+  }
+  const vertex = computeVertexElevationsForDesign(design, run);
+  elevationStats.vertexComputations += 1;
+  entry.vertex = Object.freeze(vertex);
+  return entry.vertex;
+}
+
+function computeVertexElevationsForDesign(design, run) {
   const pts = run?.points || [];
   if (pts.length === 0) return [];
   const derived = derivedSegmentElevations(design, run);
@@ -857,6 +959,42 @@ export function connectionFlanges(design) {
     }
   }
   return out;
+}
+
+/**
+ * connectionFlanges grouped by run, memoized per design — the D2 (c)
+ * hoist. PlanCanvas used to call connectionFlanges(design) per pipe per
+ * render (91 full-design scans per 2D render); this computes it once per
+ * design object and hands each render the pre-grouped map. Same flange
+ * objects, same per-run order (design pipes order, start before end),
+ * same geometry — grouping only. Invalidation is design identity +
+ * registry generation, exactly like the elevation cache above; a null /
+ * non-object design yields an empty Map, matching connectionFlanges.
+ * The grouped arrays and the flange objects in them are FROZEN (D2
+ * fix-round Gate 2): they are shared cached results, and a consumer
+ * that mutates one would corrupt every later render of the same design.
+ * The freeze is safe — the flange objects are freshly built by
+ * connectionFlanges inside this computation, and every consumer
+ * (renderPipe, 3D model, sections, print) reads them only.
+ */
+export function connectionFlangesByRun(design) {
+  if (design === null || typeof design !== "object") return new Map();
+  const generation = getSymbolRegistryGeneration();
+  const cached = flangeCache.get(design);
+  if (cached && cached.generation === generation) {
+    elevationStats.flangeCacheHits += 1;
+    return cached.byRun;
+  }
+  const byRun = new Map();
+  for (const flange of connectionFlanges(design)) {
+    const list = byRun.get(flange.runId);
+    if (list) list.push(Object.freeze(flange));
+    else byRun.set(flange.runId, [Object.freeze(flange)]);
+  }
+  for (const list of byRun.values()) Object.freeze(list);
+  elevationStats.flangeComputations += 1;
+  flangeCache.set(design, { generation, byRun });
+  return byRun;
 }
 
 /** Distance from a point to a segment (and the closest point on it). */

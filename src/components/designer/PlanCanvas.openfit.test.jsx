@@ -14,7 +14,7 @@
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PlanCanvas from "./PlanCanvas";
 import {
   addWall,
@@ -63,6 +63,37 @@ function triggerResize() {
   });
 }
 
+// Wheel zoom now commits via the gesture frame scheduler (D2 Gate 5):
+// a dispatched wheel event lands on the next animation frame, not
+// synchronously. Tests queue frames manually (same shape as
+// PlanCanvas.pinchRaf.test.jsx) and call fireFrames() after wheel
+// dispatches before reading post-wheel geometry.
+let rafQueue = new Map();
+let rafSeq = 0;
+const realRaf = window.requestAnimationFrame;
+const realCancelRaf = window.cancelAnimationFrame;
+
+function installRafMock() {
+  rafQueue = new Map();
+  rafSeq = 0;
+  window.requestAnimationFrame = (cb) => {
+    const id = ++rafSeq;
+    rafQueue.set(id, cb);
+    return id;
+  };
+  window.cancelAnimationFrame = (id) => {
+    rafQueue.delete(id);
+  };
+}
+
+function fireFrames() {
+  const pending = [...rafQueue.values()];
+  rafQueue.clear();
+  act(() => {
+    for (const cb of pending) cb(0);
+  });
+}
+
 // The wall's solid segment: stroke #e5e7eb (dimension lines use #9ca3af).
 function wallLine(container, index = 0) {
   const lines = [...container.querySelectorAll("line")].filter(
@@ -101,6 +132,10 @@ describe("PlanCanvas open-time fit (all sizes)", () => {
     });
   };
 
+  beforeEach(() => {
+    installRafMock();
+  });
+
   afterEach(() => {
     if (root) act(() => root.unmount());
     root = null;
@@ -108,6 +143,8 @@ describe("PlanCanvas open-time fit (all sizes)", () => {
     container = null;
     roCallbacks.length = 0;
     mockSize = { w: 0, h: 0 };
+    window.requestAnimationFrame = realRaf;
+    window.cancelAnimationFrame = realCancelRaf;
   });
 
   it("fits a large drawing on a desktop canvas, 48px margin", () => {
@@ -187,6 +224,8 @@ describe("PlanCanvas open-time fit (all sizes)", () => {
         }),
       );
     });
+    // Wheel zoom commits on the next frame (D2 Gate 5 scheduler).
+    fireFrames();
     mockSize = { w: 1200, h: 800 };
     triggerResize();
     // Wheeled view: scale 1.6 * 1.12 = 1.792 around (100, 100) →
@@ -273,6 +312,8 @@ describe("PlanCanvas open-time fit (all sizes)", () => {
         }),
       );
     });
+    // Wheel zoom commits on the next frame (D2 Gate 5 scheduler).
+    fireFrames();
     mockSize = { w: 1200, h: 800 };
     triggerResize();
     // B stays on the wheeled view (scale 1.792 around (100, 100) →

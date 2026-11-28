@@ -13,7 +13,7 @@
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PlanCanvas from "./PlanCanvas";
 import {
   addPipeRun,
@@ -61,6 +61,37 @@ afterAll(() => {
   if (heightDesc) Object.defineProperty(window.Element.prototype, "clientHeight", heightDesc);
   else delete window.Element.prototype.clientHeight;
 });
+
+// Wheel zoom now commits via the gesture frame scheduler (D2 Gate 5):
+// a dispatched wheel event lands on the next animation frame, not
+// synchronously. Tests queue frames manually (same shape as
+// PlanCanvas.pinchRaf.test.jsx) and call fireFrames() after wheel
+// dispatches before reading post-wheel geometry.
+let rafQueue = new Map();
+let rafSeq = 0;
+const realRaf = window.requestAnimationFrame;
+const realCancelRaf = window.cancelAnimationFrame;
+
+function installRafMock() {
+  rafQueue = new Map();
+  rafSeq = 0;
+  window.requestAnimationFrame = (cb) => {
+    const id = ++rafSeq;
+    rafQueue.set(id, cb);
+    return id;
+  };
+  window.cancelAnimationFrame = (id) => {
+    rafQueue.delete(id);
+  };
+}
+
+function fireFrames() {
+  const pending = [...rafQueue.values()];
+  rafQueue.clear();
+  act(() => {
+    for (const cb of pending) cb(0);
+  });
+}
 
 // FCCU-like bounds: 7680 x 5064 in of content. A 1200-in pipe run
 // (label "⌀6″"), a tagged pump ("P-101" / "Centrifugal pump"),
@@ -119,6 +150,10 @@ describe("PlanCanvas scale-gated labels", () => {
     });
   };
 
+  beforeEach(() => {
+    installRafMock();
+  });
+
   afterEach(() => {
     if (root) act(() => root.unmount());
     root = null;
@@ -126,6 +161,8 @@ describe("PlanCanvas scale-gated labels", () => {
     container = null;
     roCallbacks.length = 0;
     mockSize = { w: 0, h: 0 };
+    window.requestAnimationFrame = realRaf;
+    window.cancelAnimationFrame = realCancelRaf;
   });
 
   it("hides detail labels AND short tags at a phone fit (scale 0.0445)", () => {
@@ -204,6 +241,8 @@ describe("PlanCanvas scale-gated labels", () => {
         );
       });
     }
+    // Wheel zoom commits on the next frame (D2 Gate 5 scheduler).
+    fireFrames();
     expect(labelText(container, 11, "#e0f2fe")).toContain("⌀6″");
     expect(labelText(container, 11, "#fde68a")).toContain("P-101");
   });

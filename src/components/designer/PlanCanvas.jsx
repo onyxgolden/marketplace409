@@ -49,7 +49,7 @@ import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
 import { renderSymbol2D, drawOrgChart } from "./symbolDrawRoutines";
 import { effectiveColor, systemLegend } from "@/domains/roomDesigner/designSystems";
 import { nearestVisibleConnectionAnchor } from "@/domains/roomDesigner/temaInstances";
-import { connectionFlanges, segmentElevationsForDesign } from "@/domains/roomDesigner/pipeCrossings";
+import { connectionFlangesByRun, segmentElevationsForDesign } from "@/domains/roomDesigner/pipeCrossings";
 import { flangeDims } from "@/domains/roomDesigner/flangeGeometry";
 import { finalPipeColor } from "@/domains/roomDesigner/pipeColorPolicy";
 import { FlangePairGlyph } from "./flangeDraw";
@@ -175,6 +175,15 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // except through the view transform.
   const touchPointers = useRef(new Map()); // pointerId -> {x, y} screen px
   const pinch = useRef(null); // {dist, mid:{x,y}} of the previous move, or null
+  // Last screen point of the active pan drag (D2 fix round 3 — FR2
+  // verdict reverse-test concern): the wheel-to-pan rebase must use the
+  // ACTUAL pointer position, not the wheel event's screen coordinate.
+  // In supported hardware (single mouse pointer) a wheel event fires at
+  // the cursor, which IS the drag pointer during a left-drag, so the two
+  // coincide; but a synthetic (or multi-input) wheel at a different
+  // anchor must not silently invent a pan delta. Updated at pan-drag
+  // start and on every pan move; null when no pan drag is active.
+  const lastPanPointRef = useRef(null);
   // Touch pointerdown point on a phone-overview tag, so a drag starting on
   // a tag can still pan: the tag's pointerdown is swallowed for tap-select
   // and no drag ever starts from it (see renderPhoneOverviewTags).
@@ -217,16 +226,57 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   useEffect(() => {
     committedViewRef.current = view;
   }, [view]);
+  // ---- dev-only gesture trace (FCCU freeze D2 fix round 3) ----
+  // Gated on window.__FCCU_GESTURE_TRACE: the diagnosis driver sets it
+  // true via addInitScript before the mixed legs. Zero cost and zero
+  // behavior change when off — production never sets the flag, and every
+  // call site is a bare function call guarded by the flag. Entries go to
+  // window.__fccuGestureTrace (an array the driver drains per leg),
+  // capped so a long session cannot grow it without bound. The trace
+  // exists to answer one question the outside-React probes could not:
+  // why the expected view never appears in live mixed legs — it logs
+  // every gesture event, every scheduler transition, every other setView
+  // writer, and every committed view, each tagged with the mount id so
+  // a remount is visible as a new id.
+  const mountIdRef = useRef(null);
+  if (mountIdRef.current === null) {
+    mountIdRef.current = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+  const gestureTrace = (event, data) => {
+    if (typeof window === "undefined" || !window.__FCCU_GESTURE_TRACE) return;
+    const arr = (window.__fccuGestureTrace = window.__fccuGestureTrace || []);
+    if (arr.length > 5000) arr.shift();
+    arr.push({ t: Math.round(performance.now() * 100) / 100, mount: mountIdRef.current, event, ...(data || {}) });
+  };
+  // Mount identity + committed-view history: a useEffect on [view] logs
+  // every committed view after its render (the layout-effect committed
+  // state the FR2 verdict asks for), and the mount/unmount pair proves
+  // whether the canvas remounted mid-gesture (which would reset the view
+  // to DEFAULT_VIEW and re-apply the open-time fit).
+  useEffect(() => {
+    gestureTrace("mount", { identity: autoFitIdentity });
+    return () => gestureTrace("unmount", {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only log; gestureTrace touches refs only.
+  }, []);
+  useEffect(() => {
+    gestureTrace("view-committed", { view: { ...view }, userNav: userNavRef.current, fitSettled: fitSettledIdentity, identity: autoFitIdentity });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- committed-view history; gestureTrace touches refs only.
+  }, [view]);
   const commitPendingView = () => {
-    if (pendingViewRef.current === null) return;
+    if (pendingViewRef.current === null) {
+      gestureTrace("commit", { value: null });
+      return;
+    }
     const next = pendingViewRef.current;
     pendingViewRef.current = null;
     committedViewRef.current = next;
+    gestureTrace("commit", { value: { ...next } });
     setView(next);
   };
   // Both scheduler callbacks are stable for the component's life: they
   // only touch refs and the stable setView (via commitPendingView).
   const flushGestureView = useCallback(() => {
+    gestureTrace("flush", { pending: pendingViewRef.current ? { ...pendingViewRef.current } : null, frameScheduled: viewFrameRef.current !== null });
     if (viewFrameRef.current !== null) {
       cancelAnimationFrame(viewFrameRef.current.id);
       viewFrameRef.current = null;
@@ -242,7 +292,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     }
   }, []);
   const scheduleGestureView = useCallback((next) => {
+    const hadFrame = viewFrameRef.current !== null;
     pendingViewRef.current = next;
+    gestureTrace("schedule", { next: { ...next }, hadFrame });
     if (viewFrameRef.current === null) {
       // A token, not the bare frame id: the slot is claimed BEFORE
       // requestAnimationFrame runs, so a callback that fires before the
@@ -251,10 +303,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       const frame = { id: 0 };
       viewFrameRef.current = frame;
       frame.id = requestAnimationFrame(() => {
+        gestureTrace("raf-fire", { tokenMatch: viewFrameRef.current === frame, pending: pendingViewRef.current ? { ...pendingViewRef.current } : null });
         if (viewFrameRef.current === frame) viewFrameRef.current = null;
         commitPendingView();
       });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable for life: refs + stable setView only; gestureTrace touches refs only.
   }, []);
   // The view gesture math starts from: the pending view while a gesture is
   // coalescing (so a step never applies against a stale committed view —
@@ -333,13 +387,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const [appliedZoomNonce, setAppliedZoomNonce] = useState(0);
   if (zoomRequest && zoomRequest.nonce !== appliedZoomNonce && canvasSize.w > 0 && canvasSize.h > 0) {
     setAppliedZoomNonce(zoomRequest.nonce);
-    setView(
-      zoomToFitRect(zoomRequest.rect, canvasSize, {
-        paddingPx: 48,
-        minScale: MIN_SCALE,
-        maxScale: MAX_SCALE,
-      }),
-    );
+    const zoomed = zoomToFitRect(zoomRequest.rect, canvasSize, {
+      paddingPx: 48,
+      minScale: MIN_SCALE,
+      maxScale: MAX_SCALE,
+    });
+    gestureTrace("setview-zoom-request", { value: { ...zoomed } });
+    setView(zoomed);
   }
 
   // Open-time auto-fit: when a design opens (or the open design/level
@@ -394,6 +448,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const [fitSettledIdentity, setFitSettledIdentity] = useState(null);
   const [prevAutoFitIdentity, setPrevAutoFitIdentity] = useState(autoFitIdentity);
   if (prevAutoFitIdentity !== autoFitIdentity) {
+    gestureTrace("setview-identity-change", { from: prevAutoFitIdentity, to: autoFitIdentity, viewBefore: { ...view } });
     setPrevAutoFitIdentity(autoFitIdentity);
     userNavRef.current = false;
     // Identity-scoped fit state never leaks into the next design/level:
@@ -430,6 +485,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       },
     );
     if (fitted) {
+      gestureTrace("setview-fit-apply", { fitted: { ...fitted }, userNav: userNavRef.current, identity: autoFitIdentity, fitSettledBefore: fitSettledIdentity });
       setFitSettledIdentity(autoFitIdentity);
       setView(fitted);
       setFitFloor(fitted.scale < MIN_SCALE ? fitted.scale : null);
@@ -461,10 +517,20 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     });
   }, [onViewCenterChange, view, canvasSize]);
 
-  const toPlan = useCallback(
-    (s) => ({ x: (s.x - view.ox) / view.scale, y: (s.y - view.oy) / view.scale }),
-    [view],
-  );
+    // Pointing policy (D2 fix round 2 — mixed-gesture audit): toPlan maps
+    // through the COMMITTED (rendered) view, never the pending gesture
+    // view. The user aims at what they can see, and the pending view is
+    // not painted yet — mapping a click through it would silently shift
+    // hit-testing and drawing coordinates under the cursor (a hidden
+    // coordinate change). A pointerdown therefore does NOT flush a pending
+    // wheel/pinch zoom first. The pan drag origin is the exception: it is
+    // captured from the effective view (see handlePointerDownAction)
+    // because a pan is a view gesture whose own moves chain through
+    // gestureView(), not a pointing gesture.
+    const toPlan = useCallback(
+      (s) => ({ x: (s.x - view.ox) / view.scale, y: (s.y - view.oy) / view.scale }),
+      [view],
+    );
 
   const snapTargets = useMemo(() => {
     const pts = [];
@@ -794,6 +860,11 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // pointerup: if a second finger lands first, trackTouchDown starts a pinch
   // and discards the tap. Only a value snapshot is held, never the event.
   const onPointerDown = (e) => {
+    gestureTrace("pointerdown", {
+      trusted: e.isTrusted, button: e.button, pointerId: e.pointerId, pointerType: e.pointerType,
+      x: e.clientX, y: e.clientY, target: e.target ? `${e.target.tagName}${e.target.getAttribute?.("data-testid") ? `#${e.target.getAttribute("data-testid")}` : ""}` : null,
+      tool, spaceDown, dragKind: drag?.kind ?? null, gestureView: { ...gestureView() },
+    });
     // Only a drawing/placement tool claims the view on pointerdown: a
     // shape started on the empty canvas must not be yanked by a late
     // fit. A select/pan tap does not move the view, so it must not cancel
@@ -825,7 +896,19 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
 
   const handlePointerDownAction = (e) => {
     if (e.button === 1 || tool === "pan" || spaceDown) {
-      setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
+      // D2 fix round 2 (mixed-gesture P1): the pan origin is captured
+      // from the EFFECTIVE view (gestureView), not the committed view.
+      // A wheel zoom may be pending (scheduled, not yet committed) when
+      // the pointer lands; capturing the committed offsets would bake the
+      // stale origin into the drag, and the next move would overwrite the
+      // wheel's anchor correction with ox = staleOx + dx. The effective
+      // view is the pending zoom when one exists, so the pan chains
+      // exactly from it — no jump, no lost anchor.
+      const gv = gestureView();
+      const start = eventPoint(e);
+      setDrag({ kind: "pan", start, ox: gv.ox, oy: gv.oy });
+      lastPanPointRef.current = start;
+      gestureTrace("pan-start", { drag: { kind: "pan", start: { ...start }, ox: gv.ox, oy: gv.oy }, gestureView: { ...gv } });
       return;
     }
     if (e.button !== 0) return;
@@ -1071,7 +1154,14 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       !hitMovesWithSelection(design, selection, hit) &&
       !(selection && hit.kind === selection.kind && hit.id === selection.id)
     ) {
-      setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
+      // Same effective-view origin as the mouse pan branch above (D2 fix
+      // round 2): a pending wheel zoom must not be overwritten by the
+      // drag's first move.
+      const gv = gestureView();
+      const touchPanStart = eventPoint(e);
+      setDrag({ kind: "pan", start: touchPanStart, ox: gv.ox, oy: gv.oy });
+      lastPanPointRef.current = touchPanStart;
+      gestureTrace("pan-start", { drag: { kind: "pan", start: { ...touchPanStart }, ox: gv.ox, oy: gv.oy }, gestureView: { ...gv }, touch: true });
       dispatch({ type: "SELECT", selection: hit });
       return;
     }
@@ -1194,7 +1284,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // equivalent of space+drag / the Pan tool on desktop. (Tap behavior is
     // unchanged: the SELECT below still fires on pointerdown.)
     if (e.pointerType === "touch" && !hit) {
-      setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
+      // Effective-view origin (D2 fix round 2) — see the mouse pan branch.
+      const gv = gestureView();
+      const touchPanStart = eventPoint(e);
+      setDrag({ kind: "pan", start: touchPanStart, ox: gv.ox, oy: gv.oy });
+      lastPanPointRef.current = touchPanStart;
+      gestureTrace("pan-start", { drag: { kind: "pan", start: { ...touchPanStart }, ox: gv.ox, oy: gv.oy }, gestureView: { ...gv }, touch: true, emptyBackground: true });
     }
     dispatch({ type: "SELECT", selection: hit });
   };
@@ -1214,8 +1309,11 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     if (e.pointerType === "touch" && drag?.kind === "pan") {
       stashGestureCursor(screen);
       userNavRef.current = true; // a pan moves the view: cancels the pending fit
+      lastPanPointRef.current = screen;
       const v = gestureView();
-      scheduleGestureView({ ...v, ox: drag.ox + (screen.x - drag.start.x), oy: drag.oy + (screen.y - drag.start.y) });
+      const next = { ...v, ox: drag.ox + (screen.x - drag.start.x), oy: drag.oy + (screen.y - drag.start.y) };
+      gestureTrace("pan-move", { touch: true, drag: { start: { ...drag.start }, ox: drag.ox, oy: drag.oy }, screen: { ...screen }, gestureView: { ...v }, scheduled: { ...next } });
+      scheduleGestureView(next);
       return;
     }
     setCursorScreen(screen); // CAD crosshair follows every move
@@ -1251,11 +1349,20 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       return;
     }
     if (drag.kind === "pan") {
-      // Touch pan is intercepted above and rides the gesture frame
-      // scheduler (with its cursor stashed for the final flush); the mouse
-      // keeps the direct per-move commit it has always had.
+      // D2 fix round, Gate 5: the mouse pan drag used to call setView on
+      // every pointermove, re-rendering the whole SVG per move — the same
+      // fall-behind-the-pointer failure the touch pan had before PR #675.
+      // It now rides the gesture frame scheduler like touch pan (and wheel):
+      // the offsets are absolute from the drag origin, so each move
+      // recomputes the same view the direct commit produced, with at most
+      // one commit per frame. onPointerUp flushes synchronously, so release
+      // lands the exact final view with no trailing lag.
       userNavRef.current = true; // a pan moves the view: cancels the pending fit
-      setView((v) => ({ ...v, ox: drag.ox + (screen.x - drag.start.x), oy: drag.oy + (screen.y - drag.start.y) }));
+      lastPanPointRef.current = screen;
+      const v = gestureView();
+      const next = { ...v, ox: drag.ox + (screen.x - drag.start.x), oy: drag.oy + (screen.y - drag.start.y) };
+      gestureTrace("pan-move", { drag: { start: { ...drag.start }, ox: drag.ox, oy: drag.oy }, screen: { ...screen }, gestureView: { ...v }, scheduled: { ...next } });
+      scheduleGestureView(next);
       return;
     }
     const plan = toPlan(screen);
@@ -1265,7 +1372,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // it, even when snapping moves it after the pointer left.
     const anchorEndpoint = (point) => {
       const anchored = autoPanViewForPoint(point, canvasSize, view);
-      if (anchored) setView((v) => ({ ...v, ox: anchored.ox, oy: anchored.oy }));
+      if (anchored) {
+        gestureTrace("setview-autopan-anchor", { anchored: { ...anchored }, viewBefore: { ...view } });
+        setView((v) => ({ ...v, ox: anchored.ox, oy: anchored.oy }));
+      }
     };
     if (drag.kind === "draw-wall") {
       const { point } = snapPoint(plan, {
@@ -1467,6 +1577,11 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   };
 
   const onPointerUp = (e) => {
+    gestureTrace("pointerup", {
+      trusted: e.isTrusted, button: e.button, pointerId: e.pointerId, pointerType: e.pointerType,
+      x: e.clientX, y: e.clientY, dragKind: drag?.kind ?? null,
+      pending: pendingViewRef.current ? { ...pendingViewRef.current } : null,
+    });
     // Release touch tracking (ends a pinch when fewer than 2 remain). The
     // drag/commit logic below is a no-op during a pinch: the second finger
     // landing already cleared drag and the draw preview.
@@ -1523,12 +1638,14 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // skipped clear renders nothing new — identical state, identical
     // output — it only saves the wasted commit.
     if (drag !== null) setDrag(null);
+    lastPanPointRef.current = null;
     if (drawPreview !== null) setDrawPreview(null);
   };
 
   // A cancelled pointer aborts the gesture: never commit a pending shape or
   // tap. (Separate from onPointerUp, which commits completed drags.)
   const onPointerCancel = (e) => {
+    gestureTrace("pointercancel", { trusted: e.isTrusted, pointerId: e.pointerId, dragKind: drag?.kind ?? null });
     trackTouchEnd(e);
     // A cancelled gesture keeps the last computed view (the old per-move
     // commits had already landed it); when no pinch survives the cancel,
@@ -1536,6 +1653,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     if (!pinch.current) flushGestureView();
     pendingTap.current = null;
     setDrag(null);
+    lastPanPointRef.current = null;
     setDrawPreview(null);
   };
 
@@ -1667,15 +1785,63 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // exactly MIN_SCALE, as before. The pinch step (applyPinchStep)
     // uses the same floor.
     const floor = fitFloor !== null ? Math.min(MIN_SCALE, fitFloor) : MIN_SCALE;
-    setView((v) => {
-      const scale = Math.min(MAX_SCALE, Math.max(floor, v.scale * factor));
-      const applied = scale / v.scale;
-      return {
-        scale,
-        ox: screen.x - (screen.x - v.ox) * applied,
-        oy: screen.y - (screen.y - v.oy) * applied,
-      };
+    // D2 fix round, Gate 5: wheel zoom used to call setView on EVERY wheel
+    // event, and a fast scroll fires dozens — each commit re-renders the
+    // whole SVG (and re-runs validation) while the 3D loop burns the same
+    // thread. Wheel steps now ride the gesture frame scheduler like pinch
+    // and touch pan: identical step math, chained from the pending view
+    // (gestureView) so a burst lands on exactly the view the old
+    // step-by-step commits produced — no step lost, anchor preserved —
+    // with at most one commit per frame. userNavRef is set synchronously
+    // above, so the open-time fit cancellation is unaffected by the
+    // one-frame commit lag; pointerup/pinch-end flush covers gesture end.
+    const v = gestureView();
+    const scale = Math.min(MAX_SCALE, Math.max(floor, v.scale * factor));
+    const applied = scale / v.scale;
+    const next = {
+      scale,
+      ox: screen.x - (screen.x - v.ox) * applied,
+      oy: screen.y - (screen.y - v.oy) * applied,
+    };
+    // D2 fix round 2 (mixed-gesture P1): rebase an in-progress pan drag
+    // onto the zoomed view. A pan move recomputes its offsets ABSOLUTELY
+    // from the drag origin captured at pointerdown, so a wheel step
+    // landing mid-drag would be overwritten by the next move (which
+    // recomputes ox/oy from the stale origin) — the zoom's anchor
+    // correction would be lost and the view would jump. Folding the
+    // zoomed offsets into the origin keeps the pan exact: at the drag
+    // pointer's position the rebased formula yields the zoomed view,
+    // so no jump and no lost input. The functional update chains
+    // correctly across back-to-back wheel events within one frame, and
+    // returns the drag unchanged when no pan is active (no extra render).
+    //
+    // D2 fix round 3 (FR2 verdict — reverse-test concern): the rebase
+    // anchors on the ACTUAL last pan pointer (lastPanPointRef), NOT on
+    // the wheel event's screen coordinate. In supported hardware (a
+    // single mouse pointer) a wheel event fires at the cursor, which IS
+    // the drag pointer during a left-drag, so the two coincide and the
+    // rebase is identical either way. But a synthetic (or multi-input)
+    // wheel at a different anchor must not silently invent a pan delta:
+    // rebasing around the wheel point would shift the drag origin by
+    // (wheel − pointer) and the next move would jump by that invented
+    // delta. The wheel's own zoom still anchors at its cursor (the
+    // `next` view above) — only the drag-origin rebase uses the pointer.
+    // With no pan move yet, the last pan point is the drag start, so the
+    // rebase yields exactly the zoomed view (no invented delta).
+    const rebaseAnchor = lastPanPointRef.current ?? screen;
+    gestureTrace("wheel", {
+      trusted: e.isTrusted, deltaY: e.deltaY, x: screen.x, y: screen.y,
+      pointerType: e.pointerType, viewBefore: { ...v }, next: { ...next },
+      dragKind: drag?.kind ?? null, dragStart: drag?.start ? { ...drag.start } : null,
+      lastPanPoint: lastPanPointRef.current ? { ...lastPanPointRef.current } : null,
+      rebaseAnchor: { ...rebaseAnchor },
     });
+    setDrag((d) =>
+      d?.kind === "pan"
+        ? { ...d, ox: next.ox - (rebaseAnchor.x - d.start.x), oy: next.oy - (rebaseAnchor.y - d.start.y) }
+        : d,
+    );
+    scheduleGestureView(next);
   };
 
   const onDoubleClick = (e) => {
@@ -1910,7 +2076,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
               const start = tagDragStart.current;
               if (!start || start.pointerId !== e.pointerId) return;
               if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 6) return;
-              setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
+              // Effective-view origin (D2 fix round 2) — see the mouse pan
+              // branch in handlePointerDownAction.
+              const gv = gestureView();
+              setDrag({ kind: "pan", start: eventPoint(e), ox: gv.ox, oy: gv.oy });
             }}
           >
             <rect
@@ -2177,6 +2346,20 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
 
   // ---- Phase 2: piping mode ----
   // Pipe run: polyline with width from the nominal diameter, plus a
+  // D2 (c): flanges grouped by run ONCE per render. connectionFlanges
+  // scans the whole design (every pipe, every junction) and renderPipe
+  // used to run it per pipe — 91 full scans per render of the FCCU plan.
+  // The grouped map lives in the domain layer's WeakMap
+  // (connectionFlangesByRun, keyed on design identity + registry
+  // generation), so this call is an O(1) lookup on a hit and a single
+  // grouping on a miss — it is deliberately NOT wrapped in useMemo:
+  // useMemo([design]) bypassed the registry-generation guard, so a
+  // re-render of the SAME design object after a registration/reset
+  // served the old flange geometry while the memoized elevation path
+  // already used the new generation (D2 fix-round Gate 3). Calling the
+  // domain function directly every render keeps the two paths in lockstep.
+  // Same flange objects, same order.
+  const flangesByRun = connectionFlangesByRun(design);
   // dimension label (length + diameter) on its longest segment. Selected
   // runs show draggable vertex handles.
   const renderPipe = (run) => {
@@ -2206,7 +2389,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // Flanged connections (equipment nozzles + pipe-to-pipe junctions)
     // and the plan break indication where the run steps in elevation to
     // cross another pipe — both from the shared domain models.
-    const flanges = connectionFlanges(design).filter((f) => f.runId === run.id);
+    const flanges = flangesByRun.get(run.id) ?? [];
     const segElevs = segmentElevationsForDesign(design, run);
     const jogTicks = [];
     for (let i = 1; i + 1 < (run.points || []).length; i += 1) {
