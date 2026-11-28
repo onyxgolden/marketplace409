@@ -59,6 +59,14 @@ export default async function WorkPackagePage({ params, searchParams }) {
     : scope.kind === SCOPE_KINDS.UNASSIGNED
       ? "unassigned"
       : "";
+  // D5: the project label for export filenames + provenance metadata —
+  // the validated selection's project name, "Unassigned packages" for
+  // the unassigned scope, null otherwise.
+  const projectLabel = scope.kind === SCOPE_KINDS.PROJECT
+    ? scope.selection?.project?.name ?? null
+    : scope.kind === SCOPE_KINDS.UNASSIGNED
+      ? "Unassigned packages"
+      : null;
   const detail = await getWorkPackageDetail(forgeApplication.supabaseClient, {
     ownerId,
     actor: forgeApplication.user.id,
@@ -109,6 +117,7 @@ export default async function WorkPackagePage({ params, searchParams }) {
         workspaceParam={workspaceParam}
         forgeProjectParam={forgeProjectParam}
         ownerId={ownerId}
+        projectLabel={projectLabel}
         // D4: the dashboard drill target. Passed raw — the client
         // allowlist-parses it (parseDetailFocus), so junk text never
         // becomes a filter.

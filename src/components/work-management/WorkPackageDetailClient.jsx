@@ -82,7 +82,7 @@ function editFormFromPackage(p) {
   };
 }
 
-export default function WorkPackageDetailClient({ initial, initialLinks = [], initialTab = "overview", workspaceParam = null, forgeProjectParam = null, ownerId = null, initialDetailFocus = null }) {
+export default function WorkPackageDetailClient({ initial, initialLinks = [], initialTab = "overview", workspaceParam = null, forgeProjectParam = null, ownerId = null, initialDetailFocus = null, projectLabel = null }) {
   const router = useRouter();
   const [pkg, setPkg] = useState(initial.package);
   const [transitions, setTransitions] = useState(initial.transitions);
@@ -684,6 +684,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [], in
           refreshKey={costRefreshKey}
           ownerId={ownerId}
           onDrill={drillTo}
+          projectLabel={projectLabel}
         />
       </div>
       {error && (

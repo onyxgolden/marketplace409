@@ -12,11 +12,17 @@
 // no further arithmetic of its own, only layout and links.
 "use client";
 
+import {
+  buildWidgetExport,
+} from "@/application/work-management/plannerDashboardExport.js";
+import PlannerWidgetExportButton from "./PlannerWidgetExportButton.jsx";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   SCOPE_BLOCK_DIMENSIONS,
+  blockGroupHref,
+  blockGroupStatusHref,
   statusChartColor,
   summarizeScopeBlockMap,
 } from "@/application/work-management/plannerDashboard.js";
@@ -85,19 +91,6 @@ function statusLabelText(status) {
   return String(status).replace(/_/g, " ");
 }
 
-function groupHref(baseHref, dimensionParam, groupKey) {
-  const separator = baseHref.includes("?") ? "&" : "?";
-  return `${baseHref}${separator}${encodeURIComponent(dimensionParam)}=${encodeURIComponent(groupKey)}`;
-}
-
-function groupStatusHref(baseHref, dimensionParam, groupKey, statusKey) {
-  const separator = baseHref.includes("?") ? "&" : "?";
-  const params = new URLSearchParams();
-  params.set(dimensionParam, groupKey);
-  params.set("status", statusKey);
-  return `${baseHref}${separator}${params.toString()}`;
-}
-
 // A tile claims "active" only when the URL's narrowing filter exactly
 // matches what it represents — a status tile is active only with that
 // exact group + status, never under extra narrowing (same P1 lesson
@@ -158,7 +151,7 @@ function TreemapView({ groups, dimension, baseHref, activeGroup, activeStatus, m
                visible, in the accessible name, and on hover (title).
                Never silently truncate a category identity. */}
             <Link
-              href={groupActive ? baseHref : groupHref(baseHref, dimension.param, group.groupKey)}
+              href={groupActive ? baseHref : blockGroupHref(baseHref, dimension.param, group.groupKey)}
               aria-pressed={groupActive}
               aria-label={`${group.groupLabel}, ${group.packageCount} ${group.packageCount === 1 ? "package" : "packages"} — ${groupActive ? "currently filtered, activate to show all" : "activate to filter the list to this group"}`}
               title={group.groupLabel}
@@ -182,7 +175,7 @@ function TreemapView({ groups, dimension, baseHref, activeGroup, activeStatus, m
                 return (
                   <Link
                     key={status.statusKey}
-                    href={statusActive ? groupHref(baseHref, dimension.param, group.groupKey) : groupStatusHref(baseHref, dimension.param, group.groupKey, status.statusKey)}
+                    href={statusActive ? blockGroupHref(baseHref, dimension.param, group.groupKey) : blockGroupStatusHref(baseHref, dimension.param, group.groupKey, status.statusKey)}
                     aria-pressed={statusActive}
                     aria-label={`${label} — ${statusActive ? "currently filtered, activate to clear the status" : "activate to filter the list to this group and status"}`}
                     title={label}
@@ -228,7 +221,7 @@ function TableView({ groups, dimension, baseHref, activeGroup, activeStatus }) {
               <tr key={group.groupKey} className="border-b border-slate-100 align-top dark:border-slate-800">
                 <td className="py-1.5 pr-2">
                   <Link
-                    href={groupActive ? baseHref : groupHref(baseHref, dimension.param, group.groupKey)}
+                    href={groupActive ? baseHref : blockGroupHref(baseHref, dimension.param, group.groupKey)}
                     aria-pressed={groupActive}
                     className={`inline-block min-h-11 rounded px-1.5 py-1 font-medium hover:bg-slate-100 dark:hover:bg-slate-800 ${groupActive ? "bg-slate-100 ring-1 ring-slate-400 dark:bg-slate-800 dark:ring-slate-500" : ""}`}
                   >
@@ -243,7 +236,7 @@ function TableView({ groups, dimension, baseHref, activeGroup, activeStatus }) {
                       return (
                         <li key={status.statusKey}>
                           <Link
-                            href={statusActive ? groupHref(baseHref, dimension.param, group.groupKey) : groupStatusHref(baseHref, dimension.param, group.groupKey, status.statusKey)}
+                            href={statusActive ? blockGroupHref(baseHref, dimension.param, group.groupKey) : blockGroupStatusHref(baseHref, dimension.param, group.groupKey, status.statusKey)}
                             aria-pressed={statusActive}
                             className={`inline-flex min-h-11 items-center gap-1 rounded px-1.5 py-1 hover:bg-slate-100 dark:hover:bg-slate-800 ${statusActive ? "bg-slate-100 ring-1 ring-slate-400 dark:bg-slate-800 dark:ring-slate-500" : ""}`}
                           >
@@ -325,7 +318,7 @@ function SettingsPanel({ prefs, effectiveGrouping, onChange, onGroupingChange, o
   );
 }
 
-export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, activeStatus, scopeByParam, scopeViewParam, ownerId, forgeProjectKey }) {
+export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, activeStatus, scopeByParam, scopeViewParam, ownerId, forgeProjectKey, scope = null, projectSlug = null, stripTotalPackages = null }) {
   // Hydration order (brief, binding): server-safe defaults render first
   // (no layout shift, no empty flash — `prefs` starts as DEFAULT_PREFS,
   // a fully valid, renderable state on its own), then valid saved
@@ -446,18 +439,35 @@ export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, 
   const dimension = SCOPE_BLOCK_DIMENSIONS.find((d) => d.key === groupingKey) || SCOPE_BLOCK_DIMENSIONS[2];
   const summary = summarizeScopeBlockMap(packages, dimension.key);
   const totalPackages = summary.groups.reduce((sum, g) => sum + g.packageCount, 0);
+  // The export's provenance records the EFFECTIVE grouping/pivot —
+  // the URL override wins over saved prefs for the render it is
+  // present on — and reconciles the groups against the strip's
+  // independent total (passed by the shell), never against a total
+  // re-derived from these same groups.
+  const effectivePrefs = { ...prefs, grouping: groupingKey, pivot };
+  const exportTotalPackages = stripTotalPackages ?? totalPackages;
+  const buildBlockMapExport = () => buildWidgetExport("landing-scope-block-map", {
+    scope, projectSlug, summary, totalPackages: exportTotalPackages, dimension, baseHref,
+    prefs: effectivePrefs, activeGroup, activeStatus,
+  });
 
   if (!prefs.visible) {
     return (
-      <div className="flex min-h-11 items-center justify-between rounded-lg border border-dashed border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900" data-testid="scope-block-hidden-placeholder">
+      <div className="flex min-h-11 flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900" data-testid="scope-block-hidden-placeholder">
         <p className="text-sm text-slate-500 dark:text-slate-400">{prefs.title} is hidden.</p>
-        <button
-          type="button"
-          onClick={() => updatePrefs({ visible: true })}
-          className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-        >
-          Show {prefs.title}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <PlannerWidgetExportButton
+            widgetTitle={prefs.title}
+            buildExport={buildBlockMapExport}
+          />
+          <button
+            type="button"
+            onClick={() => updatePrefs({ visible: true })}
+            className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            Show {prefs.title}
+          </button>
+        </div>
       </div>
     );
   }
@@ -498,6 +508,10 @@ export default function PlannerScopeBlockMap({ packages, baseHref, activeGroup, 
           >
             Settings
           </button>
+          <PlannerWidgetExportButton
+            widgetTitle={prefs.title}
+            buildExport={buildBlockMapExport}
+          />
         </div>
       </div>
       <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">

@@ -36,10 +36,20 @@ import {
 } from "@/domains/work-management/budgetAllocations";
 import {
   PROGRESS_DIMENSIONS,
+  costCategoryHref,
+  progressActiveGroupHref,
+  progressGroupHref,
+  progressTabHref,
   statusChartColor,
+  statusHref,
   summarizePlannerDashboard,
   summarizePlannerProgress,
+  unallocatedCostHref,
 } from "@/application/work-management/plannerDashboard.js";
+import {
+  buildWidgetExport,
+} from "@/application/work-management/plannerDashboardExport.js";
+import PlannerWidgetExportButton from "./PlannerWidgetExportButton.jsx";
 import PlannerScopeBlockMap from "./PlannerScopeBlockMap.jsx";
 
 // Donut geometry: a stroked circle, one dash per status. r=80 on a 200
@@ -50,11 +60,6 @@ const DONUT_CIRCUMFERENCE = 2 * Math.PI * DONUT_RADIUS;
 function statusLabel(status) {
   // Same words the grid shows: the raw status with underscores as spaces.
   return String(status).replace(/_/g, " ");
-}
-
-function statusHref(baseHref, status) {
-  const separator = baseHref.includes("?") ? "&" : "?";
-  return `${baseHref}${separator}status=${encodeURIComponent(status)}`;
 }
 
 function DonutChart({ breakdown, totalPackages }) {
@@ -171,16 +176,6 @@ function statusCountsText(statusCounts) {
   return Object.entries(statusCounts || {})
     .map(([status, count]) => `${statusLabel(status)} ${count}`)
     .join(" · ");
-}
-
-function costCategoryHref(baseHref, category) {
-  const separator = baseHref.includes("?") ? "&" : "?";
-  return `${baseHref}${separator}costCategory=${encodeURIComponent(category)}`;
-}
-
-function unallocatedHref(baseHref) {
-  const separator = baseHref.includes("?") ? "&" : "?";
-  return `${baseHref}${separator}allocation=unallocated`;
 }
 
 function CostDonutChart({ categoryTotals, totalControlEstimateCents }) {
@@ -302,7 +297,7 @@ function CostRow({ category, total, packageCount, percent, href, isActive, showB
 // the widget must not advertise a row the grid does not hold. Drill-
 // down links are project-wide (baseHref + the cost filter only), so a
 // landing always shows exactly the rows the count advertises.
-function CostSplitWidget({ costSummary, baseHref, activeCostCategory, activeAllocationFilter, costWidgetCanClaimActive }) {
+function CostSplitWidget({ costSummary, baseHref, activeCostCategory, activeAllocationFilter, costWidgetCanClaimActive, scope, projectSlug, costNotApplied = false }) {
   const [view, setView] = useState("donut");
   const total = costSummary?.totalControlEstimateCents ?? 0;
   const categoryTotals = costSummary?.categoryTotals || {};
@@ -318,6 +313,7 @@ function CostSplitWidget({ costSummary, baseHref, activeCostCategory, activeAllo
     <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900" data-testid="planner-cost-split">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Cost split</h2>
+        <div className="flex flex-wrap items-center gap-2">
         <div role="group" aria-label="Cost view" className="flex rounded-lg border border-slate-300 dark:border-slate-600">
           <button
             type="button"
@@ -343,6 +339,14 @@ function CostSplitWidget({ costSummary, baseHref, activeCostCategory, activeAllo
           >
             Bars
           </button>
+        </div>
+        <PlannerWidgetExportButton
+          widgetTitle="Cost split"
+          buildExport={() => buildWidgetExport("landing-cost-split", {
+            scope, projectSlug, costSummary, baseHref, pivot: view,
+            activeCostCategory, activeAllocationFilter, costWidgetCanClaimActive, costNotApplied,
+          })}
+        />
         </div>
       </div>
       <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
@@ -396,7 +400,7 @@ function CostSplitWidget({ costSummary, baseHref, activeCostCategory, activeAllo
                 {" "}{costSummary.reconciledPackageCount} of {costSummary.estimatedPackageCount} reconciled.
               </p>
               <Link
-                href={isIncompletePureActive ? baseHref : unallocatedHref(baseHref)}
+                href={isIncompletePureActive ? baseHref : unallocatedCostHref(baseHref)}
                 aria-pressed={isIncompletePureActive}
                 aria-label={
                   isIncompletePureActive
@@ -422,30 +426,6 @@ function CostSplitWidget({ costSummary, baseHref, activeCostCategory, activeAllo
       )}
     </div>
   );
-}
-
-function progressGroupHref(baseHref, dimensionKey, groupKey) {
-  // Drill-down links are project-wide (D1 fix-round-1 lesson): baseHref
-  // carries only the scope; the link adds the progress tab + the group
-  // filter, never the status / property / mode narrowing filters — so
-  // the grid it lands on holds exactly the rows the count advertises.
-  // The param name is the dimension key (planner / unit / system).
-  const separator = baseHref.includes("?") ? "&" : "?";
-  const params = new URLSearchParams();
-  params.set("progressBy", dimensionKey);
-  params.set(dimensionKey, groupKey);
-  return `${baseHref}${separator}${params.toString()}`;
-}
-
-function progressTabHref(baseHref, dimensionKey, activeGroup) {
-  // Switching the grouping keeps the active group filter (the grid
-  // stays filtered) and records the tab, so the landing shows the
-  // grouping the user picked with the same rows.
-  const separator = baseHref.includes("?") ? "&" : "?";
-  const params = new URLSearchParams();
-  params.set("progressBy", dimensionKey);
-  if (activeGroup) params.set(activeGroup.dimension, activeGroup.key);
-  return `${baseHref}${separator}${params.toString()}`;
 }
 
 function ProgressRow({ entry, href, isActive, showBar, dimensionLabel, isTotal = false }) {
@@ -503,7 +483,7 @@ function ProgressRow({ entry, href, isActive, showBar, dimensionLabel, isTotal =
 // pie/line do not fit a percentage table (percents do not sum to 100
 // across groups), so the widget pivots between the two presentations
 // that do.
-function ProgressWidget({ progress, planningAvailable, baseHref, activeDimension, activeGroup }) {
+function ProgressWidget({ progress, planningAvailable, baseHref, activeDimension, activeGroup, scope, projectSlug, planningNotApplied = false }) {
   const [view, setView] = useState("table");
   const dimension = PROGRESS_DIMENSIONS.find((d) => d.key === activeDimension) || PROGRESS_DIMENSIONS[0];
   const groupsByDimension = {
@@ -521,6 +501,7 @@ function ProgressWidget({ progress, planningAvailable, baseHref, activeDimension
     <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900" data-testid="planner-progress">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Planning progress</h2>
+        <div className="flex flex-wrap items-center gap-2">
         <div role="group" aria-label="Progress view" className="flex rounded-lg border border-slate-300 dark:border-slate-600">
           <button
             type="button"
@@ -546,6 +527,14 @@ function ProgressWidget({ progress, planningAvailable, baseHref, activeDimension
           >
             Bars
           </button>
+        </div>
+        <PlannerWidgetExportButton
+          widgetTitle="Planning progress"
+          buildExport={() => buildWidgetExport("landing-planning-progress", {
+            scope, projectSlug, progress,
+            planningAvailable, activeDimension, activeGroup, baseHref, pivot: view, planningNotApplied,
+          })}
+        />
         </div>
       </div>
       <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
@@ -608,7 +597,7 @@ function ProgressWidget({ progress, planningAvailable, baseHref, activeDimension
                     entry={entry}
                     href={
                       active
-                        ? `${baseHref}${baseHref.includes("?") ? "&" : "?"}progressBy=${encodeURIComponent(dimension.key)}`
+                        ? progressActiveGroupHref(baseHref, dimension.key)
                         : progressGroupHref(baseHref, dimension.key, entry.key)
                     }
                     isActive={active}
@@ -648,11 +637,27 @@ export default function PlannerDashboardShell({
   scopeByParam = null,
   scopeViewParam = null,
   ownerId = null,
+  workspaceParam = null,
+  planningNotApplied = false,
+  costNotApplied = false,
   forgeProjectKey = null,
+  scopeFilters = null,
 }) {
   const [chartType, setChartType] = useState("donut");
   const summary = summarizePlannerDashboard(packages);
   const { totalPackages, statusBreakdown } = summary;
+  // D5 export scope: the canonical project scope + active URL filter
+  // state, recorded verbatim on every exported row (scope_filters_json).
+  // workspaceId is the VALIDATED selected workspace (the ?workspace=
+  // value, only when it equals the effective owner — exactly the
+  // detail page's workspaceParam rule), never the raw owner id when a
+  // different workspace was selected.
+  const scopeMeta = {
+    workspaceId: workspaceParam ?? ownerId,
+    forgeProjectId: forgeProjectKey,
+    packageId: null,
+    scopeFilters,
+  };
   // D2: the progress widget reads the same in-scope array plus the bulk
   // planning-% map (null when the planning data is unavailable — the
   // widget says so instead of showing zeros).
@@ -666,6 +671,18 @@ export default function PlannerDashboardShell({
 
   return (
     <section aria-label="Project dashboard" data-testid="planner-dashboard">
+      {/* D5: one Export CSV per widget — the strip's export sits above the
+         three blocks so the grid geometry is untouched. */}
+      <div className="mb-2 flex items-center justify-end">
+        <PlannerWidgetExportButton
+          widgetTitle="Number strip"
+          buildExport={() => buildWidgetExport("landing-number-strip", {
+            scope: scopeMeta, projectSlug: projectLabel,
+            projectLabel, projectSublabel, totalControlEstimateCents, hasControlEstimate,
+            costSummaryAvailable: costSummary != null, totalPackages, baseHref,
+          })}
+        />
+      </div>
       {/* Number strip — the slide-6 headline: project, total control
          estimate, total scope items. Cost and items are links: they clear
          the status filter to the rows the totals describe. */}
@@ -725,6 +742,7 @@ export default function PlannerDashboardShell({
         <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 lg:w-1/3 dark:border-slate-700 dark:bg-slate-900" data-testid="planner-scope">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Scope by status</h2>
+            <div className="flex flex-wrap items-center gap-2">
             <div role="group" aria-label="Chart type" className="flex rounded-lg border border-slate-300 dark:border-slate-600">
               <button
                 type="button"
@@ -750,6 +768,14 @@ export default function PlannerDashboardShell({
               >
                 Bars
               </button>
+            </div>
+            <PlannerWidgetExportButton
+              widgetTitle="Scope by status"
+              buildExport={() => buildWidgetExport("landing-scope-by-status", {
+                scope: scopeMeta, projectSlug: projectLabel, summary, baseHref, pivot: chartType,
+                activeStatus,
+              })}
+            />
             </div>
           </div>
 
@@ -795,6 +821,9 @@ export default function PlannerDashboardShell({
               scopeViewParam={scopeViewParam}
               ownerId={ownerId}
               forgeProjectKey={forgeProjectKey}
+              scope={scopeMeta}
+              projectSlug={projectLabel}
+              stripTotalPackages={totalPackages}
             />
           )}
         </div>
@@ -811,6 +840,9 @@ export default function PlannerDashboardShell({
           baseHref={baseHref}
           activeDimension={activeDimension}
           activeGroup={activeGroup}
+          scope={scopeMeta}
+          projectSlug={projectLabel}
+          planningNotApplied={planningNotApplied}
         />
       )}
 
@@ -824,6 +856,9 @@ export default function PlannerDashboardShell({
           activeCostCategory={activeCostCategory}
           activeAllocationFilter={activeAllocationFilter}
           costWidgetCanClaimActive={costWidgetCanClaimActive}
+          scope={scopeMeta}
+          projectSlug={projectLabel}
+          costNotApplied={costNotApplied}
         />
       )}
     </section>

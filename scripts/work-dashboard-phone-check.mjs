@@ -45,6 +45,12 @@
 //     measures at least ~44px on both axes at 390/400px, and the delete
 //     confirmation names the package and explains the split stays
 //     incomplete — target rectangles, not just viewport intersection
+//   - D5: every widget's Export CSV button is a ~44px in-viewport
+//     control, and one click downloads exactly one CSV whose rows
+//     re-add to the on-screen totals (strip $3,000.00, scope 6 draft,
+//     block-map group totals, progress 1 of 6 at 50.0%, cost five-way
+//     $3,000.00 reconciled; incomplete cost: partial rows + a state
+//     row with $1,000.00 unallocated) — no navigation, no API call
 //
 // The fixture carries 6 wholly synthetic packages created for this test
 // (fix round 1 provenance — no production data) plus a synthetic
@@ -59,6 +65,7 @@
 // geometry harness), only the shared /phone-fixture route, which is designed
 // to be extended with new cases.
 import { spawn } from "node:child_process";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
@@ -443,6 +450,152 @@ async function checkWidth(browser, width) {
   }
 }
 
+// D5 export CSV at phone width: every widget's Export CSV button is a
+// ~44px in-viewport control, and one click downloads exactly one CSV
+// whose rows re-add to the on-screen totals — no navigation, no API
+// call. Runs on the cost=complete fixture (all five widgets populated)
+// plus the cost=incomplete fixture (partial rows + state row).
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 1; }
+        else inQuotes = false;
+      } else field += ch;
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === ",") { row.push(field); field = ""; }
+    else if (ch === "\r" && text[i + 1] === "\n") { row.push(field); rows.push(row); row = []; field = ""; i += 1; }
+    else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+    else field += ch;
+  }
+  if (field !== "" || row.length > 0) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+async function checkD5(browser, width) {
+  const failures = [];
+  const page = await browser.newPage({ viewport: { width, height: 800 } });
+  const downloadsDir = path.join(ROOT, ".phone-layout-evidence", "d5-downloads");
+  await mkdir(downloadsDir, { recursive: true });
+  const exportsChecked = {};
+  try {
+    const apiCalls = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/api/work-packages")) apiCalls.push(request.url());
+    });
+
+    await page.goto(`${BASE}?case=work-dashboard&cost=complete`, { waitUntil: "networkidle" });
+    await page.waitForSelector('[data-fixture-ready="true"]');
+    await page.waitForSelector('[data-testid="planner-dashboard"]');
+
+    const buttons = await page.evaluate(() => [...document.querySelectorAll("button[aria-label^='Export '][aria-label$=' as CSV']")].map((b) => {
+      const r = b.getBoundingClientRect();
+      return {
+        label: b.getAttribute("aria-label"),
+        height: Math.round(r.height * 10) / 10,
+        right: Math.round(r.right),
+        left: Math.round(r.left),
+        outside: r.right > window.innerWidth + 1 || r.left < -1,
+        disabled: b.disabled,
+      };
+    }));
+    const expectedLabels = [
+      "Export Number strip as CSV",
+      "Export Scope by status as CSV",
+      "Export Scope block map as CSV",
+      "Export Planning progress as CSV",
+      "Export Cost split as CSV",
+    ];
+    for (const label of expectedLabels) {
+      if (!buttons.some((b) => b.label === label)) failures.push(`${width}px D5: ${label} control missing`);
+    }
+    const badButtons = buttons.filter((b) => b.height < 43.5 || b.outside || b.disabled);
+    if (badButtons.length) failures.push(`${width}px D5: ${badButtons.length} export control(s) under ~44px, outside viewport, or disabled: ${JSON.stringify(badButtons)}`);
+
+    async function clickExport(label, widgetId) {
+      const downloadPromise = page.waitForEvent("download", { timeout: 15000 });
+      await page.getByRole("button", { name: label, exact: true }).click();
+      const download = await downloadPromise;
+      const filename = download.suggestedFilename();
+      const pattern = new RegExp(`^forge-planner-synthetic-dashboard-test-project-${widgetId}-\\d{8}-\\d{6}Z\\.csv$`);
+      if (!pattern.test(filename)) failures.push(`${width}px D5 ${widgetId}: filename "${filename}" does not match the contract`);
+      const filePath = path.join(downloadsDir, `d5-${width}-${widgetId}.csv`);
+      await download.saveAs(filePath);
+      const csvText = await readFile(filePath, "utf8");
+      const rows = parseCsv(csvText);
+      const header = rows[0];
+      exportsChecked[widgetId] = { filename, rows: rows.length - 1 };
+      return { header, rows: rows.slice(1) };
+    }
+
+    const col = (header, name) => header.indexOf(name);
+
+    // Strip: 3 blocks; estimate $3,000.00 (300000c), scope 6.
+    const strip = await clickExport("Export Number strip as CSV", "landing-number-strip");
+    if (strip.rows.length !== 3) failures.push(`${width}px D5 strip: expected 3 rows, got ${strip.rows.length}`);
+    const estimateRow = strip.rows.find((r) => r[col(strip.header, "metric_id")] === "total_control_estimate");
+    if (estimateRow?.[col(strip.header, "value_cents")] !== "300000") failures.push(`${width}px D5 strip: estimate value_cents is not 300000`);
+    const scopeRow = strip.rows.find((r) => r[col(strip.header, "metric_id")] === "total_scope_items");
+    if (scopeRow?.[col(strip.header, "value_count")] !== "6") failures.push(`${width}px D5 strip: scope value_count is not 6`);
+
+    // Scope: all 6 draft, one data row + total 6.
+    const scope = await clickExport("Export Scope by status as CSV", "landing-scope-by-status");
+    const scopeData = scope.rows.filter((r) => r[0] === "data");
+    if (scopeData.length !== 1 || scopeData[0][col(scope.header, "value_count")] !== "6") failures.push(`${width}px D5 scope: expected one draft row of 6, got ${JSON.stringify(scopeData)}`);
+    const scopeTotal = scope.rows.find((r) => r[0] === "total");
+    if (scopeTotal?.[col(scope.header, "value_count")] !== "6") failures.push(`${width}px D5 scope: total is not 6`);
+
+    // Block map: 5 system groups, one tile each (all draft) + 5 totals.
+    const blockMap = await clickExport("Export Scope block map as CSV", "landing-scope-block-map");
+    const tiles = blockMap.rows.filter((r) => r[0] === "data");
+    const groupTotals = blockMap.rows.filter((r) => r[0] === "total");
+    if (tiles.length !== 5) failures.push(`${width}px D5 block map: expected 5 tiles, got ${tiles.length}`);
+    if (groupTotals.length !== 5) failures.push(`${width}px D5 block map: expected 5 group totals, got ${groupTotals.length}`);
+    const tileSum = tiles.reduce((sum, r) => sum + Number(r[col(blockMap.header, "value_count")] || 0), 0);
+    if (tileSum !== 6) failures.push(`${width}px D5 block map: tiles sum to ${tileSum}, not 6`);
+
+    // Progress: total 1 of 6 at 50.0%, 5 system groups.
+    const progress = await clickExport("Export Planning progress as CSV", "landing-planning-progress");
+    const progressTotal = progress.rows.find((r) => r[0] === "total");
+    if (progressTotal?.[col(progress.header, "value_count")] !== "6") failures.push(`${width}px D5 progress: total package count is not 6`);
+    if (progressTotal?.[col(progress.header, "complete_count")] !== "1") failures.push(`${width}px D5 progress: total complete count is not 1`);
+    if (progressTotal?.[col(progress.header, "value_percent")] !== "50") failures.push(`${width}px D5 progress: total percent is not 50`);
+    if (progress.rows.filter((r) => r[0] === "data").length !== 5) failures.push(`${width}px D5 progress: expected 5 group rows`);
+
+    // Cost complete: 5 categories + total $3,000.00, complete.
+    const cost = await clickExport("Export Cost split as CSV", "landing-cost-split");
+    const costData = cost.rows.filter((r) => r[0] === "data");
+    if (costData.length !== 5) failures.push(`${width}px D5 cost: expected 5 category rows, got ${costData.length}`);
+    const laborRow = costData.find((r) => r[col(cost.header, "category_key")] === "labor");
+    if (laborRow?.[col(cost.header, "value_cents")] !== "130000") failures.push(`${width}px D5 cost: labor is not 130000`);
+    const costTotal = cost.rows.find((r) => r[0] === "total");
+    if (costTotal?.[col(cost.header, "value_cents")] !== "300000") failures.push(`${width}px D5 cost: total is not 300000`);
+    if (costTotal?.[col(cost.header, "complete_flag")] !== "true") failures.push(`${width}px D5 cost: complete_flag is not true`);
+
+    // Cost incomplete: partial rows + a state row with $1,000.00 unallocated.
+    await page.goto(`${BASE}?case=work-dashboard&cost=incomplete`, { waitUntil: "networkidle" });
+    await page.waitForSelector('[data-fixture-ready="true"]');
+    await page.waitForSelector('[data-testid="planner-cost-split"]');
+    const incomplete = await clickExport("Export Cost split as CSV", "landing-cost-split");
+    const partialRows = incomplete.rows.filter((r) => r[0] === "data");
+    if (partialRows.some((r) => r[11] !== "partial")) failures.push(`${width}px D5 cost incomplete: category rows are not tagged partial`);
+    const incompleteState = incomplete.rows.find((r) => r[0] === "state");
+    if (!incompleteState) failures.push(`${width}px D5 cost incomplete: state row missing`);
+    else if (incompleteState[col(incomplete.header, "unallocated_cents")] !== "100000") failures.push(`${width}px D5 cost incomplete: unallocated_cents is not 100000`);
+
+    if (apiCalls.length) failures.push(`${width}px D5: exports made ${apiCalls.length} work-packages API call(s): ${JSON.stringify(apiCalls)}`);
+
+    return { width, exportsChecked, failures };
+  } finally {
+    await page.close();
+  }
+}
+
 // D2b budget editor at phone width. The editor's GET/POST calls are
 // intercepted with canned responses — a $1,500.00 estimate, no saved
 // allocation, a $900.00 planned-labor forecast — so the whole add-line
@@ -680,6 +833,10 @@ async function main() {
       const editorResult = await checkBudgetEditor(browser, width);
       results.push({ case: "work-budget-editor", ...editorResult });
       failures.push(...editorResult.failures);
+      progress.phase(`checking D5 exports ${width}px`);
+      const d5Result = await checkD5(browser, width);
+      results.push({ case: "work-dashboard-d5", ...d5Result });
+      failures.push(...d5Result.failures);
     }
     progress.phase("observing the real /forge/work route");
     const realPage = await checkRealPage(browser);
@@ -692,7 +849,7 @@ async function main() {
       process.exitCode = 1;
       progress.done("FAIL", { exitCode: 1 });
     } else {
-      console.log("PASS: no overflow, no out-of-viewport controls at 390px, 392px and 400px (donut + scope bars + progress bars + cost complete/incomplete + cost bars states, budget editor add-line + save flow), every editor control measures ~44px or more on both axes (initial/editing/saved/delete states), draft drill-down requests the status filter, Piping progress drill-down requests system=Piping + progressBy=system with no narrowing filters, labor cost drill-down requests costCategory=labor with the project scope; D3: treemap group headers measure ~44px, treemap group labels render in full with no clipping (Power distribution wraps, never truncates), donut legend labels render untruncated, Table pivot drills request the exact group/status filters, treemap drills do the same, and grouping/pivot clicks under a scopeBy/scopeView override update the canonical URL state (reload proves the URL drives the regroup/pivot); real /forge/work observed separately (see JSON)");
+      console.log("PASS: no overflow, no out-of-viewport controls at 390px, 392px and 400px (donut + scope bars + progress bars + cost complete/incomplete + cost bars states, budget editor add-line + save flow), every editor control measures ~44px or more on both axes (initial/editing/saved/delete states), draft drill-down requests the status filter, Piping progress drill-down requests system=Piping + progressBy=system with no narrowing filters, labor cost drill-down requests costCategory=labor with the project scope; D3: treemap group headers measure ~44px, treemap group labels render in full with no clipping (Power distribution wraps, never truncates), donut legend labels render untruncated, Table pivot drills request the exact group/status filters, treemap drills do the same, and grouping/pivot clicks under a scopeBy/scopeView override update the canonical URL state (reload proves the URL drives the regroup/pivot); D5: all five Export CSV buttons measure ~44px and sit inside the viewport, one click downloads exactly one CSV per widget with rows that re-add to the on-screen totals (strip $3,000.00, scope 6 draft, block-map tiles sum to 6, progress 1 of 6 at 50.0%, cost five-way $3,000.00 reconciled; incomplete cost partial with $1,000.00 unallocated), no navigation and no work-packages API call during any export; real /forge/work observed separately (see JSON)");
       progress.done("PASS", { exitCode: 0 });
     }
   } finally {

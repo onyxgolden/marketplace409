@@ -206,14 +206,14 @@ describe("summarizeChangeOrderStrip", () => {
     originalControlEstimateCents: 250000,
     currentEstimateCents: 250000,
     contingencyCents: 50000,
-    runningContractPriceCents: 270000,
+    runningContractPriceCents: 265000,
     contingencyRemainingCents: -5000,
     laborCostCents: 90000,
     totalJobCostCents: 360000,
     countsByStatus: { estimated: 1, approved: 1, material_ordered: 1, denied: 2 },
     countedChangeOrderCount: 2,
     countedNonDeviationCents: 15000,
-    countedDeviationCents: 5000,
+    countedDeviationCents: 55000,
     warnings: [{ code: "contingency_overdrawn", message: "Contingency is overdrawn by $50.00 — counted Deviations exceed the pool." }],
   };
 
@@ -223,10 +223,10 @@ describe("summarizeChangeOrderStrip", () => {
     expect(result.openCount).toBe(3);
     expect(result.deniedCount).toBe(2);
     expect(result.countedCount).toBe(2);
-    expect(result.approvedValueCents).toBe(20000);
-    expect(result.contingencyUsedCents).toBe(5000);
+    expect(result.approvedValueCents).toBe(70000);
+    expect(result.contingencyUsedCents).toBe(55000);
     expect(result.contingencyRemainingCents).toBe(-5000);
-    expect(result.runningContractPriceCents).toBe(270000);
+    expect(result.runningContractPriceCents).toBe(265000);
     expect(result.warnings).toHaveLength(1);
   });
 
@@ -235,7 +235,7 @@ describe("summarizeChangeOrderStrip", () => {
     const noEstimate = summarizeChangeOrderStrip({ ...summary, hasEstimate: false, currentEstimateCents: null, contingencyCents: null, runningContractPriceCents: null, contingencyRemainingCents: null });
     expect(noEstimate.state).toBe("no-estimate");
     expect(noEstimate.openCount).toBe(3);
-    expect(noEstimate.approvedValueCents).toBe(20000);
+    expect(noEstimate.approvedValueCents).toBe(70000);
     expect(noEstimate.runningContractPriceCents).toBeNull();
     expect(noEstimate.contingencyRemainingCents).toBeNull();
   });
