@@ -45,6 +45,16 @@
 // (13) a same-batch capture loss followed by pointerup cannot commit
 //     a stale deferred tap (room tool) or a stale draw (wall tool) —
 //     the up handler bails for a dead pointer before any commit path.
+// FR3 (ChatGPT NEEDS CHANGES at e1eae648, drop e28daac5e) adds:
+// (14) a browser-REUSED retired touch id drives as the second pinch
+//     finger: the capture-phase down consumes it (stopPropagation),
+//     so only trackTouchDown can clear its dead flag — with the FR2
+//     bug its moves are ignored and the pinch is one-sided (1.2x
+//     instead of 1.4x); exact scale AND view origin are pinned via the
+//     pinch-step replica below, not merely "no exception";
+// (15) a reused retired id as the third finger, then promoted to
+//     driver when a driving finger lifts: the rebased surviving pair
+//     [3,1] drives together, exact scale factor pinned at each step.
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -120,6 +130,23 @@ const wheelStep = (v, deltaY, screen, floor = FIT_SCALE) => {
     scale,
     ox: screen.x - (screen.x - v.ox) * applied,
     oy: screen.y - (screen.y - v.oy) * applied,
+  };
+};
+
+// Independent replica of applyPinchStep (PlanCanvas): zoom around the
+// pair midpoint, chained from the pending view — one replica call per
+// pointermove, in dispatch order, exactly as the gesture scheduler
+// chains them. Takes/returns the view() shape {scale, x: ox, y: oy}.
+const pinchStep = (v, prevDist, prevMid, dist, mid, floor = FIT_SCALE) => {
+  const factor = dist / prevDist;
+  const dx = mid.x - prevMid.x;
+  const dy = mid.y - prevMid.y;
+  const scale = Math.min(MAX_SCALE, Math.max(floor, v.scale * factor));
+  const applied = scale / v.scale;
+  return {
+    scale,
+    x: mid.x - (mid.x - (v.x + dx)) * applied,
+    y: mid.y - (mid.y - (v.y + dy)) * applied,
   };
 };
 
@@ -677,6 +704,102 @@ describe("PlanCanvas phone-overview tag drag", () => {
       );
     });
     expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("a reused retired touch id drives as the second pinch finger (FR3 P1)", () => {
+    renderFittedCanvas();
+    const before = view();
+    // Finger 1 goes down, then loses capture mid-gesture and is
+    // retired + marked dead (it lifts outside, so no up is delivered).
+    touch(svg, "pointerdown", 1, 100, 100);
+    pointer(svg, "lostpointercapture", 1, "touch", 100, 100);
+    // A fresh finger 2 starts a touch, then the browser REUSES id 1
+    // for the second finger: the capture-phase down consumes it
+    // (trackTouchDown returns true → stopPropagation), so the bubble
+    // onPointerDown — the only other place the dead flag was cleared —
+    // never runs for it. Only the reset in trackTouchDown itself can
+    // revive it; with the FR2 bug its moves are ignored and the pinch
+    // is one-sided (1.2x instead of 1.4x).
+    touch(svg, "pointerdown", 2, 100, 100);
+    touch(svg, "pointerdown", 1, 200, 100); // reused id 1: pinch [2,1]
+    touch(svg, "pointermove", 2, 80, 100);
+    touch(svg, "pointermove", 1, 220, 100); // 100px -> 140px = 1.4x
+    fireFrames();
+    // Chained replica, one step per move, in dispatch order.
+    const v1 = pinchStep(before, 100, { x: 150, y: 100 }, 120, { x: 140, y: 100 });
+    const v2 = pinchStep(v1, 120, { x: 140, y: 100 }, 140, { x: 150, y: 100 });
+    const after = view();
+    expect(after.scale).toBeCloseTo(v2.scale, 3); // 1.4x, not the buggy 1.2x
+    expect(after.x).toBeCloseTo(v2.x, 3);
+    expect(after.y).toBeCloseTo(v2.y, 3);
+    // The pair ends cleanly when a finger lifts: the survivor moving
+    // alone must not drive a phantom pinch from the stale point.
+    touch(svg, "pointerup", 2, 80, 100);
+    touch(svg, "pointermove", 1, 240, 100);
+    fireFrames();
+    const afterLift = view();
+    expect(afterLift.scale).toBeCloseTo(after.scale, 4);
+    expect(afterLift.x).toBeCloseTo(after.x, 3);
+    expect(afterLift.y).toBeCloseTo(after.y, 3);
+    touch(svg, "pointerup", 1, 240, 100);
+  });
+
+  it("a reused retired touch id drives after promotion from third finger (FR3 P1)", () => {
+    renderFittedCanvas();
+    const before = view();
+    // Finger 1 goes down, loses capture, is retired + marked dead.
+    touch(svg, "pointerdown", 1, 100, 100);
+    pointer(svg, "lostpointercapture", 1, "touch", 100, 100);
+    // A fresh pinch [2,3] runs to 1.4x.
+    touch(svg, "pointerdown", 2, 100, 100);
+    touch(svg, "pointerdown", 3, 200, 100);
+    touch(svg, "pointermove", 2, 80, 100);
+    touch(svg, "pointermove", 3, 220, 100); // 100 -> 140 = 1.4x
+    fireFrames();
+    const v1 = pinchStep(before, 100, { x: 150, y: 100 }, 120, { x: 140, y: 100 });
+    const v2 = pinchStep(v1, 120, { x: 140, y: 100 }, 140, { x: 150, y: 100 });
+    const pinched = view();
+    expect(pinched.scale).toBeCloseTo(v2.scale, 3);
+    expect(pinched.x).toBeCloseTo(v2.x, 3);
+    expect(pinched.y).toBeCloseTo(v2.y, 3);
+    // The browser REUSES id 1 as the third finger: tracked, not
+    // driving. With the FR2 bug its dead flag is never cleared (the
+    // capture-phase down consumes it), so it can never drive later.
+    touch(svg, "pointerdown", 1, 150, 300);
+    // A driving finger lifts: the pinch rebases onto the surviving
+    // pair [3,1] with NO zoom step — then the promoted finger 1
+    // drives it: (220,100)+(150,300) -> (220,100)+(150,340) grows
+    // the pair from hypot(70,200) to hypot(70,240).
+    touch(svg, "pointerup", 2, 80, 100);
+    const rebased = view();
+    expect(rebased.scale).toBeCloseTo(pinched.scale, 4); // no jump on rebase
+    expect(rebased.x).toBeCloseTo(pinched.x, 3);
+    touch(svg, "pointermove", 1, 150, 340);
+    fireFrames();
+    const v3 = pinchStep(
+      v2,
+      Math.hypot(70, 200), { x: 185, y: 200 },
+      Math.hypot(70, 240), { x: 185, y: 220 },
+    );
+    const afterPromote = view();
+    expect(afterPromote.scale).toBeCloseTo(v3.scale, 3); // 1.4x * 250/211.9
+    expect(afterPromote.x).toBeCloseTo(v3.x, 3);
+    expect(afterPromote.y).toBeCloseTo(v3.y, 3);
+    // The surviving pair [3,1] keeps driving together: moving finger
+    // 3 grows the pair from hypot(70,240) to hypot(90,240).
+    touch(svg, "pointermove", 3, 240, 100);
+    fireFrames();
+    const v4 = pinchStep(
+      v3,
+      Math.hypot(70, 240), { x: 185, y: 220 },
+      Math.hypot(90, 240), { x: 195, y: 220 },
+    );
+    const afterPair = view();
+    expect(afterPair.scale).toBeCloseTo(v4.scale, 3);
+    expect(afterPair.x).toBeCloseTo(v4.x, 3);
+    expect(afterPair.y).toBeCloseTo(v4.y, 3);
+    touch(svg, "pointerup", 3, 240, 100);
+    touch(svg, "pointerup", 1, 150, 340);
   });
 
   it("a tag tap still selects and moves nothing (touch and mouse)", () => {

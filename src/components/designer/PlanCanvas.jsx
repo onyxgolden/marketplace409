@@ -213,6 +213,21 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // nuke a pinch driven by the others, and a dead touch must never
   // drive a pinch through the capture-phase move path.
   const deadPointersRef = useRef(new Set());
+  // FR3: bound the dead-pointer tombstones. PointerIds are small ints
+  // the browser reuses quickly, so a handful of live tombstones is the
+  // norm; cap the set so a long mobile session cannot grow it without
+  // bound. Evicting the oldest is safe: a stale move for a lost pointer
+  // arrives with the next move after the loss (lazy delivery is one
+  // move), so a tombstone old enough to be evicted can no longer
+  // produce a stale event — and any id that comes back is cleared by a
+  // fresh pointerdown anyway (see trackTouchDown).
+  const markPointerDead = (id) => {
+    deadPointersRef.current.add(id);
+    if (deadPointersRef.current.size > 16) {
+      const oldest = deadPointersRef.current.values().next().value;
+      deadPointersRef.current.delete(oldest);
+    }
+  };
   // FR2: the pointerId that owns the current single-pointer drag (the
   // most recent pointerdown whose gesture has not closed), or null.
   // The drag state itself carries no pointerId, so without this the
@@ -1792,6 +1807,16 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // the event was consumed by gesture tracking.
   const trackTouchDown = (e) => {
     if (e.pointerType !== "touch") return false;
+    // FR3 (residual P1: reused dead touch id): a fresh pointerdown for
+    // an id is a NEW gesture — clear any stale capture-loss flag HERE,
+    // before tracking/consumption. The capture-phase down handler
+    // consumes a pinch finger (returns true → stopPropagation), so the
+    // bubble onPointerDown — the only other place the flag was cleared
+    // — never runs for it; without this, a browser-reused id stays dead
+    // and its moves are ignored even though it is a fresh active
+    // driving finger (one-sided pinch). This is the single chokepoint:
+    // every touch down passes through here, capture-phase or bubble.
+    deadPointersRef.current.delete(e.pointerId);
     touchPointers.current.set(e.pointerId, eventPoint(e));
     const n = touchPointers.current.size;
     if (n === 2) {
@@ -2160,6 +2185,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // the same burst, before the drag state lands after a re-render,
   // cannot re-arm and reset the origin.
   const maybeArmTagPan = (e) => {
+    // FR3: the no-capture tag fallback (tag onPointerMove) must never
+    // arm a dead pointer — a move arriving for a pointer whose capture
+    // was lost is stale, even if it still targets the tag. (The
+    // canvas-level move handler already bails for dead pointers before
+    // calling this; this guards the tag's own move path.)
+    if (deadPointersRef.current.has(e.pointerId)) return;
     // A drag already armed (or owned by the canvas handler) takes over
     // from here: the canvas move handler pans from the drag state
     // from the next move.
@@ -3266,8 +3297,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           // arriving in the same batch (the loss is delivered with the
           // next move) must see the flag before any commit path runs.
           // The flag is per-pointer (a Set, FR2): losing one pointer
-          // must not nuke a pinch driven by the others.
-          deadPointersRef.current.add(id);
+          // must not nuke a pinch driven by the others. Tombstones are
+          // bounded (FR3 markPointerDead): the set never grows past 16.
+          markPointerDead(id);
           gestureTrace("lostpointercapture", { pointerId: id, dragKind: drag?.kind ?? null });
           if (ownsTouch) retireTouchPointer(id);
           if (ownsDrag) {
