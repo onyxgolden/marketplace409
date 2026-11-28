@@ -759,8 +759,13 @@ describe("D5 export CSV", () => {
     const pipefitter = crafts.find((r) => r[header.indexOf("craft_key")] === "pipefitter");
     expect(pipefitter[header.indexOf("step_count")]).toBe("2");
     expect(pipefitter[header.indexOf("planned_hours")]).toBe("14.5");
-    const state = body.find((r) => r[0] === "state");
+    const state = body.find((r) => r[header.indexOf("craft_completion_state")] === "unavailable_no_crosswalk");
+    expect(state[0]).toBe("state");
     expect(state[header.indexOf("craft_completion_state")]).toBe("unavailable_no_crosswalk");
+    const hoursWarning = body.find((r) => r[0] === "state"
+      && r[header.indexOf("display_value")].includes("no planned hours set"));
+    expect(hoursWarning).toBeDefined();
+    expect(hoursWarning[11]).toBe("partial");
   });
 
   it("cost export downloads five categories, the total, and the separately-labelled labor forecast", async () => {

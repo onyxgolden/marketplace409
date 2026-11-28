@@ -58,6 +58,12 @@ function sortCraftGroups(groups) {
  * hours; steps with no usable hours count in hoursMissingCount and
  * never contribute a guessed number. This is planned inventory only —
  * it says nothing about completion (D4.2, blocked).
+ *
+ * knownHoursCount (per group) and knownHoursSteps (plan total) count
+ * the steps whose hours are actually known, so callers can tell a
+ * known zero (every step carries an explicit 0) from no known hours
+ * at all (every step missing) — the sums alone cannot, since both
+ * add up to 0.
  */
 export function summarizeWorkPlanByCraft(steps) {
   const rows = Array.isArray(steps) ? steps : [];
@@ -81,11 +87,16 @@ export function summarizeWorkPlanByCraft(steps) {
     }
     byKey.set(key, entry);
   }
+  const groups = sortCraftGroups([...byKey.values()]);
+  for (const group of groups) {
+    group.knownHoursCount = group.stepCount - group.hoursMissingCount;
+  }
   return {
-    groups: sortCraftGroups([...byKey.values()]),
+    groups,
     totalSteps,
     totalPlannedHours,
     hoursMissingCount,
+    knownHoursSteps: totalSteps - hoursMissingCount,
     hasHours: totalPlannedHours > 0,
   };
 }

@@ -470,7 +470,8 @@ describe("package planning and work plan", () => {
     const pipefitter = crafts.find((r) => r[header.indexOf("craft_key")] === "pipefitter");
     expect(pipefitter[header.indexOf("step_count")]).toBe("2");
     expect(pipefitter[header.indexOf("planned_hours")]).toBe("14.5");
-    const state = body.find((r) => r[0] === "state");
+    const state = body.find((r) => r[header.indexOf("craft_completion_state")] === "unavailable_no_crosswalk");
+    expect(state[0]).toBe("state");
     expect(state[header.indexOf("craft_completion_state")]).toBe("unavailable_no_crosswalk");
     expect(state[header.indexOf("display_value")]).toContain("not available");
   });
@@ -780,7 +781,7 @@ describe("fix round 1 — ChatGPT verdict P1s (red-before fixtures)", () => {
     const header = rows[0];
     const welder = rows.slice(1).find((r) => r[header.indexOf("craft_key")] === "welder");
     expect(welder[11]).toBe("partial");
-    expect(welder[header.indexOf("planned_hours")]).toBe("0");
+    expect(welder[header.indexOf("planned_hours")]).toBe(""); // wholly unknown hours: blank, never a false 0
     expect(welder[header.indexOf("hours_missing_count")]).toBe("1");
     const pipefitter = rows.slice(1).find((r) => r[header.indexOf("craft_key")] === "pipefitter");
     expect(pipefitter[11]).toBe("complete");
@@ -973,5 +974,178 @@ describe("fix round 1 — ChatGPT verdict P1s (red-before fixtures)", () => {
       scope: DETAIL_SCOPE, now: NOW, changeStrip: null,
       countsByStatus: {}, pivot: "strip", title: "Change orders and contingency",
     })).toThrow(/missing/i);
+  });
+});
+
+describe("fix round 2 — ChatGPT verdict residual P1 + contract (red-before fixtures)", () => {
+  const ALL_MISSING_STEPS = [
+    { id: "m1", craftKey: "pipefitter", craftLabel: "Pipefitter", plannedPersonHours: null, retiredAt: null },
+    { id: "m2", craftKey: "pipefitter", craftLabel: "Pipefitter", plannedPersonHours: null, retiredAt: null },
+    { id: "m3", craftKey: "welder", craftLabel: "Welder", plannedPersonHours: undefined, retiredAt: null },
+  ];
+
+  it("residual P1.4: a work plan with every step missing hours exports blank hours and partial, never complete zero", () => {
+    const workPlan = summarizeWorkPlanByCraft(ALL_MISSING_STEPS);
+    expect(workPlan.hasHours).toBe(false);
+    expect(workPlan.knownHoursSteps).toBe(0);
+    for (const pivot of ["bars", "table"]) {
+      const { csvText } = buildWidgetExport("package-planning-work-plan", {
+        scope: DETAIL_SCOPE, now: NOW, planningSummary: PLANNING_SUMMARY, workPlan,
+        pivot, title: "Planning and work plan",
+      });
+      const rows = parseCsv(csvText);
+      const header = rows[0];
+      const summary = rows.slice(1).find((r) => r[0] === "total");
+      expect(summary[11]).toBe("partial");
+      expect(summary[header.indexOf("planned_hours")]).toBe("");
+      expect(summary[header.indexOf("hours_missing_count")]).toBe("3");
+      for (const craft of rows.slice(1).filter((r) => r[0] === "data")) {
+        expect(craft[11]).toBe("partial");
+        expect(craft[header.indexOf("planned_hours")]).toBe("");
+      }
+      const hoursWarning = rows.slice(1).find((r) => r[0] === "state"
+        && r[header.indexOf("display_value")].includes("no planned hours set"));
+      expect(hoursWarning).toBeDefined();
+      expect(hoursWarning[11]).toBe("partial");
+      const completion = rows.slice(1).find((r) => r[header.indexOf("craft_completion_state")] === "unavailable_no_crosswalk");
+      expect(completion).toBeDefined();
+      expect(completion[0]).toBe("state");
+    }
+  });
+
+  it("residual P1.4: mixed known/unknown hours keep the known sum and blank only the wholly unknown craft", () => {
+    const workPlan = summarizeWorkPlanByCraft(STEPS);
+    const { csvText } = buildWidgetExport("package-planning-work-plan", {
+      scope: DETAIL_SCOPE, now: NOW, planningSummary: PLANNING_SUMMARY, workPlan,
+      pivot: "bars", title: "Planning and work plan",
+    });
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const welder = rows.slice(1).find((r) => r[header.indexOf("craft_key")] === "welder");
+    expect(welder[11]).toBe("partial");
+    expect(welder[header.indexOf("planned_hours")]).toBe("");
+    expect(welder[header.indexOf("hours_missing_count")]).toBe("1");
+    const pipefitter = rows.slice(1).find((r) => r[header.indexOf("craft_key")] === "pipefitter");
+    expect(pipefitter[11]).toBe("complete");
+    expect(pipefitter[header.indexOf("planned_hours")]).toBe("14.5");
+    const summary = rows.slice(1).find((r) => r[0] === "total");
+    expect(summary[11]).toBe("partial");
+    expect(summary[header.indexOf("planned_hours")]).toBe("16.5");
+    const hoursWarning = rows.slice(1).find((r) => r[0] === "state"
+      && r[header.indexOf("display_value")].includes("no planned hours set"));
+    expect(hoursWarning).toBeDefined();
+    expect(hoursWarning[11]).toBe("partial");
+  });
+
+  it("residual P1.4: an explicit zero is a known zero, distinct from unknown hours", () => {
+    const workPlan = summarizeWorkPlanByCraft([
+      { id: "z1", craftKey: "a", craftLabel: "Crew A", plannedPersonHours: 0, retiredAt: null },
+      { id: "z2", craftKey: "b", craftLabel: "Crew B", plannedPersonHours: null, retiredAt: null },
+    ]);
+    const { csvText } = buildWidgetExport("package-planning-work-plan", {
+      scope: DETAIL_SCOPE, now: NOW, planningSummary: PLANNING_SUMMARY, workPlan,
+      pivot: "table", title: "Planning and work plan",
+    });
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const crewA = rows.slice(1).find((r) => r[header.indexOf("craft_key")] === "a");
+    expect(crewA[11]).toBe("complete");
+    expect(crewA[header.indexOf("planned_hours")]).toBe("0");
+    const crewB = rows.slice(1).find((r) => r[header.indexOf("craft_key")] === "b");
+    expect(crewB[11]).toBe("partial");
+    expect(crewB[header.indexOf("planned_hours")]).toBe("");
+    const summary = rows.slice(1).find((r) => r[0] === "total");
+    expect(summary[11]).toBe("partial");
+    expect(summary[header.indexOf("planned_hours")]).toBe("0");
+  });
+
+  it("residual P1.4: an empty plan exports a complete summary with blank hours plus the empty state row", () => {
+    const workPlan = summarizeWorkPlanByCraft([]);
+    const { csvText } = buildWidgetExport("package-planning-work-plan", {
+      scope: DETAIL_SCOPE, now: NOW, planningSummary: PLANNING_SUMMARY, workPlan,
+      pivot: "bars", title: "Planning and work plan",
+    });
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const summary = rows.slice(1).find((r) => r[0] === "total");
+    expect(summary[11]).toBe("complete");
+    expect(summary[header.indexOf("planned_hours")]).toBe("");
+    expect(summary[header.indexOf("step_count")]).toBe("0");
+    const empty = rows.slice(1).find((r) => r[header.indexOf("display_value")] === "No work steps yet — the work plan is empty.");
+    expect(empty).toBeDefined();
+    expect(empty[0]).toBe("state");
+    const hoursWarning = rows.slice(1).find((r) => r[0] === "state"
+      && r[header.indexOf("display_value")].includes("no planned hours set"));
+    expect(hoursWarning).toBeUndefined();
+  });
+
+  it("residual contract: partial planning progress carries an explanatory coverage state row", () => {
+    const progress = summarizePlannerProgress(PACKAGES, PLANNING);
+    const { csvText } = buildWidgetExport("landing-planning-progress", {
+      scope: SCOPE, now: NOW, progress, planningAvailable: true,
+      activeDimension: "system", activeGroup: null, baseHref: "/forge/work", pivot: "table",
+    });
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const coverage = rows.slice(1).find((r) => r[0] === "state"
+      && r[header.indexOf("packages_without_planning")] === "1");
+    expect(coverage).toBeDefined();
+    expect(coverage[11]).toBe("partial");
+    expect(coverage[header.indexOf("display_value")]).toContain("2 of 3");
+    expect(coverage[12]).toContain("1 has no checklist yet");
+    expect(coverage[header.indexOf("packages_with_planning")]).toBe("2");
+  });
+
+  it("residual contract: fully unknown planning progress carries an unavailable coverage state row", () => {
+    const unknown = {
+      total: { key: null, label: "All packages", packageCount: 2, completeCount: 0, percentComplete: null, packagesWithPlanning: 0, packagesWithoutPlanning: 2, statusCounts: { draft: 2 } },
+      bySystem: [{ key: "Piping", label: "Piping", packageCount: 2, completeCount: 0, percentComplete: null, packagesWithPlanning: 0, packagesWithoutPlanning: 2, statusCounts: { draft: 2 } }],
+      byPlanner: [], byUnit: [],
+    };
+    const { csvText } = buildWidgetExport("landing-planning-progress", {
+      scope: SCOPE, now: NOW, progress: unknown, planningAvailable: true,
+      activeDimension: "system", activeGroup: null, baseHref: "/forge/work", pivot: "table",
+    });
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    const coverage = rows.slice(1).find((r) => r[0] === "state"
+      && r[header.indexOf("packages_without_planning")] === "2");
+    expect(coverage).toBeDefined();
+    expect(coverage[11]).toBe("unavailable");
+    expect(coverage[header.indexOf("value_percent")]).toBe("");
+  });
+
+  it("residual contract: an empty scope-by-status breakdown with a nonzero strip total refuses the file", () => {
+    expect(() => buildWidgetExport("landing-scope-by-status", {
+      scope: SCOPE, now: NOW,
+      summary: { totalPackages: 3, statusBreakdown: [] }, baseHref: "/forge/work", pivot: "donut",
+    })).toThrow(/reconcile/i);
+  });
+
+  it("residual contract: non-Deviation/Deviation rows are classified as breakdown, not additive metrics", () => {
+    const changeStrip = summarizeChangeOrderStrip(CHANGE_SUMMARY);
+    const { csvText } = buildWidgetExport("package-change-orders", {
+      scope: DETAIL_SCOPE, now: NOW, changeStrip,
+      countsByStatus: CHANGE_SUMMARY.countsByStatus, pivot: "strip", title: "Change orders and contingency",
+    });
+    const rows = parseCsv(csvText);
+    const header = rows[0];
+    expect(header).toContain("metric_class");
+    const byMetric = (id) => rows.slice(1).find((r) => r[header.indexOf("metric_id")] === id);
+    expect(byMetric("approved_value")[header.indexOf("metric_class")]).toBe("metric");
+    expect(byMetric("counted_non_deviation")[header.indexOf("metric_class")]).toBe("breakdown");
+    expect(byMetric("counted_deviation")[header.indexOf("metric_class")]).toBe("breakdown");
+    expect(byMetric("open_count")[header.indexOf("metric_class")]).toBe("metric");
+
+    const tableText = buildWidgetExport("package-change-orders", {
+      scope: DETAIL_SCOPE, now: NOW, changeStrip,
+      countsByStatus: CHANGE_SUMMARY.countsByStatus, pivot: "table", title: "Change orders and contingency",
+    }).csvText;
+    const tableRows = parseCsv(tableText);
+    const tableHeader = tableRows[0];
+    const statusRow = tableRows.slice(1).find((r) => r[tableHeader.indexOf("status_key")] === "approved");
+    expect(statusRow[tableHeader.indexOf("metric_class")]).toBe("breakdown");
+    const warningRow = tableRows.slice(1).find((r) => r[tableHeader.indexOf("warning_code")] === "contingency_overdrawn");
+    expect(warningRow[tableHeader.indexOf("metric_class")]).toBe("");
   });
 });

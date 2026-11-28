@@ -351,8 +351,13 @@ export function buildScopeByStatusExport(input) {
   const totalPackages = requireSafeInteger(summary?.totalPackages ?? 0, "totalPackages");
   // An empty project has no statuses to export: a state row, never a
   // "0 (100%)" total that certifies a share of nothing. (The screen
-  // shows "No packages in this project yet" instead of a chart.)
+  // shows "No packages in this project yet" instead of a chart.) An
+  // empty breakdown against a nonzero strip total is a mismatch, not
+  // an empty project — refuse the file rather than silently
+  // downloading a state row that hides the missing packages.
   if (breakdown.length === 0) {
+    reconcile(totalPackages === 0,
+      `Scope by status cannot reconcile: no status breakdown but the strip total is ${totalPackages}`);
     return finalize("landing-scope-by-status", header, [
       withMeta(base, "state", "empty", "No packages in this project yet — add the first one below.", {
         status_key: "", status_label: "",
@@ -580,6 +585,31 @@ export function buildPlanningProgressExport(input) {
       ? progressActiveGroupHref(baseHref, dimension.key)
       : progressGroupHref(baseHref, dimension.key, group.key)));
   }
+  // Brief §4: partial data needs at least one explanatory state /
+  // reconciliation row — the per-row "partial" tags alone are not
+  // enough. When any package lacks planning data, the export carries
+  // its own coverage row (partial when some packages are known,
+  // unavailable when none are).
+  if ((total.packagesWithoutPlanning ?? 0) > 0) {
+    const known = total.packagesWithPlanning ?? 0;
+    const unknown = total.packagesWithoutPlanning ?? 0;
+    const allUnknown = known === 0;
+    rows.push(withMeta(base, "state", allUnknown ? "unavailable" : "partial",
+      allUnknown
+        ? "No packages in this project carry planning data."
+        : `Planning % covers ${known} of ${totalPackages} packages — ${unknown} ${unknown === 1 ? "has" : "have"} no checklist yet.`,
+      {
+        dimension_key: dimension.key, dimension_label: dimension.label,
+        group_key: "", group_label: "",
+        value_count: "", complete_count: "", value_percent: "",
+        display_value: allUnknown
+          ? "No packages carry planning data"
+          : `Planning covers ${known} of ${totalPackages} packages`,
+        packages_with_planning: known, packages_without_planning: unknown,
+        status_counts_json: stableStringify(total.statusCounts ?? {}),
+        drill_target: baseHref,
+      }));
+  }
   return finalize("landing-planning-progress", header, rows, { now, scope, projectSlug, packageCode: null });
 }
 
@@ -791,14 +821,25 @@ export function buildWorkPlanByCraftExport(input) {
   const missingSum = groups.reduce((sum, group) => sum + (group?.hoursMissingCount ?? 0), 0);
   reconcile(missingSum === totalMissing,
     `Work plan cannot reconcile: craft hours-missing counts sum to ${missingSum} but the plan total is ${totalMissing}`);
+  // Known-hours counts tell a known zero from no known hours at all:
+  // a group whose every step is missing hours has a 0 sum that is not
+  // a measurement. The summarizer carries knownHoursCount /
+  // knownHoursSteps; derive them from stepCount - hoursMissingCount
+  // for any hand-built work plan that predates those fields.
+  const knownHours = (group) => group?.knownHoursCount
+    ?? ((group?.stepCount ?? 0) - (group?.hoursMissingCount ?? 0));
+  const knownHoursSteps = workPlan.knownHoursSteps ?? (totalSteps - totalMissing);
+  const missingHoursReason = `${totalMissing} ${totalMissing === 1 ? "step has" : "steps have"} no planned hours set — ${totalMissing === 1 ? "it counts" : "they count"} in the step totals but not in the hours.`;
   // A craft row is "complete" only when its hours are fully known. A
   // row with steps missing hours is "partial": the known hours sum is
   // exported as-is, the missing count is preserved, and the reason says
-  // so in the screen's own words. When the plan carries no hours at
-  // all, the measure is steps and the rows are complete on that
-  // measure. A defined 0 stays 0 — never a blank.
+  // so in the screen's own words. Completeness never depends on the
+  // measure: a plan with no hours at all is measured in steps, but a
+  // step missing its hours is still partial — the old hasHours gate
+  // certified exactly that case complete with a false 0. A defined 0
+  // stays 0 — never a blank; an unknown sum is blank, never 0.
   const craftState = (group) => {
-    if (workPlan.hasHours && (group?.hoursMissingCount ?? 0) > 0) {
+    if ((group?.hoursMissingCount ?? 0) > 0) {
       return {
         dataStatus: "partial",
         reason: `${group.hoursMissingCount} ${group.hoursMissingCount === 1 ? "step has" : "steps have"} no planned hours set — ${group.hoursMissingCount === 1 ? "it counts" : "they count"} in the step totals but not in the hours.`,
@@ -808,16 +849,13 @@ export function buildWorkPlanByCraftExport(input) {
   };
   const summaryState = progress == null
     ? { dataStatus: "unavailable", reason: "Planning summary is not available for this package." }
-    : workPlan.hasHours && totalMissing > 0
-      ? {
-          dataStatus: "partial",
-          reason: `${totalMissing} ${totalMissing === 1 ? "step has" : "steps have"} no planned hours set — ${totalMissing === 1 ? "it counts" : "they count"} in the step totals but not in the hours.`,
-        }
+    : totalMissing > 0
+      ? { dataStatus: "partial", reason: missingHoursReason }
       : { dataStatus: "complete", reason: "" };
   const rows = [
     withMeta(base, "total", summaryState.dataStatus, summaryState.reason, {
       row_kind: "summary", craft_key: "", craft_label: "All crafts",
-      step_count: totalSteps, planned_hours: totalHours,
+      step_count: totalSteps, planned_hours: knownHoursSteps > 0 ? totalHours : "",
       hours_missing_count: totalMissing,
       measure: workPlan.hasHours ? "hours" : "steps",
       value_percent: progress?.percentComplete ?? "",
@@ -827,13 +865,16 @@ export function buildWorkPlanByCraftExport(input) {
   ];
   for (const group of groups) {
     const { dataStatus, reason } = craftState(group);
+    const groupKnownHours = knownHours(group);
     rows.push(withMeta(base, "data", dataStatus, reason, {
       row_kind: "craft", craft_key: group.key, craft_label: group.label,
-      step_count: group.stepCount, planned_hours: group.plannedHours,
+      step_count: group.stepCount, planned_hours: groupKnownHours > 0 ? group.plannedHours : "",
       hours_missing_count: group.hoursMissingCount,
       measure: workPlan.hasHours ? "hours" : "steps",
       value_percent: "",
-      display_value: `${group.label}: ${group.stepCount} ${group.stepCount === 1 ? "step" : "steps"} · ${hoursText(group.plannedHours)} h`,
+      display_value: groupKnownHours > 0
+        ? `${group.label}: ${group.stepCount} ${group.stepCount === 1 ? "step" : "steps"} · ${hoursText(group.plannedHours)} h`
+        : `${group.label}: ${group.stepCount} ${group.stepCount === 1 ? "step" : "steps"} · hours not set`,
       // The craft name is a drill to the Work steps tab with the craft
       // focus — never the planning tab the old export claimed.
       drill_target: detailDrillTarget("steps", { kind: "craft", craftKey: group.key }),
@@ -851,6 +892,22 @@ export function buildWorkPlanByCraftExport(input) {
       value_percent: "",
       display_value: "No work steps yet — the work plan is empty.",
       drill_target: detailDrillTarget("steps", null),
+      craft_completion_state: "",
+    }));
+  }
+  // The missing-hours warning is its own explanatory state row (brief
+  // §4: partial data needs a state/reconciliation row, not just a
+  // "partial" tag on the data rows). The screen shows the same warning
+  // as plain text, so the row carries no drill. It sits above the
+  // completion notice, which is a different, unrelated state.
+  if (totalMissing > 0) {
+    rows.push(withMeta(base, "state", "partial", missingHoursReason, {
+      row_kind: "state", craft_key: "", craft_label: "",
+      step_count: "", planned_hours: "", hours_missing_count: "",
+      measure: "",
+      value_percent: "",
+      display_value: missingHoursReason,
+      drill_target: "",
       craft_completion_state: "",
     }));
   }
@@ -983,7 +1040,12 @@ export function buildChangeOrdersExport(input) {
     config: { title: title ?? "Change orders and contingency", pivot, visible },
   });
   const header = [...META_COLUMNS, "metric_id", "metric_label", "status_key", "status_label",
-    "value_cents", "value_count", "display_value", "sublabel", "drill_target", "warning_code", "warning_message"];
+    "value_cents", "value_count", "display_value", "sublabel", "drill_target", "warning_code", "warning_message",
+    // metric_class names what a row is: a real additive metric, or a
+    // breakdown of one (the non-Dev/Dev split of the approved value,
+    // the status subgroups). Appended last so existing column
+    // positions never move.
+    "metric_class"];
   // The canonical discriminator is the strip's own state — never the
   // legacy notApplied boolean the old code tested. A missing strip is
   // a missing read, not a state: it throws rather than inventing one.
@@ -997,7 +1059,7 @@ export function buildChangeOrdersExport(input) {
         metric_id: "", metric_label: "", status_key: "", status_label: "",
         value_cents: "", value_count: "",
         display_value: "The Change Orders Log isn't available yet — the database change for this feature hasn't been applied.",
-        sublabel: "", drill_target: "", warning_code: "", warning_message: "",
+        sublabel: "", drill_target: "", warning_code: "", warning_message: "", metric_class: "",
       }),
     ], { now, scope, projectSlug, packageCode });
   }
@@ -1028,12 +1090,15 @@ export function buildChangeOrdersExport(input) {
   // secondary line the strip cards show beneath it. Drill targets are
   // the (tab, focus) pairs the strip/table renders, built by the
   // shared helper — non-Dev / Dev rows are plain text on the screen,
-  // so they carry no target at all.
-  const metric = (id, label, { cents = "", count = "", display, sublabel = "", drill = "", dataStatus = "complete", reason = "" }) =>
+  // so they carry no target at all. They are also a breakdown of the
+  // approved value (visible as its sublabel), not independent additive
+  // metrics — metric_class says so explicitly, so no consumer can sum
+  // them on top of the approved value.
+  const metric = (id, label, { cents = "", count = "", display, sublabel = "", drill = "", dataStatus = "complete", reason = "", metricClass = "metric" }) =>
     withMeta(base, "data", dataStatus, reason, {
       metric_id: id, metric_label: label, status_key: "", status_label: "",
       value_cents: cents, value_count: count, display_value: display,
-      sublabel, drill_target: drill, warning_code: "", warning_message: "",
+      sublabel, drill_target: drill, warning_code: "", warning_message: "", metric_class: metricClass,
     });
   const remaining = changeStrip.contingencyRemainingCents;
   const rows = [
@@ -1051,8 +1116,8 @@ export function buildChangeOrdersExport(input) {
       sublabel: `Non-Dev ${displayCents(nonDev)} · Dev ${displayCents(dev)}`,
       drill: detailDrillTarget("budget", { kind: "change-orders", filter: "counted" }),
     }),
-    metric("counted_non_deviation", "Non-Deviation", { cents: nonDev, display: displayCents(nonDev) }),
-    metric("counted_deviation", "Deviation", { cents: dev, display: displayCents(dev) }),
+    metric("counted_non_deviation", "Non-Deviation", { cents: nonDev, display: displayCents(nonDev), metricClass: "breakdown" }),
+    metric("counted_deviation", "Deviation", { cents: dev, display: displayCents(dev), metricClass: "breakdown" }),
     metric("contingency_used", "Contingency used", {
       cents: used, display: displayCents(used), sublabel: "Counted Deviations",
       drill: detailDrillTarget("budget", { kind: "change-orders", filter: "deviation" }),
@@ -1097,7 +1162,7 @@ export function buildChangeOrdersExport(input) {
         value_cents: "", value_count: count,
         display_value: `${key.replace(/_/g, " ")}: ${count}`,
         sublabel: "",
-        drill_target: "", warning_code: "", warning_message: "",
+        drill_target: "", warning_code: "", warning_message: "", metric_class: "breakdown",
       }));
     }
   }
@@ -1106,7 +1171,7 @@ export function buildChangeOrdersExport(input) {
       metric_id: "", metric_label: "", status_key: "", status_label: "",
       value_cents: "", value_count: "", display_value: warning.message ?? "",
       sublabel: "",
-      drill_target: "", warning_code: warning.code ?? "", warning_message: warning.message ?? "",
+      drill_target: "", warning_code: warning.code ?? "", warning_message: warning.message ?? "", metric_class: "",
     }));
   }
   return finalize("package-change-orders", header, rows, { now, scope, projectSlug, packageCode });
